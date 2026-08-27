@@ -36,8 +36,15 @@ class Settings(BaseSettings):
     # Frontend URL (for CORS)
     FRONTEND_URL: str = "http://localhost:3000"
 
-    # Groq
+    # Groq (legacy chat path)
     GROQ_API_KEY: str = ""
+
+    # Gemini — generation, multimodal and embeddings.
+    # Model ids are explicit settings, not literals at the call site, so a
+    # model change is configuration rather than a code edit.
+    GEMINI_API_KEY: str = ""
+    GEMINI_GENERATION_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
     @field_validator("INTERNAL_API_KEY", "SECRET_KEY")
     @classmethod
