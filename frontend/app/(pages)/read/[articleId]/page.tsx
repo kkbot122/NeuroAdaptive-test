@@ -18,11 +18,17 @@ interface Article {
   paragraphs: Paragraph[];
 }
 
-async function getArticle(id: string): Promise<Article | null> {
+// SECURE FETCH: the backend derives the reader from these headers, so the
+// article endpoint no longer accepts a caller-supplied user id.
+async function getArticle(id: string, email: string): Promise<Article | null> {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
   try {
     const res = await fetch(`${apiUrl}/api/v1/content/articles/${id}`, {
       cache: "no-store",
+      headers: {
+        "x-user-email": email,
+        "x-internal-token": process.env.INTERNAL_API_KEY || "",
+      },
     });
     if (!res.ok) return null;
     return await res.json();
@@ -63,7 +69,7 @@ export default async function ReadPage({
   const { articleId } = await params;
 
   const [article, profile] = await Promise.all([
-    getArticle(articleId),
+    getArticle(articleId, session.user.email),
     getUserProfile(session.user.email),
   ]);
 
