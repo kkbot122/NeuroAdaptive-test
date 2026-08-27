@@ -10,12 +10,16 @@ from app.modules.auth import models as auth_models
 from app.modules.content import models as content_models
 from app.modules.profiling import models as profiling_models
 from app.modules.chat import models as chat_models
+from app.modules.events import models as events_models
+from app.modules.assessment import models as assessment_models
 
 # --- Import Routers ---
 from app.modules.auth.router import router as auth_router
 from app.modules.content.router import router as content_router
 from app.modules.profile.router import router as profile_router
 from app.modules.chat.router import router as chat_router
+from app.modules.events.router import router as events_router
+from app.modules.assessment.router import router as assessment_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -50,6 +54,8 @@ app.include_router(auth_router, prefix=f"{settings.API_V1_STR}/auth", tags=["aut
 app.include_router(content_router, prefix=f"{settings.API_V1_STR}/content", tags=["content"])
 app.include_router(profile_router, prefix=f"{settings.API_V1_STR}/profile", tags=["profile"])
 app.include_router(chat_router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
+app.include_router(events_router, prefix=f"{settings.API_V1_STR}/events", tags=["events"])
+app.include_router(assessment_router, prefix=f"{settings.API_V1_STR}/assessment", tags=["assessment"])
 
 # --- Health check ---
 @app.get("/health")
