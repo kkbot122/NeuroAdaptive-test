@@ -1,0 +1,227 @@
+# SYSTEM_ARCHITECTURE.md
+
+Architecture of record for NeuroLearn. Describes what exists today, what is
+targeted, and the staged route between them. Section numbers are stable and are
+referenced by `AGENTS.md` and by the phase pack — do not renumber.
+
+Last verified against the codebase: **2026-08-26**.
+
+---
+
+## 1. Purpose and scope
+
+NeuroLearn ingests a learner's own source material, derives a concept graph and a
+course from it, teaches through retrieval-grounded generation, assesses, tracks
+per-concept mastery, and adapts what it serves next — recording why it made each
+choice so the effect can later be measured.
+
+This document covers the backend, frontend, data model, adaptation engine,
+retrieval, security model, and local topology. It does not cover deployment
+infrastructure, which does not yet exist.
+
+## 2. System context
+
+```
+Learner
+  → Web Client (Next.js, App Router)
+  → BFF / API (FastAPI, /api/v1)
+  → [ Ingestion | Concept Graph | Tutor/RAG | Assessment | Mastery/Adaptation ]
+  → PostgreSQL (source of truth)
+  + Object storage (documents)    ── not yet wired
+  + Vector + lexical index        ── not yet wired
+  + Job queue (Redis)             ── not yet wired
+  + LLM provider (vendor-abstracted)
+```
+
+## 3. Status legend
+
+Every capability claim in this document carries one of these labels. Use them
+consistently; an unlabelled claim is a defect.
+
+| Label | Meaning |
+|---|---|
+| **BUILT** | Implemented, exercised, and behaving as described. |
+| **PARTIAL** | Implemented but incomplete, unhardened, or only working on a happy path. |
+| **BROKEN** | Present in the codebase but does not work as written. |
+| **PLANNED** | Designed here; no implementation exists. |
+| **UNVALIDATED** | Implemented, but its numeric parameters are hand-chosen and have never been tested against outcomes. |
+
+## 4. Known issues
+
+Verified by direct inspection on 2026-08-26. Each carries the stage that closes it.
+
+| # | Issue | Severity | Evidence | Closes in |
+|---|---|---|---|---|
+| K-1 | `SECRET_KEY` and `INTERNAL_API_KEY` ship real fallback defaults (`"dev_secret_key_123"`, `"CHANGE_ME_..."`). The frontend repeats the same literal in `auth.ts` and `app/actions/profile.ts`. Both sides fail **open** to a value committed to git. | **High** | `config.py:12,15` | Stage 1 |
+| K-2 | `NEXT_PUBLIC_INTERNAL_API_KEY` is defined in `frontend/.env.local`. Currently referenced by zero code paths, so Next.js does not inline it — the exposure is **latent, not active**. Delete the variable. | Medium | `.env.local` | Stage 1 |
+| K-3 | `Base.metadata.create_all(bind=engine)` runs on every startup alongside a healthy 5-revision Alembic chain. | Medium | `app/main.py:26` | Stage 1 |
+| K-4 | Authorization is header-trust: `x-user-email` plus one shared static token *is* the entire scheme. Anyone holding the token can impersonate any user by changing a header. Acceptable only while the BFF is the sole caller. | **High** | all routers | Stage 4 |
+| K-5 | Three mutually incompatible archetype vocabularies coexist. `app/core/archetypes.py` (6 labels) has **zero importers**. `app/modules/profiling/router.py` (4 labels, two unique) is **never registered** in `main.py`. Only `app/modules/profile/service.py` reaches the database. | Medium | see files | Stage 1 |
+| K-6 | No test tooling of any kind — no pytest, no jest/vitest, no `test` script. `backend/test_db.py` is a connectivity script, not a test. | **High** | both manifests | Stage 1 |
+| K-7 | No queue, no worker, no object storage, no vector index — although `qdrant-client`, `boto3`, and `minio` are already declared dependencies. Compose defines only `db`, `backend`, `frontend`. | Medium | `docker-compose.yml` | Stage 1–2 |
+| K-8 | `backend/requirements.txt` is UTF-16LE with mixed CRLF/LF line endings. `pip` copes; most tooling does not. | Low | `file(1)` | Stage 1 |
+| K-9 | `GET /api/v1/content/articles/{id}` accepted a caller-supplied `user_id` defaulting to `1`, with no auth dependency, and passed a `str` where the adaptation engine required a `dict` — a guaranteed `AttributeError`. | — | — | **Fixed 2026-08-26** |
+
+## 5. Current architecture — as built
+
+**Frontend** — Next.js 16.1.6, React 19.2.3, TypeScript, App Router, Tailwind 4,
+NextAuth 5 (beta, Google), Recharts, Framer Motion. Routes under `app/(pages)/`:
+`chat`, `dashboard`, `mission`, `profile`, `quiz`, `read/[articleId]`, `signin`.
+Server components and route handlers hold the internal token; the browser never
+sees it.
+
+**Backend** — FastAPI + Pydantic v2 + SQLAlchemy 2 + Alembic on PostgreSQL 16.
+Four routers registered in `main.py`: `auth`, `content`, `profile`, `chat`.
+A fifth module, `profiling`, defines a router that is never registered.
+
+| Capability | Status |
+|---|---|
+| Google OAuth → `POST /auth/sync` → User + empty UserProfile | **BUILT** |
+| Chat sessions, history, ownership-scoped reads | **BUILT** |
+| PDF/text attachment extraction (`pypdf`, inline, synchronous) | **PARTIAL** |
+| FSLSM continuous vector profile (4 dims, clamped nudges) | **BUILT / UNVALIDATED** |
+| Behavioral signal inference from prompt keywords | **PARTIAL / UNVALIDATED** |
+| Calibration quiz → raw_scores → archetype label | **PARTIAL** |
+| Article adaptation endpoint | **BUILT** (repaired 2026-08-26) |
+| Everything in §6 below | **PLANNED** |
+
+## 6. Target architecture
+
+Nine responsibilities, each a module under `backend/app/modules/`:
+
+1. **Ingestion** — validate, store, extract, clean, chunk, embed, index.
+2. **Concept graph** — extract concepts, infer prerequisites, link to sources.
+3. **Curriculum** — generate versioned courses from the graph.
+4. **Tutor** — retrieval-grounded generation with validated citations.
+5. **Assessment** — generate and grade questions tied to concepts.
+6. **Mastery** — weighted-evidence estimation per concept.
+7. **Adaptation** — score candidate next activities; select presentation variant.
+8. **Analytics** — decision/outcome pairing, learning-gain datasets.
+9. **Admin** — jobs, usage, prompt registry.
+
+## 7. Component responsibilities
+
+The BFF owns session validation and never forwards raw browser input as identity.
+FastAPI owns all authorization. Workers own everything slow: parsing, embedding,
+generation. Postgres is the single source of truth; the vector index is a derived
+cache and must be rebuildable from Postgres alone.
+
+## 8. Data model
+
+**Current:** `User`, `UserProfile`, `Article`, `Paragraph`, `ArticleReading`,
+`ChatSession`, `ChatMessage`. Integer primary keys. Migration chain is linear and
+single-headed: `ea9facb393a3 → 2f4c2d25f29c → 6963bcb15db5 → 86bda7902ec8 →
+a1b2c3d4e5f6`.
+
+**Target (PLANNED):** `AuthIdentity`, `UserPreference`, `Course`, `CourseVersion`,
+`Module`, `Lesson`, `LessonConcept`, `SourceDocument`, `DocumentSection`,
+`SourceChunk`, `ProcessingJob`, `Concept`, `ConceptPrerequisite`, `ConceptSource`,
+`LearningBlock`, `ContentVariant`, `Citation`, `Assessment`, `Question`,
+`QuestionConcept`, `AssessmentAttempt`, `QuestionAttempt`, `ConceptMastery`,
+`PresentationAffinity`, `Misconception`, `UserMisconception`,
+`AdaptationDecision`, `AdaptationOutcome`, `LearningSession`, `LearningEvent`,
+`Conversation`, `TutorMessage`, `AuditLog`. New tables use UUID keys.
+
+**The single most important structural choice:** `AdaptationDecision` (what was
+chosen and why, written *before* serving) is a separate table from
+`AdaptationOutcome` (what actually happened, written later, linked back). This
+split is what turns "the app felt adaptive" into a dataset that can be analysed.
+Never merge them.
+
+## 9. API conventions
+
+`/api/v1`. JSON everywhere except uploads (direct-to-storage) and SSE streams.
+UUID ids on new resources. Cursor pagination. RFC 7807 problem-details errors.
+`Idempotency-Key` on retryable mutations. `If-Match` on versioned resources.
+Ownership validated server-side on **every** path segment. 404 not 403.
+
+## 10. Adaptation engine
+
+Adaptation is driven by two continuously-updated quantities, never by a label:
+
+- **Per-concept mastery**, from weighted evidence.
+- **Per-variant presentation affinity**, from observed outcomes per format.
+
+Mastery model (**UNVALIDATED** — hand-chosen constants):
+
+```
+mastery     = (S + m0 * k) / (W + k)        m0 = 0.3, k = 2
+uncertainty = 1 / sqrt(1 + W)
+```
+
+where `S` is summed weighted successes and `W` is summed evidence weight. `m0`
+and `k` are configurable, versioned defaults. They are not calibrated and no
+claim of calibration may be made.
+
+Every decision is explainable and logged **before** it is served, and carries a
+human-readable reason.
+
+## 11. Retrieval and grounding
+
+The authorization filter is applied **inside** the retrieval query, never as a
+post-filter over results. Citations are validated three ways — structural (the
+chunk exists), ownership (the caller may read it), and semantic (it actually
+supports the claim) — not merely rendered. Retrieved text is data.
+
+## 12. Security model
+
+Trust boundaries: browser → BFF → API → data. Uploaded documents are untrusted.
+Retrieved text is untrusted and non-executable.
+
+Current posture is **PARTIAL** and depends entirely on the BFF being the only
+caller that holds the internal token (K-4). Per-user tokens replace this in
+Stage 4.
+
+## 13. Observability
+
+**PLANNED.** Structured logs around ingestion, generation, retrieval, grading,
+and adaptation. Every LLM call records provider, model, prompt version, token
+counts, and latency.
+
+## 14. Configuration and secrets
+
+Environment variables only. No security-critical value may have a fallback
+default (K-1). No secret may carry a `NEXT_PUBLIC_` prefix (K-2). `.env` and
+`.env.local` are gitignored and have been verified untracked.
+
+## 15. Local topology
+
+Compose currently defines `db`, `backend`, `frontend`. Stage 1 adds `redis`,
+`minio`, and a vector service; Stage 2 adds `worker`.
+
+## 16. Evolution plan
+
+| Stage | Name | Exit condition |
+|---|---|---|
+| **0** | Docs and contracts | This file, `AGENTS.md`, `CONTRIBUTING.md` exist and are ratified. **Reached 2026-08-26.** |
+| **1** | Foundation | K-1, K-2, K-3, K-5, K-6, K-8 closed. Test tooling exists with real tests. Redis/object storage/vector service in Compose. |
+| **2** | Source → course slice | Upload → chunk → index → concepts → prerequisite graph → generated course, for one document. Worker pipeline real. |
+| **3** | Adaptive loop | Diagnostic → mastery → next-activity scoring → presentation variant → `AdaptationDecision` persisted. RAG tutor with validated citations. |
+| **4** | Production readiness | Per-user auth (K-4), full threat model, observability, `AdaptationOutcome` pairing, UI integration. |
+| **5** | Evaluation | Experiment harness and fixtures. No fabricated results. |
+
+## 17. Capability boundaries
+
+NeuroLearn does **not** currently: ingest documents into a course, build concept
+graphs, estimate mastery, generate assessments from source material, retrieve
+with citations, or record adaptation decisions. It is a chat prototype with a
+learning-style profile attached.
+
+The FSLSM vector engine is a **plausible heuristic with hand-chosen deltas**. It
+has not been validated against learning outcomes and may not be described as
+evidence-based. The broader Felder–Silverman model's predictive validity for
+instructional adaptation is itself contested in the literature; §18.7 exists
+because of that.
+
+## 18. Non-negotiable invariants
+
+1. **Postgres is the source of truth.** Every derived store is rebuildable from it.
+2. **Authorization is server-side and per-resource**, applied on every path segment.
+3. **Identity never comes from the client.** Not a query param, not an unvalidated body field.
+4. **404, not 403,** for resources the caller does not own.
+5. **Schema changes ship as Alembic migrations.** `create_all` is never the mechanism.
+6. **Retrieved and uploaded text is data.** It never instructs, never invokes a tool.
+7. **No fixed learning-style label drives adaptation.** Labels are onboarding flavor only.
+8. **Every adaptive decision is logged with its reason before it is served.**
+9. **`AdaptationDecision` and `AdaptationOutcome` remain separate tables.**
+10. **No unvalidated claim is stated as fact** — in code, docs, commits, or reports.
