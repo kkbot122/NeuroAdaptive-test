@@ -56,8 +56,7 @@ Verified by direct inspection on 2026-08-26. Each carries the stage that closes 
 |---|---|---|---|---|
 | K-4 | Authorization is header-trust: `x-user-email` plus one shared static token *is* the entire scheme. Anyone holding the token can impersonate any user by changing a header. Acceptable only while the BFF is the sole caller. | **High** | all routers | Stage 4 |
 | K-7 | No queue, no worker, no object storage, no vector index — although `qdrant-client`, `boto3`, and `minio` are declared dependencies imported nowhere. Compose defines only `db`, `backend`, `frontend`. | Medium | `docker-compose.yml` | Stage 1–2 |
-| K-10 | Both learner-evidence paths discard their data. `/api/v1/profile/pulse` is called by three tracking components but does not exist, and the call logs success on a 404. The quiz page makes zero network calls and leaves results in `sessionStorage`. Mastery estimation has no evidence source until both are rebuilt. | **High** | `TrackedParagraph.tsx:20`, `quiz/page.tsx:79` | Stage 1–3 |
-| K-11 | Integer primary keys throughout; §8's target model specifies UUIDs for new tables. A one-way door that must be decided before Stage 2 creates the bulk of the schema. | Medium | all models | Stage 1 |
+| K-11 | Decided 2026-08-27: new tables use UUID, the existing seven keep integer keys. `learning_events` and `quiz_attempts` follow this. Remaining work is only to apply it consistently as Stage 2 adds tables. | Low | `§8` | Stage 2 |
 | K-12 | No LLM provider abstraction. Partially addressed 2026-08-28: the client is now built once, lazily, from settings. Still outstanding: the model id is hardcoded and no call records provider, model, prompt version, tokens or latency. | Medium | `adaptation.py` | Stage 4 |
 | K-13 | PDF parsing runs inline in the request with no size limit, page limit, or timeout. A large upload blocks a worker thread. Chat uploads are also parsed and then discarded — nothing is persisted. | Medium | `chat/router.py:176` | Stage 2 |
 
@@ -65,6 +64,7 @@ Verified by direct inspection on 2026-08-26. Each carries the stage that closes 
 
 | # | Issue | Closed |
 |---|---|---|
+| K-10 | Both learner-evidence paths discarded their data: telemetry posted to a nonexistent `/profile/pulse` while logging success on the 404, and quiz results never left `sessionStorage`. Now persisted to `learning_events` and `quiz_attempts` through authenticated server route handlers, with server-side grading. | 2026-08-28 |
 | K-1 | `SECRET_KEY` and `INTERNAL_API_KEY` shipped working fallback defaults (`"dev_secret_key_123"`, `"CHANGE_ME_..."`), repeated in `auth.ts` and `app/actions/profile.ts`. Both sides failed **open** to a value in the git history. Now required, with a validator rejecting known placeholders and anything under 32 chars. | 2026-08-27 |
 | K-2 | `NEXT_PUBLIC_INTERNAL_API_KEY` was defined in `frontend/.env.local`. It was referenced by zero code paths, so Next.js never inlined it and it never actually leaked — but the prefix invited it. Removed. | 2026-08-27 |
 | K-3 | `Base.metadata.create_all(bind=engine)` ran on every startup alongside a healthy 5-revision Alembic chain. Removed; `wait-for-db.sh` already ran `alembic upgrade head`. | 2026-08-27 |
@@ -95,7 +95,9 @@ Four routers registered in `main.py`: `auth`, `content`, `profile`, `chat`. The
 | Behavioral signal inference from prompt keywords | **PARTIAL / UNVALIDATED** |
 | Calibration quiz → raw_scores → archetype label | **PARTIAL** |
 | Article adaptation endpoint | **BUILT** (repaired 2026-08-26) |
-| Everything in §6 below | **PLANNED** |
+| Learner telemetry → `learning_events` | **BUILT** |
+| Quiz attempts → `quiz_attempts`, graded server-side | **BUILT** |
+| Everything else in §6 below | **PLANNED** |
 
 ## 6. Target architecture
 
@@ -121,9 +123,9 @@ cache and must be rebuildable from Postgres alone.
 ## 8. Data model
 
 **Current:** `User`, `UserProfile`, `Article`, `Paragraph`, `ArticleReading`,
-`ChatSession`, `ChatMessage`. Integer primary keys. Migration chain is linear and
+`ChatSession`, `ChatMessage` (integer keys); `LearningEvent`, `QuizAttempt` (UUID keys). Migration chain is linear and
 single-headed: `ea9facb393a3 → 2f4c2d25f29c → 6963bcb15db5 → 86bda7902ec8 →
-a1b2c3d4e5f6`.
+a1b2c3d4e5f6 → b7d3e91f4c02`.
 
 **Target (PLANNED):** `AuthIdentity`, `UserPreference`, `Course`, `CourseVersion`,
 `Module`, `Lesson`, `LessonConcept`, `SourceDocument`, `DocumentSection`,
