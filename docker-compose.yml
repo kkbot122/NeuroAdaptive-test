@@ -12,6 +12,16 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: neuro_qdrant
+    restart: always
+    ports:
+      - "6333:6333"   # REST
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
   backend:
     build:
       context: ./backend
@@ -25,8 +35,13 @@ services:
       - ./backend/.env
     volumes:
       - ./backend:/app
+      # Uploaded originals live on the backend's local disk this sprint rather
+      # than object storage; served only through an authenticated,
+      # owner-checked endpoint. See SPRINT_LOG.md for the substitution.
+      - uploaded_documents:/app/var/uploads
     depends_on:
       - db
+      - qdrant
 
   frontend:
     build:
@@ -50,3 +65,5 @@ services:
 
 volumes:
   postgres_data:
+  qdrant_data:
+  uploaded_documents:

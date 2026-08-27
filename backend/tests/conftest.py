@@ -15,6 +15,10 @@ os.environ.setdefault("SECRET_KEY", TEST_SECRET_KEY)
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 os.environ.setdefault("GROQ_API_KEY", "test-groq-key")
 
+# Uploaded files must never land in the repo during a test run.
+import tempfile
+os.environ.setdefault("DOCUMENT_STORAGE_ROOT", tempfile.mkdtemp(prefix="neurolearn-test-uploads-"))
+
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
