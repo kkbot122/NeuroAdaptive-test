@@ -1,0 +1,9 @@
+# Test dependencies. Install on top of requirements.txt:
+#   pip install -r requirements.txt -r requirements-dev.txt
+pytest==8.4.2
+httpx==0.28.1
+
+# Note: on Python 3.9 SQLAlchemy pulls greenlet, which has no cp39 wheel for
+# every platform and may try to build from source. The Docker image targets
+# python:3.11-slim, where this does not arise. If installing locally on 3.9
+# and the build fails: pip install greenlet==3.0.3 first.
