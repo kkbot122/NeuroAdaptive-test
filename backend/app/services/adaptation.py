@@ -9,14 +9,32 @@ and ranked directive selection — analogous to a recommendation score.
 """
 
 import math
-import os
-from typing import NamedTuple
+from typing import NamedTuple, Optional
+
 from openai import AsyncOpenAI
 
-client = AsyncOpenAI(
-    base_url="https://api.groq.com/openai/v1",
-    api_key=os.getenv("GROQ_API_KEY"),
-)
+from app.core.config import settings
+
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+_client: Optional[AsyncOpenAI] = None
+
+
+def get_client() -> AsyncOpenAI:
+    """
+    Build the Groq client on first use rather than at import time.
+
+    Constructing it at module scope made importing this module — and so
+    importing the whole app — fail whenever no API key was present, which broke
+    tests, Alembic autogeneration, and any offline tooling. It also read
+    os.getenv directly, which does not consult backend/.env the way
+    pydantic-settings does, so it only ever worked because Compose injects the
+    variable into the real environment.
+    """
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI(base_url=GROQ_BASE_URL, api_key=settings.GROQ_API_KEY)
+    return _client
 
 
 # ─── 1. VECTOR NORMALIZATION ──────────────────────────────────────────────────
@@ -432,7 +450,7 @@ def archetype_to_scores(archetype: str) -> dict:
 async def generate_adapted_response(
     user_query: str,
     raw_scores: dict,
-    chat_history: list | None = None,
+    chat_history: Optional[list] = None,
 ) -> str:
     system_prompt = generate_system_prompt(raw_scores)
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
@@ -441,7 +459,7 @@ async def generate_adapted_response(
     messages.append({"role": "user", "content": user_query})
 
     try:
-        response = await client.chat.completions.create(
+        response = await get_client().chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages,
             temperature=0.7,

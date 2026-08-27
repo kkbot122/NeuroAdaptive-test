@@ -3,10 +3,10 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.modules.auth.models import User
 from app.core.config import settings
-from openai import AsyncOpenAI
 from typing import Optional
 
 from app.services.adaptation import (
+    get_client,
     build_adaptive_system_prompt,
     build_fslsm_system_prompt,
     archetype_to_scores,
@@ -18,12 +18,6 @@ from app.modules.profiling.models import UserProfile
 from app.modules.chat.models import ChatSession, ChatMessage
 
 router = APIRouter()
-
-# Initialize Groq-compatible OpenAI client
-client = AsyncOpenAI(
-    base_url="https://api.groq.com/openai/v1",
-    api_key=settings.GROQ_API_KEY,
-)
 
 
 def _sanitize(text: str) -> str:
@@ -203,7 +197,7 @@ async def send_message(
 
     # ── 5. Call Groq LLM ─────────────────────────────────────────────────────
     try:
-        response = await client.chat.completions.create(
+        response = await get_client().chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages_for_llm,
             temperature=0.7,

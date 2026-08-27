@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -11,7 +13,7 @@ from app.services.adaptation import adaptation_service, archetype_to_scores
 router = APIRouter()
 
 
-def _resolve_raw_scores(profile: UserProfile | None) -> dict:
+def _resolve_raw_scores(profile: Optional[UserProfile]) -> dict:
     """
     Produce the raw_scores dict the adaptation engine expects.
 
