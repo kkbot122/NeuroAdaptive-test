@@ -11,7 +11,14 @@ commands actually run, and what the next item needs.
 ### Planning docs
 
 All four were present in the working tree but **untracked**, so nothing
-inspecting the repository could see them. Now committed (`e1343f9`).
+inspecting the repository could see them. Now committed — `frozen-scope.md` and
+`implementation-plan.md` in `e1343f9`, `architecture.md` separately afterwards.
+
+Correction to `e1343f9`: its message claims it added architecture.md, and it
+did not. The file sat on disk as `ARCHITECTURE.md`, `core.ignorecase` is true,
+and `git add architecture.md` silently staged nothing while the commit
+succeeded on the other two files. Committed properly under the lowercase name
+AGENTS.md §2 references. Caught by a `git status` check, not by the commit.
 
 `AGENTS.md` had been overwritten by a paste carrying chat-UI artifacts
 ("AGENTS(1).md / File", "give one common agents.md file", "Meet Codex in the
