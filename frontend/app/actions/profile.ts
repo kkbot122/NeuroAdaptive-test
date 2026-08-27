@@ -1,13 +1,14 @@
 "use server";
 
 import { auth } from "@/auth";
+import { requireInternalToken } from "@/lib/internal-auth";
 
 const BACKEND_URL =
   process.env.BACKEND_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
   "http://127.0.0.1:8000";
 
-const INTERNAL_TOKEN = process.env.INTERNAL_API_KEY || "dev_secret_key_123";
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth helper
@@ -19,7 +20,7 @@ async function getAuthHeaders() {
   return {
     "Content-Type": "application/json",
     "x-user-email": session.user.email,
-    "x-internal-token": INTERNAL_TOKEN,
+    "x-internal-token": requireInternalToken(),
   };
 }
 

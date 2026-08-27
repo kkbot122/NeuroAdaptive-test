@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
+import { requireInternalToken } from "@/lib/internal-auth";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
     providers: [
@@ -26,7 +27,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                     headers: { 
                         'Content-Type': 'application/json',
                         // SECURITY: This runs on the Next.js server, so it's safe to use the secret here.
-                        'x-internal-token': process.env.INTERNAL_API_KEY || "dev_secret_key_123"
+                        'x-internal-token': requireInternalToken()
                     },
                     body: JSON.stringify({
                         email: user.email,

@@ -1,6 +1,7 @@
 "use server";
 
 import { auth } from "@/auth";
+import { requireInternalToken } from "@/lib/internal-auth";
 import { revalidatePath } from "next/cache";
 
 interface CalibrationPayload {
@@ -19,18 +20,13 @@ export async function submitCalibration(payload: CalibrationPayload) {
       process.env.INTERNAL_API_URL ||
       process.env.NEXT_PUBLIC_API_URL ||
       "http://backend:8000";
-    const internalKey = process.env.INTERNAL_API_KEY;
-
-    if (!internalKey) {
-      return { success: false, error: "Server configuration error." };
-    }
 
     const response = await fetch(`${apiUrl}/api/v1/profile/calibrate`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-user-email": session.user.email,
-        "x-internal-token": internalKey,
+        "x-internal-token": requireInternalToken(),
       },
       body: JSON.stringify(payload),
     });
@@ -59,14 +55,13 @@ export async function overrideUserArchetype(newArchetype: string) {
       process.env.INTERNAL_API_URL ||
       process.env.NEXT_PUBLIC_API_URL ||
       "http://backend:8000";
-    const internalKey = process.env.INTERNAL_API_KEY;
 
     const response = await fetch(`${apiUrl}/api/v1/profile/override`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
         "x-user-email": session.user.email,
-        "x-internal-token": internalKey as string,
+        "x-internal-token": requireInternalToken(),
       },
       body: JSON.stringify({ primary_archetype: newArchetype }),
     });

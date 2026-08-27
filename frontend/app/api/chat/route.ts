@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth"; // Update this import if your auth is elsewhere
+import { requireInternalToken } from "@/lib/internal-auth";
 
 export async function POST(req: NextRequest) {
   try {
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         "x-user-email": session.user.email,
-        "x-internal-token": internalKey,
+        "x-internal-token": requireInternalToken(),
         // Content-Type set automatically by fetch when body is FormData
       },
       body: backendFormData,

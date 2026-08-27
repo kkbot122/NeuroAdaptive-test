@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { requireInternalToken } from "@/lib/internal-auth";
 
 export async function GET(req: NextRequest) {
   try {
@@ -21,12 +22,11 @@ export async function GET(req: NextRequest) {
       process.env.NEXT_PUBLIC_API_URL ||
       "http://backend:8000";
       
-    const internalKey = process.env.INTERNAL_API_KEY;
 
     const response = await fetch(`${apiUrl}/api/v1/chat/sessions/${sessionId}/messages`, {
       headers: {
         "x-user-email": session.user.email,
-        "x-internal-token": internalKey as string,
+        "x-internal-token": requireInternalToken(),
       },
       cache: "no-store"
     });

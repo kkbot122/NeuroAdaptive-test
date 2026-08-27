@@ -1,5 +1,6 @@
 // frontend/app/(pages)/mission/layout.tsx
 import { auth } from "@/auth";
+import { requireInternalToken } from "@/lib/internal-auth";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers"; // <-- Import headers!
 
@@ -20,7 +21,7 @@ export default async function MissionLayout({
     const res = await fetch(`${apiUrl}/api/v1/profile/me`, {
       headers: {
         "x-user-email": session.user.email,
-        "x-internal-token": process.env.INTERNAL_API_KEY as string,
+        "x-internal-token": requireInternalToken(),
       },
       cache: "no-store", 
     });

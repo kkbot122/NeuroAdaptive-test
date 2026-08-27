@@ -1,5 +1,6 @@
 // frontend/app/(pages)/dashboard/page.tsx
 import { auth, signOut } from "@/auth";
+import { requireInternalToken } from "@/lib/internal-auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
@@ -35,7 +36,7 @@ export default async function DashboardPage() {
     
   const commonHeaders = {
     "x-user-email": session.user.email,
-    "x-internal-token": process.env.INTERNAL_API_KEY as string,
+    "x-internal-token": requireInternalToken(),
   };
 
   const [profileRes, sessionsRes] = await Promise.all([

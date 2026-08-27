@@ -3,6 +3,7 @@ import { auth } from "@/auth"; // Make sure this points to your NextAuth config
 import TrackedImage from "@/components/TrackedImage";
 import CalibrationQuiz from "@/components/CalibrationQuiz";
 import AdaptiveContent from "@/components/AdaptiveContent";
+import { requireInternalToken } from "@/lib/internal-auth";
 
 interface Paragraph {
   id: number;
@@ -27,7 +28,7 @@ async function getArticle(id: string, email: string): Promise<Article | null> {
       cache: "no-store",
       headers: {
         "x-user-email": email,
-        "x-internal-token": process.env.INTERNAL_API_KEY || "",
+        "x-internal-token": requireInternalToken(),
       },
     });
     if (!res.ok) return null;
@@ -45,7 +46,7 @@ async function getUserProfile(email: string) {
       cache: "no-store",
       headers: {
         "x-user-email": email,
-        "x-internal-token": process.env.INTERNAL_API_KEY || "",
+        "x-internal-token": requireInternalToken(),
       },
     });
     if (!res.ok) return null;
