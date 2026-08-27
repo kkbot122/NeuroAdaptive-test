@@ -2,10 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.db.session import engine
-from app.db.base import Base
 
 # --- Import Models so SQLAlchemy registers them ---
+# Still required without create_all: the string-based relationship() targets
+# below are resolved against whatever is registered on Base.metadata.
 from app.modules.auth import models as auth_models
 from app.modules.content import models as content_models
 from app.modules.profiling import models as profiling_models
@@ -22,9 +22,13 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
 
-# --- Create tables on startup ---
-Base.metadata.create_all(bind=engine)
-
+# Schema is owned by Alembic. `Base.metadata.create_all()` used to run here,
+# which meant two mechanisms could shape the database and silently diverge:
+# create_all never alters an existing table, so any migration that changed a
+# column applied only where the table did not already exist.
+#
+#     alembic upgrade head
+#
 # --- CORS configuration ---
 origins = [
     "http://localhost:3000",
