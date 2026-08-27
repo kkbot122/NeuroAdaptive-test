@@ -55,11 +55,10 @@ Verified by direct inspection on 2026-08-26. Each carries the stage that closes 
 | # | Issue | Severity | Evidence | Closes in |
 |---|---|---|---|---|
 | K-4 | Authorization is header-trust: `x-user-email` plus one shared static token *is* the entire scheme. Anyone holding the token can impersonate any user by changing a header. Acceptable only while the BFF is the sole caller. | **High** | all routers | Stage 4 |
-| K-6 | No test tooling of any kind — no pytest, no jest/vitest, no `test` script. `backend/test_db.py` is a connectivity script, not a test. | **High** | both manifests | Stage 1 |
 | K-7 | No queue, no worker, no object storage, no vector index — although `qdrant-client`, `boto3`, and `minio` are declared dependencies imported nowhere. Compose defines only `db`, `backend`, `frontend`. | Medium | `docker-compose.yml` | Stage 1–2 |
 | K-10 | Both learner-evidence paths discard their data. `/api/v1/profile/pulse` is called by three tracking components but does not exist, and the call logs success on a 404. The quiz page makes zero network calls and leaves results in `sessionStorage`. Mastery estimation has no evidence source until both are rebuilt. | **High** | `TrackedParagraph.tsx:20`, `quiz/page.tsx:79` | Stage 1–3 |
 | K-11 | Integer primary keys throughout; §8's target model specifies UUIDs for new tables. A one-way door that must be decided before Stage 2 creates the bulk of the schema. | Medium | all models | Stage 1 |
-| K-12 | No LLM provider abstraction. The client is constructed twice and inconsistently — `chat/router.py:23` reads `settings.GROQ_API_KEY`, `adaptation.py:16` reads `os.getenv` directly — with the model id hardcoded at both. Blocks per-call provenance (Stage 4) and model comparison (Stage 5). | Medium | see files | Stage 1 |
+| K-12 | No LLM provider abstraction. Partially addressed 2026-08-28: the client is now built once, lazily, from settings. Still outstanding: the model id is hardcoded and no call records provider, model, prompt version, tokens or latency. | Medium | `adaptation.py` | Stage 4 |
 | K-13 | PDF parsing runs inline in the request with no size limit, page limit, or timeout. A large upload blocks a worker thread. Chat uploads are also parsed and then discarded — nothing is persisted. | Medium | `chat/router.py:176` | Stage 2 |
 
 ### Closed
@@ -71,6 +70,8 @@ Verified by direct inspection on 2026-08-26. Each carries the stage that closes 
 | K-3 | `Base.metadata.create_all(bind=engine)` ran on every startup alongside a healthy 5-revision Alembic chain. Removed; `wait-for-db.sh` already ran `alembic upgrade head`. | 2026-08-27 |
 | K-5 | Three mutually incompatible archetype vocabularies coexisted. `core/archetypes.py` (6 labels) had zero importers; `modules/profiling/router.py` (4 labels, two unique) was never registered. Both deleted; `profiling/models.py` retained. | 2026-08-27 |
 | K-8 | `backend/requirements.txt` was UTF-16LE with mixed CRLF/LF. Converted to UTF-8; package set unchanged. | 2026-08-27 |
+| K-6 | No test tooling existed in either manifest. pytest added with 92 executed tests across a unit and an API layer, including regression coverage for K-1 and K-9. Frontend still has no runner. | 2026-08-28 |
+| K-14 | The app could not be imported without a live Groq key: the client was built at module scope, and via `os.getenv`, which never read `backend/.env`. Now lazy and settings-backed. | 2026-08-28 |
 | K-9 | `GET /api/v1/content/articles/{id}` accepted a caller-supplied `user_id` defaulting to `1` with no auth dependency, and passed a `str` where a `dict` was required — a guaranteed `AttributeError`. | 2026-08-26 |
 
 ## 5. Current architecture — as built

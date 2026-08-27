@@ -69,10 +69,17 @@ not all seven, and not zero.
 **Every endpoint test must include a negative authorization case** — a caller who
 does not own the resource receives 404, not 403, and not the resource.
 
-> **Current reality:** none of these directories exist yet and no runner is
-> installed (`SYSTEM_ARCHITECTURE.md` K-6). Establishing pytest and the first
-> unit + API layers is Stage 1 work. Until then, state plainly in the PR that
-> tests could not be run.
+**Running the backend suite:**
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest                    # from backend/
+```
+
+> **Current reality:** the unit and API layers exist and run (92 tests). The
+> repository/service, contract, component, end-to-end and evaluation layers do
+> not yet, and the frontend has no runner at all. State plainly in the PR when a
+> layer your change touches has no coverage.
 
 ## 5. Running things locally
 
