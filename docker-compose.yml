@@ -8,7 +8,10 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: neuro_db
     ports:
-      - "5432:5432"
+      # Host-side 5433: this machine already runs a native PostgreSQL on 5432.
+      # Containers still reach this database at db:5432 over the compose
+      # network, so only external tools (psql, a GUI) use the mapped port.
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
