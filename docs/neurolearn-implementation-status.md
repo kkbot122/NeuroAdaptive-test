@@ -287,7 +287,9 @@ infrastructure; it is the precondition for Phase 3 being trustworthy at all.
 **Sequencing note.** R-8 (UUID vs. integer PKs) is a one-way door that must be
 decided in Phase 1, before Phase 2 creates the bulk of the schema.
 
-**Phase 1, in priority order:**
+**Phase 1, in priority order.** Items 2, 3, 4 and 8 were completed on
+2026-08-27 on branch `chore/stage1-foundation`; see `SYSTEM_ARCHITECTURE.md` §4
+"Closed". The rest are open.
 
 1. Install pytest + httpx; write the first unit tests (`fslsm.py`,
    `adaptation.py` math) and the first API test including a negative-authorization

@@ -4,7 +4,7 @@ Architecture of record for NeuroLearn. Describes what exists today, what is
 targeted, and the staged route between them. Section numbers are stable and are
 referenced by `AGENTS.md` and by the phase pack — do not renumber.
 
-Last verified against the codebase: **2026-08-26**.
+Last verified against the codebase: **2026-08-27**.
 
 ---
 
@@ -50,17 +50,28 @@ consistently; an unlabelled claim is a defect.
 
 Verified by direct inspection on 2026-08-26. Each carries the stage that closes it.
 
+### Open
+
 | # | Issue | Severity | Evidence | Closes in |
 |---|---|---|---|---|
-| K-1 | `SECRET_KEY` and `INTERNAL_API_KEY` ship real fallback defaults (`"dev_secret_key_123"`, `"CHANGE_ME_..."`). The frontend repeats the same literal in `auth.ts` and `app/actions/profile.ts`. Both sides fail **open** to a value committed to git. | **High** | `config.py:12,15` | Stage 1 |
-| K-2 | `NEXT_PUBLIC_INTERNAL_API_KEY` is defined in `frontend/.env.local`. Currently referenced by zero code paths, so Next.js does not inline it — the exposure is **latent, not active**. Delete the variable. | Medium | `.env.local` | Stage 1 |
-| K-3 | `Base.metadata.create_all(bind=engine)` runs on every startup alongside a healthy 5-revision Alembic chain. | Medium | `app/main.py:26` | Stage 1 |
 | K-4 | Authorization is header-trust: `x-user-email` plus one shared static token *is* the entire scheme. Anyone holding the token can impersonate any user by changing a header. Acceptable only while the BFF is the sole caller. | **High** | all routers | Stage 4 |
-| K-5 | Three mutually incompatible archetype vocabularies coexist. `app/core/archetypes.py` (6 labels) has **zero importers**. `app/modules/profiling/router.py` (4 labels, two unique) is **never registered** in `main.py`. Only `app/modules/profile/service.py` reaches the database. | Medium | see files | Stage 1 |
 | K-6 | No test tooling of any kind — no pytest, no jest/vitest, no `test` script. `backend/test_db.py` is a connectivity script, not a test. | **High** | both manifests | Stage 1 |
-| K-7 | No queue, no worker, no object storage, no vector index — although `qdrant-client`, `boto3`, and `minio` are already declared dependencies. Compose defines only `db`, `backend`, `frontend`. | Medium | `docker-compose.yml` | Stage 1–2 |
-| K-8 | `backend/requirements.txt` is UTF-16LE with mixed CRLF/LF line endings. `pip` copes; most tooling does not. | Low | `file(1)` | Stage 1 |
-| K-9 | `GET /api/v1/content/articles/{id}` accepted a caller-supplied `user_id` defaulting to `1`, with no auth dependency, and passed a `str` where the adaptation engine required a `dict` — a guaranteed `AttributeError`. | — | — | **Fixed 2026-08-26** |
+| K-7 | No queue, no worker, no object storage, no vector index — although `qdrant-client`, `boto3`, and `minio` are declared dependencies imported nowhere. Compose defines only `db`, `backend`, `frontend`. | Medium | `docker-compose.yml` | Stage 1–2 |
+| K-10 | Both learner-evidence paths discard their data. `/api/v1/profile/pulse` is called by three tracking components but does not exist, and the call logs success on a 404. The quiz page makes zero network calls and leaves results in `sessionStorage`. Mastery estimation has no evidence source until both are rebuilt. | **High** | `TrackedParagraph.tsx:20`, `quiz/page.tsx:79` | Stage 1–3 |
+| K-11 | Integer primary keys throughout; §8's target model specifies UUIDs for new tables. A one-way door that must be decided before Stage 2 creates the bulk of the schema. | Medium | all models | Stage 1 |
+| K-12 | No LLM provider abstraction. The client is constructed twice and inconsistently — `chat/router.py:23` reads `settings.GROQ_API_KEY`, `adaptation.py:16` reads `os.getenv` directly — with the model id hardcoded at both. Blocks per-call provenance (Stage 4) and model comparison (Stage 5). | Medium | see files | Stage 1 |
+| K-13 | PDF parsing runs inline in the request with no size limit, page limit, or timeout. A large upload blocks a worker thread. Chat uploads are also parsed and then discarded — nothing is persisted. | Medium | `chat/router.py:176` | Stage 2 |
+
+### Closed
+
+| # | Issue | Closed |
+|---|---|---|
+| K-1 | `SECRET_KEY` and `INTERNAL_API_KEY` shipped working fallback defaults (`"dev_secret_key_123"`, `"CHANGE_ME_..."`), repeated in `auth.ts` and `app/actions/profile.ts`. Both sides failed **open** to a value in the git history. Now required, with a validator rejecting known placeholders and anything under 32 chars. | 2026-08-27 |
+| K-2 | `NEXT_PUBLIC_INTERNAL_API_KEY` was defined in `frontend/.env.local`. It was referenced by zero code paths, so Next.js never inlined it and it never actually leaked — but the prefix invited it. Removed. | 2026-08-27 |
+| K-3 | `Base.metadata.create_all(bind=engine)` ran on every startup alongside a healthy 5-revision Alembic chain. Removed; `wait-for-db.sh` already ran `alembic upgrade head`. | 2026-08-27 |
+| K-5 | Three mutually incompatible archetype vocabularies coexisted. `core/archetypes.py` (6 labels) had zero importers; `modules/profiling/router.py` (4 labels, two unique) was never registered. Both deleted; `profiling/models.py` retained. | 2026-08-27 |
+| K-8 | `backend/requirements.txt` was UTF-16LE with mixed CRLF/LF. Converted to UTF-8; package set unchanged. | 2026-08-27 |
+| K-9 | `GET /api/v1/content/articles/{id}` accepted a caller-supplied `user_id` defaulting to `1` with no auth dependency, and passed a `str` where a `dict` was required — a guaranteed `AttributeError`. | 2026-08-26 |
 
 ## 5. Current architecture — as built
 
@@ -71,8 +82,8 @@ Server components and route handlers hold the internal token; the browser never
 sees it.
 
 **Backend** — FastAPI + Pydantic v2 + SQLAlchemy 2 + Alembic on PostgreSQL 16.
-Four routers registered in `main.py`: `auth`, `content`, `profile`, `chat`.
-A fifth module, `profiling`, defines a router that is never registered.
+Four routers registered in `main.py`: `auth`, `content`, `profile`, `chat`. The
+`profiling` module retains only `models.py`, which owns `UserProfile`.
 
 | Capability | Status |
 |---|---|
@@ -180,8 +191,10 @@ counts, and latency.
 
 ## 14. Configuration and secrets
 
-Environment variables only. No security-critical value may have a fallback
-default (K-1). No secret may carry a `NEXT_PUBLIC_` prefix (K-2). `.env` and
+Environment variables only. `INTERNAL_API_KEY` and `SECRET_KEY` are required
+and validated at startup; there is no fallback default, because one fails open.
+No secret may carry a `NEXT_PUBLIC_` prefix. Templates live in
+`backend/.env.example` and `frontend/.env.example`. `.env` and
 `.env.local` are gitignored and have been verified untracked.
 
 ## 15. Local topology
@@ -194,7 +207,7 @@ Compose currently defines `db`, `backend`, `frontend`. Stage 1 adds `redis`,
 | Stage | Name | Exit condition |
 |---|---|---|
 | **0** | Docs and contracts | This file, `AGENTS.md`, `CONTRIBUTING.md` exist and are ratified. **Reached 2026-08-26.** |
-| **1** | Foundation | K-1, K-2, K-3, K-5, K-6, K-8 closed. Test tooling exists with real tests. Redis/object storage/vector service in Compose. |
+| **1** | Foundation | K-1, K-2, K-3, K-5, K-8 closed 2026-08-27. Remaining: K-6 (test tooling), K-10 (evidence paths), K-11 (PK type), K-12 (provider abstraction), and Redis/object storage/vector service in Compose. |
 | **2** | Source → course slice | Upload → chunk → index → concepts → prerequisite graph → generated course, for one document. Worker pipeline real. |
 | **3** | Adaptive loop | Diagnostic → mastery → next-activity scoring → presentation variant → `AdaptationDecision` persisted. RAG tutor with validated citations. |
 | **4** | Production readiness | Per-user auth (K-4), full threat model, observability, `AdaptationOutcome` pairing, UI integration. |
