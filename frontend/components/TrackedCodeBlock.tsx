@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useTrackVisibility } from "@/hooks/useTrackVisibility";
+import { sendLearningEvent } from "@/lib/telemetry";
 
 interface Props {
   code: string;
@@ -15,23 +16,12 @@ export default function TrackedCodeBlock({ code, language, id }: Props) {
 
   useEffect(() => {
     if (secondsViewed > 0 && secondsViewed % 5 === 0) {
-      const sendPulse = async () => {
-        try {
-          await fetch("http://localhost:8000/api/v1/profile/pulse", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              paragraph_id: id,
-              seconds: 5,
-              dimension: "logic" // This triggers the logic_preference score
-            }),
-          });
-          console.log(`⚙️ Logic Pulse saved for Block ${id}`);
-        } catch (error) {
-          console.error("❌ Failed to send logic pulse:", error);
-        }
-      };
-      sendPulse();
+      sendLearningEvent({
+        event_type: "code_view",
+        dimension: "logic",
+        seconds: 5,
+        target_id: String(id),
+      });
     }
   }, [secondsViewed, id]);
 

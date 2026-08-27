@@ -74,8 +74,31 @@ export default function QuizPage() {
     return { score, total: quiz.questions.length, missedTopics };
   };
 
-  const handleFinish = () => {
+  const handleFinish = async () => {
     const results = calculateResults();
+
+    // Persist server-side so the attempt survives the tab and can feed mastery
+    // estimation. The backend re-grades from questions + answers; the score
+    // computed here is only for the results screen. Failure is logged, not
+    // surfaced — a telemetry problem must not trap the learner on this page.
+    try {
+      const response = await fetch("/api/quiz", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: quiz.title,
+          topic: quiz.questions[0]?.topic ?? null,
+          questions: quiz.questions,
+          answers: quiz.questions.map((_, i) => answers[i] ?? null),
+        }),
+      });
+      if (!response.ok) {
+        console.warn(`Quiz attempt not recorded: ${response.status}`);
+      }
+    } catch (error) {
+      console.warn("Quiz attempt failed to send:", error);
+    }
+
     sessionStorage.setItem("last_quiz_results", JSON.stringify({
       title: quiz.title,
       score: results.score,

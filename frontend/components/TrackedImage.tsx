@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useTrackVisibility } from "@/hooks/useTrackVisibility";
+import { sendLearningEvent } from "@/lib/telemetry";
 import Image from "next/image";
 
 interface Props {
@@ -16,23 +17,12 @@ export default function TrackedImage({ src, alt, id }: Props) {
 
   useEffect(() => {
     if (secondsViewed > 0 && secondsViewed % 5 === 0) {
-      const sendPulse = async () => {
-        try {
-          await fetch("http://localhost:8000/api/v1/profile/pulse", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              paragraph_id: id, // We reuse this field for simplicity
-              seconds: 5,
-              dimension: "visual" // CRITICAL: This triggers the visual_affinity score
-            }),
-          });
-          console.log(`📸 Visual Pulse saved for Image ${id}`);
-        } catch (error) {
-          console.error("❌ Failed to send visual pulse:", error);
-        }
-      };
-      sendPulse();
+      sendLearningEvent({
+        event_type: "image_view",
+        dimension: "visual",
+        seconds: 5,
+        target_id: String(id),
+      });
     }
   }, [secondsViewed, id]);
 
