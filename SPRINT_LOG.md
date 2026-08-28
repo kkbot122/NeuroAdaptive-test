@@ -205,3 +205,40 @@ GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 Everything from the INDEXING stage onward needs it: embedding chunks, concept
 extraction, curriculum generation, grounded lessons, question generation.
 Without it the pipeline correctly stops at `PAUSED` after CHUNKING.
+
+---
+
+## 2026-08-28 — Out of band: Groq model retirement (branch `fix/groq-model-deprecated`)
+
+Not part of the numbered scope. Every chat request was returning 404:
+`The model llama-3.3-70b-versatile does not exist or you do not have access to
+it`. Groq has retired it — confirmed against the live API, which now offers 14
+models and not that one.
+
+Two faults, fixed separately:
+
+1. **Hardcoded model id** at two call sites, so a provider retirement meant a
+   code change in two files. Now `settings.GROQ_MODEL`, defaulting to
+   `openai/gpt-oss-120b` (verified with a real completion on this account).
+2. **The provider's raw error was shown to the learner** — JSON naming our
+   model and the provider's internal error codes. Now logged server-side with
+   type/status/model; the caller gets a category. Status 500 → 502, since the
+   API is healthy and its upstream is not.
+
+Worth recording: while probing replacements, `gpt-oss-*` returned empty content
+at `max_tokens=12`. That is truncation, not incapacity — they emit reasoning
+tokens before output and answer normally at a realistic budget. A shallower
+check would have wrongly ruled them out.
+
+Also worth recording: the first version of the tests patched
+`app.services.adaptation.get_client`, but the router imports that function into
+its own namespace, so the patch never applied and the tests were silently
+hitting the real Groq API. They only passed for the 401 case, by accident,
+because the fake test key produced the same status. Patched at the point of use.
+
+Verified live: `POST /api/v1/chat/message` against the running stack with a
+real user returns a grounded-format answer. Suite at 185.
+
+**This does not change the RAG position.** Chat still answers from model
+weights: no retrieval, no citations, nothing indexed. Qdrant holds 0
+collections and `chunks` holds 0 rows.
