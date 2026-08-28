@@ -51,6 +51,15 @@ class Course(Base):
     # created").
     sources_finalized_at = Column(DateTime(timezone=True), nullable=True)
 
+    # The only field a curriculum regeneration ever changes on this row, and
+    # only via CurriculumService.activate_version() after validation passes.
+    # No FK constraint declared here (would create a circular table
+    # dependency at migration time between courses and course_versions);
+    # referential integrity for this pointer is enforced in the service
+    # layer, which is also where every other cross-module write in this
+    # codebase already lives.
+    active_version_id = Column(Uuid, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -16,6 +16,7 @@ from app.modules.courses import models as courses_models
 from app.modules.documents import models as documents_models
 from app.modules.jobs import models as jobs_models
 from app.modules.documents import chunk_models as chunk_models
+from app.modules.curriculum import models as curriculum_models
 
 # --- Import Routers ---
 from app.modules.auth.router import router as auth_router
