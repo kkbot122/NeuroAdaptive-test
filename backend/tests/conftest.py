@@ -105,8 +105,12 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     to exercise the real Gemini/Qdrant adapters does so as a narrow,
     explicitly-marked integration test, not through this fixture.
     """
+    from app.modules.adaptation.router import _service as adaptation_service_dep
+    from app.modules.adaptation.service import AdaptationService
     from app.modules.jobs.router import _service as job_service_dep
     from app.modules.jobs.service import JobService
+    from app.modules.mastery.router import _service as mastery_service_dep
+    from app.modules.mastery.service import MasteryService
     from app.modules.retrieval.router import _service as retrieval_service_dep
     from app.modules.retrieval.service import RetrievalService
 
@@ -122,6 +126,12 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     )
     app.dependency_overrides[retrieval_service_dep] = lambda: RetrievalService(
         db_session, fake_embeddings, fake_vectors
+    )
+    app.dependency_overrides[mastery_service_dep] = lambda: MasteryService(
+        db_session, fake_generation, fake_embeddings
+    )
+    app.dependency_overrides[adaptation_service_dep] = lambda: AdaptationService(
+        db_session, fake_generation, fake_embeddings
     )
 
     with TestClient(app) as c:
