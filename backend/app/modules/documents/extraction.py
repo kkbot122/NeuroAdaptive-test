@@ -1,7 +1,7 @@
 """
 Document text extraction and structure-aware chunking.
 
-Pure functions over bytes and text — no database, no network, no model call —
+Pure functions over bytes and text -- no database, no network, no model call --
 so both halves are testable without infrastructure. The job runner is what
 persists their output.
 
@@ -12,16 +12,49 @@ reason, never a silent empty result.
 """
 import io
 import re
+import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-# Unvalidated defaults. Named and configurable per AGENTS.md §1; these are
-# starting points chosen for readability of retrieved context, not tuned.
-TARGET_CHUNK_CHARS = 1200
-MIN_CHUNK_CHARS = 120
-CHUNK_OVERLAP_CHARS = 150
+import tiktoken
+
+# Unvalidated defaults. Named and configurable per AGENTS.md §1. Sized in
+# tokens, not characters, because token budget is what a downstream LLM call
+# actually pays for.
+TARGET_CHUNK_TOKENS = 650      # midpoint of the 500-800 token target range
+MIN_CHUNK_TOKENS = 40
+MAX_CHUNK_TOKENS = 800
+CHUNK_OVERLAP_TOKENS = 75      # midpoint of the 50-100 token overlap range
 
 SUPPORTED_TEXT_SUFFIXES = (".txt", ".md", ".markdown")
+
+# Bumped whenever extraction or chunking logic changes in a way that would
+# alter chunk boundaries or content for the same input. Deterministic chunk
+# IDs are derived from this, so a version bump is what makes a reprocess
+# produce a fresh set of IDs instead of silently colliding with stale ones.
+EXTRACTION_VERSION = 1
+
+# A stable namespace for chunk id derivation (uuid5), so ids are reproducible
+# across processes without depending on Python's hash randomization.
+_CHUNK_ID_NAMESPACE = uuid.UUID("6f2f9a7e-6b1a-4a3e-9c2d-8f1e2b7a9c3d")
+
+_encoding = tiktoken.get_encoding("cl100k_base")
+
+
+def count_tokens(text: str) -> int:
+    return len(_encoding.encode(text))
+
+
+def deterministic_chunk_id(document_id, extraction_version: int, ordinal: int) -> uuid.UUID:
+    """
+    hash(document_id, extraction_version, ordinal) -> a stable UUID.
+
+    Makes a retried job overwrite identically instead of duplicating, and
+    means a citation recorded elsewhere keeps pointing at the same chunk
+    across a reprocess with the same extraction_version.
+    """
+    key = f"{document_id}:{extraction_version}:{ordinal}"
+    return uuid.uuid5(_CHUNK_ID_NAMESPACE, key)
 
 
 class ExtractionError(Exception):
@@ -60,6 +93,24 @@ class ExtractedDocument:
     def total_chars(self) -> int:
         return sum(len(p.text) for p in self.pages)
 
+    def full_text_with_offsets(self):
+        """
+        Concatenate all pages into one string, joined by a blank line, and
+        return (text, [(page_number, start_offset, end_offset), ...]) so a
+        later char offset within the concatenation maps back to a page.
+        """
+        parts = []
+        spans = []
+        cursor = 0
+        for page in self.pages:
+            start = cursor
+            parts.append(page.text)
+            cursor += len(page.text)
+            spans.append((page.page_number, start, cursor))
+            cursor += 2  # for the "\n\n" joiner
+            parts.append("\n\n")
+        return "".join(parts), spans
+
 
 @dataclass
 class ProposedChunk:
@@ -69,9 +120,12 @@ class ProposedChunk:
     content_type: str
     page_start: Optional[int]
     page_end: Optional[int]
+    char_start: int
+    char_end: int
+    token_count: int
 
 
-# ── extraction ───────────────────────────────────────────────────────────────
+# -- extraction ----------------------------------------------------------------
 
 
 def extract(raw: bytes, filename: str) -> ExtractedDocument:
@@ -95,7 +149,6 @@ def _extract_plaintext(raw: bytes) -> ExtractedDocument:
 
     if not text.strip():
         raise NoExtractableText("The file is empty.")
-    # Plain text has no pages; treat the whole file as page 1.
     return ExtractedDocument(pages=[ExtractedPage(page_number=1, text=text)])
 
 
@@ -125,9 +178,9 @@ def _extract_pdf(raw: bytes) -> ExtractedDocument:
     if document.page_count == 0:
         raise NoExtractableText("The PDF contains no pages.")
 
-    if document.total_chars < MIN_CHUNK_CHARS:
+    if document.total_chars < 120:
         raise NoExtractableText(
-            "No selectable text was found in this PDF — it looks like a scan or "
+            "No selectable text was found in this PDF -- it looks like a scan or "
             "images of pages. Scanned documents are not supported yet; upload a "
             "text-based PDF, or paste the content as a .txt or .md file."
         )
@@ -135,44 +188,86 @@ def _extract_pdf(raw: bytes) -> ExtractedDocument:
     return document
 
 
-# ── chunking ─────────────────────────────────────────────────────────────────
+# -- chunking --------------------------------------------------------------------
 
 _MD_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
-# A short, title-case-ish line with no terminal punctuation, used as a weak
-# heading signal in extracted PDF text which carries no markup.
 _BARE_HEADING = re.compile(r"^(?:\d+(?:\.\d+)*\.?\s+)?[A-Z][^.!?]{2,79}$")
-
 _FENCE = re.compile(r"^```")
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _split_oversized_block(block: str, limit: int) -> List[str]:
+    """
+    A single paragraph with no internal blank lines can still exceed the
+    token cap on its own (long-form prose with no natural break). Split at
+    sentence boundaries and accumulate up to `limit` tokens per piece, so the
+    cap is respected without cutting a sentence in half.
+    """
+    sentences = [s for s in _SENTENCE_SPLIT.split(block) if s.strip()]
+    if len(sentences) <= 1:
+        return [block]
+
+    pieces: List[str] = []
+    current: List[str] = []
+    current_tokens = 0
+    for sentence in sentences:
+        sentence_tokens = count_tokens(sentence)
+        if current and current_tokens + sentence_tokens > limit:
+            pieces.append(" ".join(current))
+            current, current_tokens = [], 0
+        current.append(sentence)
+        current_tokens += sentence_tokens
+    if current:
+        pieces.append(" ".join(current))
+    return pieces
 
 
 def chunk(document: ExtractedDocument) -> List[ProposedChunk]:
     """
-    Split into retrieval-sized pieces, preserving heading context and pages.
+    Split into retrieval-sized pieces, preserving heading context, pages, and
+    character offsets into the full document text.
 
-    Paragraph boundaries are respected before size: a chunk that splits
-    mid-sentence retrieves badly and cites worse. Fenced code blocks are never
-    split, and are marked so retrieval can tell prose from code.
+    A chunk never spans a heading boundary. Code fences are kept whole and
+    tagged content_type="code" regardless of size, since splitting a code
+    block produces something neither half can be understood from. Sizing and
+    overlap are measured in tokens (tiktoken cl100k_base), because token
+    budget -- not character count -- is what a downstream LLM call pays for.
     """
+    full_text, page_spans = document.full_text_with_offsets()
+
     chunks: List[ProposedChunk] = []
     heading_stack: List[str] = []
     buffer: List[str] = []
     buffer_pages: List[int] = []
+    buffer_offsets: List[int] = []
     position = 0
 
     def heading_path() -> Optional[str]:
         return " > ".join(heading_stack) if heading_stack else None
 
     def flush(content_type: str = "prose", force: bool = False) -> None:
-        nonlocal buffer, buffer_pages, position
+        nonlocal buffer, buffer_pages, buffer_offsets, position
         text = "\n\n".join(b for b in buffer if b.strip()).strip()
-        buffer, pages = [], buffer_pages
-        buffer_pages = []
-        if not force and len(text) < MIN_CHUNK_CHARS:
-            # Too small to stand alone; fold it back rather than emit a stub.
-            if text and chunks:
-                chunks[-1].text = f"{chunks[-1].text}\n\n{text}"
-                chunks[-1].page_end = max(pages) if pages else chunks[-1].page_end
+        pages = buffer_pages
+        offsets = buffer_offsets
+        buffer, buffer_pages, buffer_offsets = [], [], []
+
+        if not text:
             return
+
+        tokens = count_tokens(text)
+        if not force and tokens < MIN_CHUNK_TOKENS:
+            if chunks:
+                prev = chunks[-1]
+                prev.text = f"{prev.text}\n\n{text}"
+                prev.page_end = max(pages) if pages else prev.page_end
+                if offsets:
+                    prev.char_end = offsets[-1] + len(text)
+                prev.token_count = count_tokens(prev.text)
+            return
+
+        char_start = offsets[0] if offsets else 0
+        char_end = char_start + len(text)
         chunks.append(
             ProposedChunk(
                 position=position,
@@ -181,38 +276,56 @@ def chunk(document: ExtractedDocument) -> List[ProposedChunk]:
                 content_type=content_type,
                 page_start=min(pages) if pages else None,
                 page_end=max(pages) if pages else None,
+                char_start=char_start,
+                char_end=char_end,
+                token_count=tokens,
             )
         )
         position += 1
 
     for page in document.pages:
+        page_text = page.text
+        try:
+            page_start_offset = full_text.index(page_text) if page_text.strip() else 0
+        except ValueError:
+            page_start_offset = 0
+
         in_fence = False
         fence_buffer: List[str] = []
+        fence_offset = None
+        search_from = 0
 
-        for block in _split_blocks(page.text):
+        for block in _split_blocks(page_text):
+            if block:
+                found = page_text.find(block, search_from)
+                block_offset = page_start_offset + (found if found >= 0 else search_from)
+                search_from = (found if found >= 0 else search_from) + len(block)
+            else:
+                block_offset = page_start_offset + search_from
+
             stripped = block.strip()
             if not stripped:
                 continue
 
             if _FENCE.match(stripped):
                 if in_fence:
-                    # Closing fence of a block that spanned blank lines.
                     fence_buffer.append(block)
-                    flush()  # close any prose that preceded the code
+                    flush()
                     buffer = ["\n".join(fence_buffer)]
                     buffer_pages = [page.page_number]
+                    buffer_offsets = [fence_offset if fence_offset is not None else block_offset]
                     flush(content_type="code", force=True)
                     fence_buffer, in_fence = [], False
                 elif stripped.count("```") >= 2:
-                    # A complete fenced block with no blank lines inside, so
-                    # the opening and closing fences arrive in one block.
                     flush()
                     buffer = [stripped]
                     buffer_pages = [page.page_number]
+                    buffer_offsets = [block_offset]
                     flush(content_type="code", force=True)
                 else:
                     in_fence = True
                     fence_buffer = [block]
+                    fence_offset = block_offset
                 continue
 
             if in_fence:
@@ -224,33 +337,58 @@ def chunk(document: ExtractedDocument) -> List[ProposedChunk]:
                 flush()
                 level = len(md.group(1)) if md else 1
                 title = md.group(2) if md else stripped
-                del heading_stack[level - 1 :]
+                del heading_stack[level - 1:]
                 heading_stack.append(title)
                 continue
 
-            buffer.append(stripped)
-            buffer_pages.append(page.page_number)
+            # A single block (one paragraph, no internal blank line) can
+            # itself exceed the target -- long-form prose with no natural
+            # break. Pre-split it at sentence boundaries so no piece we add
+            # to the buffer can alone blow through the hard cap.
+            sub_pieces = (
+                _split_oversized_block(stripped, TARGET_CHUNK_TOKENS)
+                if count_tokens(stripped) > TARGET_CHUNK_TOKENS
+                else [stripped]
+            )
 
-            if sum(len(b) for b in buffer) >= TARGET_CHUNK_CHARS:
-                tail = buffer[-1][-CHUNK_OVERLAP_CHARS:] if buffer else ""
-                last_page = buffer_pages[-1] if buffer_pages else page.page_number
-                flush()
-                # Carry a little context forward so a boundary does not sever
-                # a definition from its explanation.
-                if tail.strip():
-                    buffer = [tail.strip()]
-                    buffer_pages = [last_page]
+            multi_piece = len(sub_pieces) > 1
+            for piece_index, piece in enumerate(sub_pieces):
+                buffer.append(piece)
+                buffer_pages.append(page.page_number)
+                buffer_offsets.append(block_offset)
+
+                current_tokens = sum(count_tokens(b) for b in buffer)
+                # A piece produced by splitting an oversized block was already
+                # sized to be a complete chunk on its own (up to
+                # TARGET_CHUNK_TOKENS). Flush right after it rather than
+                # waiting to reach the target again -- otherwise two
+                # already-target-sized pieces accumulate before the
+                # threshold trips, roughly doubling the chunk size.
+                is_full_sized_piece = multi_piece and piece_index < len(sub_pieces) - 1
+                if current_tokens >= TARGET_CHUNK_TOKENS or is_full_sized_piece:
+                    tail_text = buffer[-1]
+                    tail_page = buffer_pages[-1]
+                    flush()
+                    tail_tokens = _encoding.encode(tail_text)
+                    if len(tail_tokens) > CHUNK_OVERLAP_TOKENS:
+                        overlap_text = _encoding.decode(tail_tokens[-CHUNK_OVERLAP_TOKENS:])
+                    else:
+                        overlap_text = tail_text
+                    if overlap_text.strip():
+                        buffer = [overlap_text.strip()]
+                        buffer_pages = [tail_page]
+                        buffer_offsets = [block_offset]
 
         if in_fence and fence_buffer:
             buffer.extend(fence_buffer)
             buffer_pages.append(page.page_number)
+            buffer_offsets.append(fence_offset if fence_offset is not None else page_start_offset)
 
     flush()
     return chunks
 
 
 def _split_blocks(text: str) -> List[str]:
-    """Blank-line separated blocks, with single newlines preserved inside."""
     return re.split(r"\n\s*\n", text or "")
 
 

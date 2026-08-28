@@ -175,14 +175,36 @@ class TestPipeline:
         client.post(f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email))
         first = db_session.query(Chunk).count()
 
-        job_id = db_session.query(Chunk).first().document_id  # any id; refetch job below
-        jobs = client.get(
-            f"/api/v1/courses/{course['id']}/documents", headers=auth_headers(owner.email)
-        )
-        assert jobs.status_code == 200
-
         client.post(f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email))
         assert db_session.query(Chunk).count() == first
+
+    def test_rerunning_produces_the_same_chunk_ids(self, client, owner, course, db_session):
+        """
+        The actual point of deterministic ids: not just the same row count,
+        but the identical id set, so a citation recorded elsewhere keeps
+        pointing at the same chunk across a reprocess.
+        """
+        upload(client, owner.email, course["id"])
+        client.post(f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email))
+        first_ids = {c.id for c in db_session.query(Chunk).all()}
+
+        client.post(f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email))
+        second_ids = {c.id for c in db_session.query(Chunk).all()}
+
+        assert first_ids == second_ids
+        assert len(first_ids) > 0
+
+    def test_chunks_carry_token_count_and_char_offsets(self, client, owner, course, db_session):
+        upload(client, owner.email, course["id"])
+        client.post(f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email))
+
+        chunks = db_session.query(Chunk).all()
+        assert chunks
+        for c in chunks:
+            assert c.token_count > 0
+            assert c.char_start is not None and c.char_end is not None
+            assert c.char_start < c.char_end
+            assert c.extraction_version == 1
 
 
 class TestJobOwnership:

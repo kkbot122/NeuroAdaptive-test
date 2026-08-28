@@ -19,9 +19,11 @@ from sqlalchemy.orm import Session
 from app.modules.courses.models import Course, CourseStatus
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.extraction import (
+    EXTRACTION_VERSION,
     ExtractionError,
     NoExtractableText,
     chunk as chunk_document,
+    deterministic_chunk_id,
     extract,
 )
 from app.modules.documents.models import Document, DocumentStatus
@@ -212,28 +214,59 @@ class JobService:
             self.db.commit()
 
     def _stage_chunking(self, job: ProcessingJob) -> None:
-        for document in self._documents(job):
-            # Idempotent: drop this document's previous chunks before rewriting.
-            self.db.query(Chunk).filter(Chunk.document_id == document.id).delete()
-            self.db.commit()
+        """
+        Idempotent by construction rather than by delete-then-reinsert: each
+        chunk's id is deterministic_chunk_id(document_id, extraction_version,
+        position), so re-running this stage on the same document and the same
+        EXTRACTION_VERSION regenerates the identical id set. A retry after a
+        crash upserts in place -- overwriting text/offsets if anything
+        changed -- instead of deleting everything and handing out fresh ids
+        that would orphan any citation recorded elsewhere.
 
+        Only stale rows (positions the current run no longer produces, e.g.
+        because the source shrank) are removed.
+        """
+        for document in self._documents(job):
             raw = self.documents.read_bytes(document)
             extracted = extract(raw, document.filename)
-            for proposed in chunk_document(extracted):
-                self.db.add(
-                    Chunk(
-                        document_id=document.id,
-                        course_id=job.course_id,
-                        owner_id=job.owner_id,
-                        position=proposed.position,
-                        heading_path=proposed.heading_path,
-                        content_type=proposed.content_type,
-                        text=proposed.text,
-                        char_count=len(proposed.text),
-                        page_start=proposed.page_start,
-                        page_end=proposed.page_end,
-                    )
+            proposed_chunks = chunk_document(extracted)
+
+            live_ids = set()
+            for proposed in proposed_chunks:
+                chunk_id = deterministic_chunk_id(
+                    document.id, EXTRACTION_VERSION, proposed.position
                 )
+                live_ids.add(chunk_id)
+
+                existing = self.db.query(Chunk).filter(Chunk.id == chunk_id).first()
+                if existing is None:
+                    existing = Chunk(id=chunk_id, document_id=document.id)
+                    self.db.add(existing)
+
+                existing.course_id = job.course_id
+                existing.owner_id = job.owner_id
+                existing.position = proposed.position
+                existing.heading_path = proposed.heading_path
+                existing.content_type = proposed.content_type
+                existing.text = proposed.text
+                existing.char_count = len(proposed.text)
+                existing.token_count = proposed.token_count
+                existing.char_start = proposed.char_start
+                existing.char_end = proposed.char_end
+                existing.page_start = proposed.page_start
+                existing.page_end = proposed.page_end
+                existing.extraction_version = EXTRACTION_VERSION
+                # A rewritten chunk is no longer known-good in the index
+                # until the INDEXING stage re-embeds it.
+                existing.embedding_model = None
+                existing.indexed_at = None
+
+            # Remove chunks from a previous run of this document that the
+            # current run did not reproduce (e.g. the source shrank).
+            self.db.query(Chunk).filter(
+                Chunk.document_id == document.id, ~Chunk.id.in_(live_ids) if live_ids else True
+            ).delete(synchronize_session=False)
+
             self.db.commit()
 
     # ── helpers ──────────────────────────────────────────────────────────────
