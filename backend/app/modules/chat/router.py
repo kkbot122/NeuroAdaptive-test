@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -16,6 +18,8 @@ from app.services.adaptation import (
 )
 from app.modules.profiling.models import UserProfile
 from app.modules.chat.models import ChatSession, ChatMessage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -205,9 +209,31 @@ async def send_message(
         )
         bot_text: str = _sanitize(response.choices[0].message.content or "")
     except Exception as exc:
-        raise HTTPException(
-            status_code=500, detail=f"LLM call failed: {exc}"
+        # The provider's own error text was previously interpolated straight
+        # into the response, so a learner saw raw JSON naming the model, the
+        # provider error code and the request type. That leaks internals and
+        # tells them nothing they can act on. Detail goes to the log; the
+        # caller gets a category.
+        status = getattr(exc, "status_code", None)
+        logger.error(
+            "Groq call failed: %s status=%s model=%s",
+            type(exc).__name__,
+            status,
+            settings.GROQ_MODEL,
         )
+
+        if status in (401, 403):
+            detail = "The AI provider rejected our credentials. This is a server configuration problem, not something you did."
+        elif status == 404:
+            # Providers retire models without notice; this is the exact failure
+            # that produced the 404 on llama-3.3-70b-versatile.
+            detail = "The configured AI model is unavailable. This is a server configuration problem, not something you did."
+        elif status == 429:
+            detail = "The AI provider is rate limiting us. Wait a moment and try again."
+        else:
+            detail = "The AI service did not respond. Try again in a moment."
+
+        raise HTTPException(status_code=502, detail=detail)
 
     # ── 6. Persist messages ──────────────────────────────────────────────────
     user_msg = ChatMessage(session_id=chat_session.id, role="user", content=_sanitize(prompt))
