@@ -118,3 +118,41 @@ class TestProviderErrorsAreNotLeaked:
                 side_effect=ProviderError(404)
             )
             assert send(client, owner.email).status_code == 502
+
+    def test_a_413_from_the_provider_is_reported_as_413_not_502(self, client, owner):
+        """A large attachment produced Groq's own 413, which the generic
+        else-branch used to relabel as an opaque 502 'Bad Gateway'."""
+        with patch("app.modules.chat.router.get_client") as get_client:
+            get_client.return_value.chat.completions.create = AsyncMock(
+                side_effect=ProviderError(413)
+            )
+            response = send(client, owner.email)
+        assert response.status_code == 413
+        assert "too large" in response.json()["detail"]
+
+
+class TestOversizedMessageIsRejectedBeforeCallingTheProvider:
+    """A large PDF's extracted text could push a request past Groq's own
+    limit; catching that up front avoids the round trip Groq was always
+    going to reject, and gives the learner an actionable message instead of
+    a generic 'Bad Gateway'."""
+
+    def test_an_oversized_message_never_reaches_the_provider(self, client, owner):
+        from app.modules.chat.router import MAX_MESSAGE_CHARS
+
+        with patch("app.modules.chat.router.get_client") as get_client:
+            create = AsyncMock(side_effect=AssertionError("must not call the provider"))
+            get_client.return_value.chat.completions.create = create
+            response = send(client, owner.email, prompt="x" * (MAX_MESSAGE_CHARS + 1))
+
+        create.assert_not_called()
+        assert response.status_code == 413
+        assert "too long" in response.json()["detail"]
+
+    def test_a_message_within_the_limit_is_unaffected(self, client, owner):
+        with patch("app.modules.chat.router.get_client") as get_client:
+            get_client.return_value.chat.completions.create = AsyncMock(
+                side_effect=ProviderError(500)  # short-circuit; only checking it was called
+            )
+            response = send(client, owner.email, prompt="a normal short question")
+        assert response.status_code == 502  # reached the provider call, unlike the oversized case

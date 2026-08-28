@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Rough proxy for request size, not an exact token count -- catches the
+# common case (a large PDF's extracted text) before an oversized request
+# ever reaches Groq. Unvalidated default, not tuned against Groq's actual
+# byte/token limit for openai/gpt-oss-120b.
+MAX_MESSAGE_CHARS = 60_000
+
 
 def _sanitize(text: str) -> str:
     """
@@ -197,6 +203,23 @@ async def send_message(
                     detail="Only text-based files (.txt, .md, .csv) and PDFs are supported.",
                 )
 
+    # Reject an oversized message BEFORE calling Groq: an attached file (a
+    # PDF's full extracted text, especially) can push the request body past
+    # Groq's own limit, which previously surfaced as an opaque 502 "Bad
+    # Gateway" with no indication of why. Character count is a rough proxy
+    # for request size/tokens, not exact, but catching it here is instant
+    # and free instead of waiting on a round trip that Groq was always going
+    # to reject anyway.
+    if len(user_content) > MAX_MESSAGE_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Your message (including any attached file) is too long "
+                f"({len(user_content):,} characters, limit {MAX_MESSAGE_CHARS:,}). "
+                "Try a shorter message or a smaller file."
+            ),
+        )
+
     messages_for_llm.append({"role": "user", "content": user_content})
 
     # ── 5. Call Groq LLM ─────────────────────────────────────────────────────
@@ -230,6 +253,9 @@ async def send_message(
             detail = "The configured AI model is unavailable. This is a server configuration problem, not something you did."
         elif status == 429:
             detail = "The AI provider is rate limiting us. Wait a moment and try again."
+        elif status == 413:
+            detail = "Your message or attached file is too large for the AI provider to accept. Try a shorter message or a smaller file."
+            raise HTTPException(status_code=413, detail=detail)
         else:
             detail = "The AI service did not respond. Try again in a moment."
 
