@@ -2,7 +2,9 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -29,6 +31,7 @@ def _out(document) -> dict:
         "course_id": str(document.course_id),
         "filename": document.filename,
         "role": document.role,
+        "source_kind": document.source_kind,
         "status": document.status,
         "size_bytes": document.size_bytes,
         "page_count": document.page_count,
@@ -37,7 +40,13 @@ def _out(document) -> dict:
     }
 
 
-@router.post("/courses/{course_id}/documents", status_code=201)
+class PasteTextIn(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    text: str = Field(min_length=1)
+    role: str = DocumentRole.STUDY.value
+
+
+@router.post("/courses/{course_id}/documents")
 async def upload_document(
     course_id: UUID,
     file: UploadFile = File(...),
@@ -47,7 +56,7 @@ async def upload_document(
 ):
     content = await file.read()
     try:
-        document = service.upload(
+        document, created = service.upload(
             course_id=course_id,
             owner_id=user.id,
             filename=file.filename or "",
@@ -61,7 +70,41 @@ async def upload_document(
         raise HTTPException(status_code=409, detail=str(exc))
     except UploadRejected as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return _out(document)
+
+    # 201 for a genuinely new document; 200 on a checksum dedup hit, since
+    # nothing was created -- the existing document and its processed
+    # artifacts (if any) are simply returned.
+    return JSONResponse(status_code=201 if created else 200, content=jsonable_encoder(_out(document)))
+
+
+@router.post("/courses/{course_id}/documents/paste")
+def paste_text_document(
+    course_id: UUID,
+    body: PasteTextIn,
+    user: User = Depends(get_current_user),
+    service: DocumentService = Depends(_service),
+):
+    """
+    Pasted text as a fourth ingestion path that skips upload entirely -- for
+    a learner who wants to try the system on a paragraph or two rather than
+    a whole file.
+    """
+    try:
+        document, created = service.paste_text(
+            course_id=course_id,
+            owner_id=user.id,
+            title=body.title or "",
+            text=body.text,
+            role=body.role,
+        )
+    except DocumentNotFound:
+        raise HTTPException(status_code=404, detail="Course not found")
+    except SourcesLocked as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except UploadRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return JSONResponse(status_code=201 if created else 200, content=jsonable_encoder(_out(document)))
 
 
 @router.get("/courses/{course_id}/documents")

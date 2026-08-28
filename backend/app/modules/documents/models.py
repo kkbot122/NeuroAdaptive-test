@@ -13,6 +13,15 @@ class DocumentRole(str, enum.Enum):
     STUDY = "STUDY"
 
 
+class DocumentSourceKind(str, enum.Enum):
+    """How the bytes arrived. PASTED_TEXT skips the upload step entirely --
+    the text is written to disk exactly like an uploaded .txt so the rest of
+    the pipeline (extraction, chunking) needs no separate code path."""
+
+    UPLOAD = "UPLOAD"
+    PASTED_TEXT = "PASTED_TEXT"
+
+
 class DocumentStatus(str, enum.Enum):
     UPLOADED = "UPLOADED"
     EXTRACTING = "EXTRACTING"
@@ -45,9 +54,16 @@ class Document(Base):
     role = Column(String(16), nullable=False, default=DocumentRole.STUDY.value)
     status = Column(String(32), nullable=False, default=DocumentStatus.UPLOADED.value)
 
+    source_kind = Column(String(16), nullable=False, default=DocumentSourceKind.UPLOAD.value)
+
     storage_path = Column(String(512), nullable=False)
     size_bytes = Column(Integer, nullable=False, default=0)
     page_count = Column(Integer, nullable=True)
+
+    # SHA-256 of the file's bytes. Re-uploading a file already present in the
+    # same course reuses the existing document and its processed artifacts
+    # instead of storing a duplicate and reprocessing it.
+    checksum_sha256 = Column(String(64), nullable=False, index=True)
 
     # Plain-language reason shown to the learner when status is NEEDS_INPUT.
     needs_input_reason = Column(String(500), nullable=True)
