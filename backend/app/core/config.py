@@ -48,7 +48,12 @@ class Settings(BaseSettings):
     # Model ids are explicit settings, not literals at the call site, so a
     # model change is configuration rather than a code edit.
     GEMINI_API_KEY: str = ""
-    GEMINI_GENERATION_MODEL: str = "gemini-2.5-flash-lite"
+    # gemini-2.5-flash-lite (AGENTS.md §5's frozen choice) was retired for
+    # new callers as of this verification -- confirmed live 2026-08-29, the
+    # API itself names gemini-3.5-flash-lite as the replacement. Same class
+    # of failure as the Groq model retirement (K-12): kept as a setting, not
+    # a literal, so the next retirement is a config change.
+    GEMINI_GENERATION_MODEL: str = "gemini-3.5-flash-lite"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
     # Qdrant. Defaults to the compose service name, which only resolves
