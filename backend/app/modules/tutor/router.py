@@ -95,3 +95,37 @@ def ask_tutor(
         raise HTTPException(status_code=404, detail="Course not found")
 
     return StreamingResponse(_stream_events(result), media_type="text/event-stream")
+
+
+_VALID_FORMATS = {"concise", "detailed", "worked_example", "analogy", "diagram", "source_view", "quiz_first"}
+
+
+@router.get("/courses/{course_id}/lessons/{lesson_id}/content")
+def get_lesson_content(
+    course_id: UUID,
+    lesson_id: UUID,
+    format: str = "detailed",
+    user: User = Depends(get_current_user),
+    service: TutorService = Depends(_service),
+):
+    """
+    Real, grounded lesson content -- not a placeholder. Plain JSON, not SSE:
+    unlike the tutor chat, there is no streaming UX need here, so this
+    returns TutorService's already-computed result directly.
+    """
+    if format not in _VALID_FORMATS:
+        raise HTTPException(status_code=422, detail=f"format must be one of {sorted(_VALID_FORMATS)}")
+    try:
+        result = service.generate_lesson_content(course_id, user.id, lesson_id, format)
+    except TutorNotFound:
+        raise HTTPException(status_code=404, detail="Course or lesson not found")
+
+    return {
+        "content_markdown": result.answer_markdown,
+        "citations": [
+            {"claim": c.claim, "chunk_id": c.chunk_id, "validation_status": c.validation_status}
+            for c in result.citations
+        ],
+        "grounding_mode": result.grounding_mode,
+        "retrieved_chunk_ids": result.retrieved_chunk_ids,
+    }

@@ -114,3 +114,64 @@ class TestEndToEnd:
         )
         uncovered_events = parse_sse_events(uncovered.text)
         assert uncovered_events == ["retrieval", "insufficient"]
+
+
+class TestLessonContentEndpoint:
+    def test_generates_real_grounded_content_not_a_placeholder(
+        self, client, owner, db_session, fake_generation, course_with_chunk
+    ):
+        from app.modules.curriculum.models import (
+            Concept, ConceptSource, CourseVersion, CourseVersionStatus, Lesson, LessonConcept, Module,
+        )
+
+        course, chunk = course_with_chunk
+        version = CourseVersion(
+            course_id=course.id, owner_id=owner.id, version_number=1, status=CourseVersionStatus.READY.value,
+        )
+        db_session.add(version)
+        db_session.flush()
+        concept = Concept(
+            course_id=course.id, course_version_id=version.id, owner_id=owner.id,
+            canonical_key="deadlock", name="Deadlock", definition="def", importance=0.9,
+        )
+        db_session.add(concept)
+        db_session.flush()
+        db_session.add(ConceptSource(concept_id=concept.id, chunk_id=chunk.id, course_id=course.id, owner_id=owner.id))
+        module = Module(course_version_id=version.id, position=0, title="M1")
+        db_session.add(module)
+        db_session.flush()
+        lesson = Lesson(module_id=module.id, position=0, title="Deadlocks", objective="Understand it.")
+        db_session.add(lesson)
+        db_session.flush()
+        db_session.add(LessonConcept(lesson_id=lesson.id, concept_id=concept.id))
+        db_session.commit()
+
+        fake_generation.when_prompt_contains("SOURCE TEXT", '{"supported": true}').set_default(
+            '{"insufficient_evidence": false, "answer_markdown": "Real generated content.", '
+            f'"claims": [{{"text": "Real generated content.", "chunk_id": "{chunk.id}"}}]}}'
+        )
+
+        resp = client.get(
+            f"/api/v1/courses/{course.id}/lessons/{lesson.id}/content?format=detailed",
+            headers=auth_headers(owner.email),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["content_markdown"] == "Real generated content."
+        assert len(body["citations"]) == 1
+
+    def test_invalid_format_is_rejected(self, client, owner, course_with_chunk):
+        course, _ = course_with_chunk
+        resp = client.get(
+            f"/api/v1/courses/{course.id}/lessons/{uuid.uuid4()}/content?format=nonsense",
+            headers=auth_headers(owner.email),
+        )
+        assert resp.status_code == 422
+
+    def test_unknown_lesson_is_404(self, client, owner, course_with_chunk):
+        course, _ = course_with_chunk
+        resp = client.get(
+            f"/api/v1/courses/{course.id}/lessons/{uuid.uuid4()}/content?format=detailed",
+            headers=auth_headers(owner.email),
+        )
+        assert resp.status_code == 404

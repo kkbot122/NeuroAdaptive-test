@@ -15,7 +15,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.modules.courses.service import CourseNotFound, CourseService
-from app.modules.curriculum.models import Lesson
+from app.modules.curriculum.models import Concept, CourseVersion, Lesson, Module
 from app.modules.retrieval.service import RetrievalNotAuthorized, RetrievalService
 from app.modules.tutor.entailment import GeminiEntailmentChecker
 from app.modules.tutor.models import GroundingMode, TutorMessage
@@ -170,6 +170,36 @@ class TutorService:
             course_id, owner_id, conversation_id, context_lesson_id, question,
             GroundingMode.SOURCE_ONLY.value, final_answer.strip(), citations, retrieved_chunk_ids, fallback_path,
         )
+
+    def generate_lesson_content(self, course_id: UUID, owner_id: int, lesson_id: UUID, format: str) -> TutorResult:
+        """
+        Real lesson content, not a placeholder: reuses the exact same
+        retrieval -> grounded generation -> two-tier citation validation
+        pipeline as ask() by phrasing the lesson's concepts as a question.
+        This is a thin wrapper, not a parallel content-generation subsystem
+        -- it inherits ask()'s ownership check, source-only default, and
+        citation validation for free rather than duplicating any of it.
+        """
+        lesson = (
+            self.db.query(Lesson)
+            .join(Module, Lesson.module_id == Module.id)
+            .join(CourseVersion, Module.course_version_id == CourseVersion.id)
+            .filter(Lesson.id == lesson_id, CourseVersion.course_id == course_id)
+            .first()
+        )
+        if lesson is None:
+            raise TutorNotFound(str(lesson_id))
+
+        concept_ids = [lc.concept_id for lc in lesson.concepts]
+        concepts = self.db.query(Concept).filter(Concept.id.in_(concept_ids)).all() if concept_ids else []
+        concept_names = ", ".join(c.name for c in concepts) or lesson.title
+
+        format_label = format.replace("_", " ")
+        query = (
+            f'Write {format_label} instructional content teaching the following concepts, '
+            f'in service of the lesson objective "{lesson.objective or lesson.title}": {concept_names}.'
+        )
+        return self.ask(course_id, owner_id, query, context_lesson_id=lesson_id)
 
     def _finalize(
         self, course_id, owner_id, conversation_id, context_lesson_id, question,

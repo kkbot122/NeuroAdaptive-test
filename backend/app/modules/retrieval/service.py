@@ -25,11 +25,23 @@ from sqlalchemy.orm import Session
 
 from app.modules.courses.service import CourseNotFound, CourseService
 from app.modules.documents.chunk_models import Chunk
+from app.modules.documents.models import Document
 from app.modules.retrieval.lexical import search_lexical
 from app.services.embedding.gateway import EmbeddingError, EmbeddingGateway
 from app.services.vectorstore.store import VectorStore, VectorStoreError
 
 CHUNKS_COLLECTION = "course_chunks"
+
+
+@dataclass
+class ChunkDetail:
+    id: UUID
+    document_id: UUID
+    filename: str
+    text: str
+    heading_path: Optional[str]
+    page_start: Optional[int]
+    page_end: Optional[int]
 
 
 @dataclass
@@ -134,3 +146,29 @@ class RetrievalService:
 
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:limit]
+
+    def get_chunk(self, course_id: UUID, owner_id: int, chunk_id: UUID) -> ChunkDetail:
+        """
+        Open one cited chunk by id -- the source-viewer's read. Same
+        ownership-inside-the-query property as search(): a chunk from a
+        different course or a different owner is indistinguishable from a
+        chunk that does not exist, both raise RetrievalNotAuthorized.
+        """
+        try:
+            self.courses.get_owned(course_id, owner_id)
+        except CourseNotFound:
+            raise RetrievalNotAuthorized(str(course_id))
+
+        row = (
+            self.db.query(Chunk, Document.filename)
+            .join(Document, Chunk.document_id == Document.id)
+            .filter(Chunk.id == chunk_id, Chunk.course_id == course_id, Chunk.owner_id == owner_id)
+            .first()
+        )
+        if row is None:
+            raise RetrievalNotAuthorized(str(chunk_id))
+        chunk, filename = row
+        return ChunkDetail(
+            id=chunk.id, document_id=chunk.document_id, filename=filename, text=chunk.text,
+            heading_path=chunk.heading_path, page_start=chunk.page_start, page_end=chunk.page_end,
+        )

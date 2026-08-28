@@ -3,6 +3,15 @@ import uuid
 import pytest
 
 from app.modules.courses.models import Course
+from app.modules.curriculum.models import (
+    Concept,
+    ConceptSource,
+    CourseVersion,
+    CourseVersionStatus,
+    Lesson,
+    LessonConcept,
+    Module,
+)
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
 from app.modules.tutor.models import GroundingMode, TutorMessage
@@ -176,3 +185,85 @@ class TestPersistence:
         assert message.retrieved_chunk_ids is not None
         assert message.model_id is not None
         assert message.grounding_mode is not None
+
+
+@pytest.fixture()
+def course_with_lesson(db_session, owner):
+    """course -> version -> module -> lesson -> concept (grounded in a real
+    chunk via ConceptSource) -- everything generate_lesson_content needs."""
+    course = Course(owner_id=owner.id, title="OS Course")
+    db_session.add(course)
+    db_session.commit()
+
+    doc = Document(
+        course_id=course.id, owner_id=owner.id, filename="notes.txt",
+        storage_path="/dev/null", checksum_sha256="a" * 64,
+    )
+    db_session.add(doc)
+    db_session.commit()
+
+    chunk = Chunk(
+        id=uuid.uuid4(), document_id=doc.id, course_id=course.id, owner_id=owner.id,
+        text="A deadlock is a circular wait condition among processes holding resources.",
+    )
+    db_session.add(chunk)
+    db_session.commit()
+
+    version = CourseVersion(
+        course_id=course.id, owner_id=owner.id, version_number=1, status=CourseVersionStatus.READY.value,
+    )
+    db_session.add(version)
+    db_session.flush()
+
+    concept = Concept(
+        course_id=course.id, course_version_id=version.id, owner_id=owner.id,
+        canonical_key="deadlock", name="Deadlock", definition="A circular wait.", importance=0.9,
+    )
+    db_session.add(concept)
+    db_session.flush()
+    db_session.add(
+        ConceptSource(concept_id=concept.id, chunk_id=chunk.id, course_id=course.id, owner_id=owner.id)
+    )
+
+    module = Module(course_version_id=version.id, position=0, title="Concurrency")
+    db_session.add(module)
+    db_session.flush()
+    lesson = Lesson(module_id=module.id, position=0, title="Deadlocks", objective="Understand deadlocks.")
+    db_session.add(lesson)
+    db_session.flush()
+    db_session.add(LessonConcept(lesson_id=lesson.id, concept_id=concept.id))
+    db_session.commit()
+
+    return course, lesson, chunk
+
+
+class TestGenerateLessonContent:
+    def test_reuses_ask_and_grounds_in_the_lessons_concepts(self, db_session, owner, course_with_lesson):
+        course, lesson, chunk = course_with_lesson
+        gen = FakeGenerationGateway().when_prompt_contains("SOURCE TEXT", '{"supported": true}').set_default(
+            '{"insufficient_evidence": false, "answer_markdown": "Deadlocks are a circular wait.", '
+            f'"claims": [{{"text": "Deadlocks are a circular wait.", "chunk_id": "{chunk.id}"}}]}}'
+        )
+        service = make_service(db_session, gen)
+        result = service.generate_lesson_content(course.id, owner.id, lesson.id, "detailed")
+
+        assert result.grounding_mode == GroundingMode.SOURCE_ONLY.value
+        assert len(result.citations) == 1
+        assert result.citations[0].chunk_id == str(chunk.id)
+        # The prompt sent for generation named the lesson's actual concept.
+        assert any("Deadlock" in p for p in gen.calls)
+
+    def test_unknown_lesson_is_not_found(self, db_session, owner, course_with_lesson):
+        course, _, _ = course_with_lesson
+        service = make_service(db_session)
+        with pytest.raises(TutorNotFound):
+            service.generate_lesson_content(course.id, owner.id, uuid.uuid4(), "detailed")
+
+    def test_a_lesson_from_another_course_is_not_found(self, db_session, owner, course_with_lesson):
+        _, lesson, _ = course_with_lesson
+        other_course = Course(owner_id=owner.id, title="Unrelated Course")
+        db_session.add(other_course)
+        db_session.commit()
+        service = make_service(db_session)
+        with pytest.raises(TutorNotFound):
+            service.generate_lesson_content(other_course.id, owner.id, lesson.id, "detailed")

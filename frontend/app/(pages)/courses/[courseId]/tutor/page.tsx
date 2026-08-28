@@ -201,10 +201,13 @@ export default function TutorPage() {
                             <ul className="space-y-1">
                               {msg.citations.map((cit, idx) => (
                                 <li key={idx} className="text-xs text-gray-600">
-                                  {/* No source-viewer page exists yet to open a
-                                      chunk by id -- showing it plainly rather
-                                      than a fake link to nowhere. */}
-                                  [{idx + 1}] {cit.claim} ({cit.validation_status}, source chunk {cit.chunk_id.slice(0, 8)})
+                                  <Link
+                                    href={`/courses/${courseId}/sources/${cit.chunk_id}`}
+                                    className="text-blue-600 hover:underline"
+                                  >
+                                    [{idx + 1}] {cit.claim}
+                                  </Link>{" "}
+                                  ({cit.validation_status})
                                 </li>
                               ))}
                             </ul>

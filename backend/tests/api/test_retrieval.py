@@ -107,6 +107,57 @@ class TestRetrievalOwnership:
         )
         assert real.status_code == fake.status_code == 404
 
+
+class TestGetChunk:
+    """The source-viewer's read: GET /courses/{id}/chunks/{chunk_id}."""
+
+    def test_owner_can_open_a_real_chunk(self, client, owner, db_session):
+        from app.modules.documents.chunk_models import Chunk
+
+        course, _ = make_course_with_content(client, owner.email, "OS", DEADLOCK_TEXT)
+        chunk = db_session.query(Chunk).filter(Chunk.course_id == _UUID(course["id"])).first()
+
+        resp = client.get(
+            f"/api/v1/courses/{course['id']}/chunks/{chunk.id}", headers=auth_headers(owner.email)
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["chunk_id"] == str(chunk.id)
+        assert body["filename"] == "notes.txt"
+        assert body["text"] == chunk.text
+
+    def test_other_user_cannot_open_your_chunk(self, client, owner, other_user, db_session):
+        from app.modules.documents.chunk_models import Chunk
+
+        course, _ = make_course_with_content(client, owner.email, "OS", DEADLOCK_TEXT)
+        chunk = db_session.query(Chunk).filter(Chunk.course_id == _UUID(course["id"])).first()
+
+        resp = client.get(
+            f"/api/v1/courses/{course['id']}/chunks/{chunk.id}", headers=auth_headers(other_user.email)
+        )
+        assert resp.status_code == 404
+
+    def test_a_real_chunk_from_a_different_course_is_not_found(self, client, owner, db_session):
+        from app.modules.documents.chunk_models import Chunk
+
+        course_a, _ = make_course_with_content(client, owner.email, "Course A", DEADLOCK_TEXT)
+        course_b, _ = make_course_with_content(client, owner.email, "Course B", GARBAGE_COLLECTION_TEXT)
+        chunk_b = db_session.query(Chunk).filter(Chunk.course_id == _UUID(course_b["id"])).first()
+
+        resp = client.get(
+            f"/api/v1/courses/{course_a['id']}/chunks/{chunk_b.id}", headers=auth_headers(owner.email)
+        )
+        assert resp.status_code == 404
+
+    def test_fabricated_chunk_id_is_not_found(self, client, owner):
+        import uuid
+
+        course, _ = make_course_with_content(client, owner.email, "OS", DEADLOCK_TEXT)
+        resp = client.get(
+            f"/api/v1/courses/{course['id']}/chunks/{uuid.uuid4()}", headers=auth_headers(owner.email)
+        )
+        assert resp.status_code == 404
+
     def test_owner_can_query_their_own_course(self, client, owner):
         course, _ = make_course_with_content(client, owner.email, "OS", DEADLOCK_TEXT)
         response = client.get(

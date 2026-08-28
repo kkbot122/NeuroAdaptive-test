@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { StateWrapper } from "@/components/StateWrapper";
-import { Brain, ArrowLeft, Upload, File, Loader2, CheckCircle, RefreshCcw } from "lucide-react";
+import { Brain, ArrowLeft, Upload, File, Loader2, CheckCircle, RefreshCcw, Pencil, Check, X } from "lucide-react";
 
 export default function WorkspacePage() {
   const params = useParams();
@@ -38,6 +38,14 @@ export default function WorkspacePage() {
   }
   const [structure, setStructure] = useState<{ modules: ModuleOut[] } | null>(null);
   const [conceptNames, setConceptNames] = useState<Record<string, string>>({});
+
+  // Lesson renaming: the only edit PUT /courses/{id}/structure supports
+  // this phase (curriculum/router.py's StructureUpdateIn docstring --
+  // dropping a concept or reordering a module is a documented, deferred
+  // gap, not something to fake a control for here).
+  const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+  const [isSavingRename, setIsSavingRename] = useState(false);
 
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -179,6 +187,39 @@ export default function WorkspacePage() {
     }
   };
 
+  const startRenaming = (lessonId: string, currentTitle: string) => {
+    setEditingLessonId(lessonId);
+    setEditingTitle(currentTitle);
+  };
+
+  const cancelRenaming = () => {
+    setEditingLessonId(null);
+    setEditingTitle("");
+  };
+
+  const saveRename = async (lessonId: string) => {
+    if (!editingTitle.trim()) return;
+    setIsSavingRename(true);
+    try {
+      const res = await fetch(`/api/v1/courses/${courseId}/structure`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lesson_renames: [{ lesson_id: lessonId, title: editingTitle.trim() }],
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to rename lesson");
+      const updated = await res.json();
+      setStructure(updated);
+      cancelRenaming();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to rename lesson");
+    } finally {
+      setIsSavingRename(false);
+    }
+  };
+
   const renderUploadTab = () => (
     <div className="space-y-6">
       <div className="bg-white border-2 border-black rounded-xl p-8 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
@@ -241,7 +282,43 @@ export default function WorkspacePage() {
               <div className="space-y-4">
                 {module.lessons.map((lesson, i) => (
                   <div key={lesson.id} className="p-4 bg-gray-50 border-2 border-black rounded-lg">
-                    <h4 className="font-bold text-lg mb-2">Lesson {i + 1}: {lesson.title}</h4>
+                    {editingLessonId === lesson.id ? (
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="font-bold text-lg">Lesson {i + 1}:</span>
+                        <input
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          autoFocus
+                          className="flex-1 border-2 border-black rounded px-2 py-1 font-bold"
+                        />
+                        <button
+                          onClick={() => saveRename(lesson.id)}
+                          disabled={isSavingRename}
+                          className="p-1.5 bg-green-500 hover:bg-green-600 border-2 border-black rounded disabled:opacity-50"
+                        >
+                          <Check className="w-4 h-4 text-white" />
+                        </button>
+                        <button
+                          onClick={cancelRenaming}
+                          disabled={isSavingRename}
+                          className="p-1.5 bg-gray-300 hover:bg-gray-400 border-2 border-black rounded"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 mb-2 group">
+                        <h4 className="font-bold text-lg">Lesson {i + 1}: {lesson.title}</h4>
+                        <button
+                          onClick={() => startRenaming(lesson.id, lesson.title)}
+                          className="p-1 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded transition-opacity"
+                          title="Rename lesson"
+                        >
+                          <Pencil className="w-4 h-4 text-gray-500" />
+                        </button>
+                      </div>
+                    )}
                     <ul className="list-disc pl-5 space-y-1 text-gray-700 font-medium">
                       {lesson.concepts.map((c) => (
                         <li key={c.concept_id}>{conceptNames[c.concept_id] || c.concept_id}</li>

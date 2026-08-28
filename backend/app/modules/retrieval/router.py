@@ -57,3 +57,27 @@ def retrieve(
         }
         for r in results
     ]
+
+
+@router.get("/courses/{course_id}/chunks/{chunk_id}")
+def get_chunk(
+    course_id: UUID,
+    chunk_id: UUID,
+    user: User = Depends(get_current_user),
+    service: RetrievalService = Depends(_service),
+):
+    """The source-viewer's read: open one cited chunk by id."""
+    try:
+        chunk = service.get_chunk(course_id, user.id, chunk_id)
+    except RetrievalNotAuthorized:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+
+    return {
+        "chunk_id": str(chunk.id),
+        "document_id": str(chunk.document_id),
+        "filename": chunk.filename,
+        "text": chunk.text,
+        "heading_path": chunk.heading_path,
+        "page_start": chunk.page_start,
+        "page_end": chunk.page_end,
+    }
