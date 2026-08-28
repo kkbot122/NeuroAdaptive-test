@@ -54,6 +54,9 @@ class TutorQuestionIn(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     context_lesson_id: Optional[UUID] = None
     conversation_id: Optional[UUID] = None
+    # Reproducibility (Phase 7): set when this question follows directly
+    # from an AdaptationDecision the caller is acting on.
+    decision_id: Optional[UUID] = None
 
 
 def _sse(event: str, data: dict) -> str:
@@ -97,6 +100,7 @@ def ask_tutor(
             result = service.ask(
                 course_id, user.id, body.question,
                 context_lesson_id=body.context_lesson_id, conversation_id=body.conversation_id,
+                decision_id=body.decision_id,
             )
     except TutorNotFound:
         raise HTTPException(status_code=404, detail="Course not found")
@@ -112,6 +116,7 @@ def get_lesson_content(
     course_id: UUID,
     lesson_id: UUID,
     format: str = "detailed",
+    decision_id: Optional[UUID] = None,
     user: User = Depends(get_current_user),
     service: TutorService = Depends(_service),
     db: Session = Depends(get_db),
@@ -120,13 +125,17 @@ def get_lesson_content(
     Real, grounded lesson content -- not a placeholder. Plain JSON, not SSE:
     unlike the tutor chat, there is no streaming UX need here, so this
     returns TutorService's already-computed result directly.
+
+    `decision_id`: pass the AdaptationDecision id when this lesson is being
+    fetched because it was the recommended next activity, so the resulting
+    TutorMessage carries that provenance (Phase 7).
     """
     if format not in _VALID_FORMATS:
         raise HTTPException(status_code=422, detail=f"format must be one of {sorted(_VALID_FORMATS)}")
     AbuseControlService(db).enforce_generation_request_controls(user.id)
     try:
         with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER):
-            result = service.generate_lesson_content(course_id, user.id, lesson_id, format)
+            result = service.generate_lesson_content(course_id, user.id, lesson_id, format, decision_id=decision_id)
     except TutorNotFound:
         raise HTTPException(status_code=404, detail="Course or lesson not found")
 

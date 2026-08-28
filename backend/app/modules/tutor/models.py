@@ -38,4 +38,11 @@ class TutorMessage(Base):
     model_id = Column(String(128), nullable=False)
     prompt_version = Column(String(32), nullable=False)
 
+    # Reproducibility (Phase 7): set when this message was generated as the
+    # direct result of an AdaptationDecision -- e.g. lesson content fetched
+    # because it was the recommended next activity. Null for an ordinary
+    # tutor question the learner asked on their own initiative; that is the
+    # correct, honest value, not a gap.
+    decision_id = Column(Uuid, ForeignKey("adaptation_decisions.id"), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())

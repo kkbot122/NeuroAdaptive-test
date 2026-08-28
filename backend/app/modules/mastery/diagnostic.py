@@ -24,6 +24,9 @@ from uuid import UUID
 from app.modules.curriculum.models import Concept, ConceptPrerequisite
 from app.services.generation.gateway import GenerationGateway
 
+# Reproducibility (Phase 7): recorded on every Question this module produces.
+DIAGNOSTIC_PROMPT_VERSION = "diagnostic-v1"
+
 MIN_DIAGNOSTIC_QUESTIONS = 8
 MAX_DIAGNOSTIC_QUESTIONS = 20
 _SAMPLE_RATIO = 0.6  # unvalidated default: roughly this fraction of the graph

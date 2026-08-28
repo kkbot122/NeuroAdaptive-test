@@ -75,6 +75,20 @@ class Question(Base):
     version = Column(Integer, nullable=False, default=1)
     supersedes_question_id = Column(Uuid, ForeignKey("questions.id"), nullable=True)
 
+    # Reproducibility (Phase 7): which provider/model and which prompt
+    # template version generated this row. Required, not optional -- a
+    # fixture-based test fails any code path that creates a Question
+    # without setting both.
+    model_id = Column(String(128), nullable=False)
+    prompt_version = Column(String(32), nullable=False)
+
+    # Set only when this question was generated as the direct result of an
+    # AdaptationDecision (mandate: "where applicable"). Diagnostic
+    # generation is course-wide, not decision-triggered, so this is null
+    # for every diagnostic question -- that is the correct, honest value,
+    # not a gap.
+    decision_id = Column(Uuid, ForeignKey("adaptation_decisions.id"), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

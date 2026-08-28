@@ -63,6 +63,8 @@ class MasteryService:
         rubric: Optional[List[str]] = None,
         difficulty: float = 0.5,
         is_diagnostic: bool = False,
+        prompt_version: str = diagnostic.DIAGNOSTIC_PROMPT_VERSION,
+        decision_id: Optional[UUID] = None,
     ) -> Question:
         if not concept_weights:
             raise InvalidQuestionWeights("A question must map to at least one concept.")
@@ -84,6 +86,11 @@ class MasteryService:
             difficulty=difficulty,
             is_diagnostic=1 if is_diagnostic else 0,
             version=1,
+            # Reproducibility (Phase 7): required, not optional -- every
+            # Question row must be traceable to what generated it.
+            model_id=self.generation.model_name,
+            prompt_version=prompt_version,
+            decision_id=decision_id,
         )
         self.db.add(question)
         self.db.flush()
@@ -122,6 +129,11 @@ class MasteryService:
             is_diagnostic=old.is_diagnostic,
             version=old.version + 1,
             supersedes_question_id=old.id,
+            # Regenerated now, by whichever gateway is current -- not
+            # copied from the row being superseded.
+            model_id=self.generation.model_name,
+            prompt_version=updated_fields.get("prompt_version", old.prompt_version),
+            decision_id=old.decision_id,
         )
         self.db.add(new_question)
         self.db.flush()

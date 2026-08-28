@@ -73,6 +73,7 @@ class TutorService:
         question: str,
         context_lesson_id: Optional[UUID] = None,
         conversation_id: Optional[UUID] = None,
+        decision_id: Optional[UUID] = None,
     ) -> TutorResult:
         try:
             self.courses.get_owned(course_id, owner_id)
@@ -100,6 +101,7 @@ class TutorService:
             return self._finalize(
                 course_id, owner_id, conversation_id, context_lesson_id, question,
                 GroundingMode.INSUFFICIENT.value, INSUFFICIENT_EVIDENCE_TEXT, [], retrieved_chunk_ids, None,
+                decision_id=decision_id,
             )
 
         try:
@@ -109,6 +111,7 @@ class TutorService:
             return self._finalize(
                 course_id, owner_id, conversation_id, context_lesson_id, question,
                 GroundingMode.INSUFFICIENT.value, INSUFFICIENT_EVIDENCE_TEXT, [], retrieved_chunk_ids, "insufficiency",
+                decision_id=decision_id,
             )
 
         if parsed.insufficient_evidence or not parsed.claims:
@@ -116,6 +119,7 @@ class TutorService:
                 course_id, owner_id, conversation_id, context_lesson_id, question,
                 GroundingMode.INSUFFICIENT.value if parsed.insufficient_evidence else GroundingMode.SOURCE_ONLY.value,
                 parsed.answer_markdown or INSUFFICIENT_EVIDENCE_TEXT, [], retrieved_chunk_ids, None,
+                decision_id=decision_id,
             )
 
         validated = validate_claims(self.db, parsed.claims, course_id, owner_id, chunk_text_by_id, self.entailment_checker)
@@ -160,6 +164,7 @@ class TutorService:
             return self._finalize(
                 course_id, owner_id, conversation_id, context_lesson_id, question,
                 GroundingMode.INSUFFICIENT.value, INSUFFICIENT_EVIDENCE_TEXT, [], retrieved_chunk_ids, "insufficiency",
+                decision_id=decision_id,
             )
 
         citations = [
@@ -169,9 +174,13 @@ class TutorService:
         return self._finalize(
             course_id, owner_id, conversation_id, context_lesson_id, question,
             GroundingMode.SOURCE_ONLY.value, final_answer.strip(), citations, retrieved_chunk_ids, fallback_path,
+            decision_id=decision_id,
         )
 
-    def generate_lesson_content(self, course_id: UUID, owner_id: int, lesson_id: UUID, format: str) -> TutorResult:
+    def generate_lesson_content(
+        self, course_id: UUID, owner_id: int, lesson_id: UUID, format: str,
+        decision_id: Optional[UUID] = None,
+    ) -> TutorResult:
         """
         Real lesson content, not a placeholder: reuses the exact same
         retrieval -> grounded generation -> two-tier citation validation
@@ -199,15 +208,17 @@ class TutorService:
             f'Write {format_label} instructional content teaching the following concepts, '
             f'in service of the lesson objective "{lesson.objective or lesson.title}": {concept_names}.'
         )
-        return self.ask(course_id, owner_id, query, context_lesson_id=lesson_id)
+        return self.ask(course_id, owner_id, query, context_lesson_id=lesson_id, decision_id=decision_id)
 
     def _finalize(
         self, course_id, owner_id, conversation_id, context_lesson_id, question,
         grounding_mode, answer_markdown, citations: List[CitationOut], retrieved_chunk_ids, fallback_path,
+        decision_id: Optional[UUID] = None,
     ) -> TutorResult:
         message = TutorMessage(
             owner_id=owner_id,
             course_id=course_id,
+            decision_id=decision_id,
             conversation_id=conversation_id,
             context_lesson_id=context_lesson_id,
             question=question,
