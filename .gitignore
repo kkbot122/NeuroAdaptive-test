@@ -35,3 +35,12 @@ Thumbs.db
 
 # Vercel
 .vercel
+
+# Test source material. Kept out of the repo deliberately: the week-one pass
+# condition requires *unseen* documents, and committing one would make it
+# seeded course content, which the build mandate forbids in a real request path.
+*.pdf
+!docs/**/*.pdf
+
+# Stray logs
+debug.log
