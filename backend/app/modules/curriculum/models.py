@@ -110,6 +110,12 @@ class Concept(Base):
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     course_id = Column(Uuid, ForeignKey("courses.id"), nullable=False, index=True)
+    # Each version owns its own concept set. Without this, regenerating a
+    # course would mix every prior version's concepts into one course-scoped
+    # pile: a FAILED version's concepts would pollute queries for the active
+    # one, and a third regeneration's carryover comparison would be matching
+    # against a stale blend of v1 and v2 instead of specifically v2.
+    course_version_id = Column(Uuid, ForeignKey("course_versions.id"), nullable=False, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     canonical_key = Column(String(200), nullable=False, index=True)
@@ -173,6 +179,7 @@ class ConceptPrerequisite(Base):
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     course_id = Column(Uuid, ForeignKey("courses.id"), nullable=False, index=True)
+    course_version_id = Column(Uuid, ForeignKey("course_versions.id"), nullable=False, index=True)
     graph_version = Column(Integer, nullable=False, default=1)
 
     prerequisite_concept_id = Column(Uuid, ForeignKey("concepts.id"), nullable=False, index=True)

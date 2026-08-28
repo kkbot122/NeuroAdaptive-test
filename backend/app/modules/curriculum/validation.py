@@ -47,7 +47,7 @@ class ValidationResult:
 def validate_course_version(db: Session, version: CourseVersion) -> ValidationResult:
     errors: List[str] = []
 
-    concepts = db.query(Concept).filter(Concept.course_id == version.course_id).all()
+    concepts = db.query(Concept).filter(Concept.course_version_id == version.id).all()
     concept_ids = {c.id for c in concepts}
 
     lesson_ids = [
@@ -68,7 +68,7 @@ def validate_course_version(db: Session, version: CourseVersion) -> ValidationRe
             errors.append(f"Concept '{concept.name}' does not belong to any lesson.")
 
     # 2. Every ConceptSource resolves to a real chunk owned by this course/owner.
-    sources = db.query(ConceptSource).filter(ConceptSource.course_id == version.course_id).all()
+    sources = db.query(ConceptSource).filter(ConceptSource.concept_id.in_(concept_ids)).all() if concept_ids else []
     for source in sources:
         chunk = (
             db.query(Chunk)
@@ -88,7 +88,7 @@ def validate_course_version(db: Session, version: CourseVersion) -> ValidationRe
     # 3. Prerequisite graph acyclicity.
     edges = (
         db.query(ConceptPrerequisite)
-        .filter(ConceptPrerequisite.course_id == version.course_id)
+        .filter(ConceptPrerequisite.course_version_id == version.id)
         .all()
     )
     proposed = [
