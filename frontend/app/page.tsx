@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import Link from "next/link";
-import { Eye, Brain, GraduationCap } from "lucide-react";
-import Image from "next/image";
+import { Brain, ArrowRight, BookOpen, Shield, Zap, Sparkles } from "lucide-react";
 import Architect from "@/components/illustrations/Architect";
 import Tinkerer from "@/components/illustrations/Tinker";
 import Sprinter from "@/components/illustrations/Sprinter";
@@ -50,15 +49,15 @@ export default async function Home() {
         <section className="w-full max-w-6xl px-4 py-20 md:py-32 flex flex-col md:flex-row items-center gap-12">
           {/* Left Content */}
           <div className="flex-1 space-y-6 text-center md:text-left">
-            <h1 className="text-5xl md:text-7xl font-bold leading-[1.1] tracking-tight">
-              Learn at the <br />
-              <span className="text-purple-600 underline decoration-wavy decoration-black underline-offset-8">
-                speed of thought
-              </span>
-            </h1>
-            <p className="text-lg md:text-xl font-medium text-gray-800 max-w-lg mx-auto md:mx-0">
-              A neuro-adaptive assistant that monitors your cognitive load in
-              real-time and adjusts content complexity instantly.
+            <p className="text-xl md:text-2xl font-bold mb-10 text-gray-800 leading-tight">
+              &quot;The most powerful learning system ever created.&quot; <br className="hidden md:block"/>
+              Transform your raw documents into a mastery-driven curriculum in seconds.
+            </p>
+            <h2 className="text-5xl md:text-7xl font-black mb-8 uppercase tracking-tighter">
+              Ready to Upgrade <br /> <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-500 to-[#FF9F1C]">&quot;Your&quot;</span> Brain?
+            </h2>
+            <p className="text-xl font-bold text-gray-700 italic max-w-2xl mx-auto leading-relaxed">
+              &quot;The brutalist design combined with advanced AI creates an learning experience that doesn&apos;t just teach—it completely rewires how you think about education.&quot;
             </p>
             <div className="flex flex-col md:flex-row gap-4 pt-4 justify-center md:justify-start">
               <Link href="/signin">
@@ -107,11 +106,11 @@ export default async function Home() {
               {/* Feature 1: The Sensor */}
               <div className="bg-[#FF9F1C] border-2 border-black rounded-xl p-6 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all">
                 <div className="w-12 h-12 bg-white rounded-lg border-2 border-black flex items-center justify-center mb-4">
-                  <Eye className="w-7 h-7 text-black" strokeWidth={2.5} />
+                  <div className="w-7 h-7 text-black" />
                 </div>
                 <h3 className="text-2xl font-bold mb-2">The Sensor</h3>
                 <p className="font-medium opacity-90">
-                  Gaze & Scroll tracking captures your "digital body language"
+                  Gaze & Scroll tracking captures your &quot;digital body language&quot;
                   to detect confusion instantly.
                 </p>
               </div>
@@ -123,7 +122,7 @@ export default async function Home() {
                 </div>
                 <h3 className="text-2xl font-bold mb-2">The Brain</h3>
                 <p className="font-medium opacity-90">
-                  Translates raw data into a "Load Score," deciding if you are
+                  Translates raw data into a &quot;Load Score,&quot; deciding if you are
                   zoning out or deeply focused.
                 </p>
               </div>
@@ -131,10 +130,7 @@ export default async function Home() {
               {/* Feature 3: The Teacher */}
               <div className="bg-[#CBF3F0] border-2 border-black rounded-xl p-6 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all">
                 <div className="w-12 h-12 bg-white rounded-lg border-2 border-black flex items-center justify-center mb-4">
-                  <GraduationCap
-                    className="w-7 h-7 text-black"
-                    strokeWidth={2.5}
-                  />
+                  <div className="w-7 h-7 text-black" />
                 </div>
                 <h3 className="text-2xl font-bold mb-2">The Teacher</h3>
                 <p className="font-medium opacity-90">
@@ -155,6 +151,7 @@ export default async function Home() {
               </span>
               <h2 className="text-4xl md:text-5xl font-bold">
                 Which{" "}
+                <span>&quot;I finally understand quantum mechanics...&quot;</span>
                 <span className="underline decoration-wavy decoration-purple-500">
                   Archetype
                 </span>{" "}
@@ -180,15 +177,15 @@ export default async function Home() {
                     </span>
                   </div>
                   <p className="text-sm font-medium text-gray-600 mb-4">
-                    Scans the whole page first. Needs to know "Why" before
-                    "How." Gets frustrated by details without context.
+                    Scans the whole page first. Needs to know &quot;Why&quot; before
+                    &quot;How.&quot; Gets frustrated by details without context.
                   </p>
                   <div className="bg-gray-50 p-3 rounded-lg border border-black border-dashed">
                     <p className="text-xs font-bold text-purple-600">
                       AI Action:
                     </p>
                     <p className="text-xs">
-                      Generates a high-level "Concept Map" at the start of every
+                      Generates a high-level &quot;Concept Map&quot; at the start of every
                       article.
                     </p>
                   </div>
@@ -210,8 +207,8 @@ export default async function Home() {
                     </span>
                   </div>
                   <p className="text-sm font-medium text-gray-600 mb-4">
-                    Learns by doing. Skips text to find the "Try it yourself"
-                    button. Gets bored if they can't interact with the content
+                    Learns by doing. Skips text to find the &quot;Try it yourself&quot;
+                    button. Gets bored if they can&apos;t interact with the content
                     within 30 seconds.
                   </p>
                   <div className="bg-gray-50 p-3 rounded-lg border border-black border-dashed">
@@ -249,7 +246,7 @@ export default async function Home() {
                       AI Action:
                     </p>
                     <p className="text-xs">
-                      Auto-summarizes text into "TikTok-style" 30-second
+                      Auto-summarizes text into &quot;TikTok-style&quot; 30-second
                       flashcards.
                     </p>
                   </div>
@@ -259,6 +256,7 @@ export default async function Home() {
 
             {/* CTA for Archetypes */}
             <div className="mt-16 text-center">
+              <p className="text-lg font-bold">&quot;Upload any document, and we&apos;ll generate a complete learning pathway instantly.&quot;</p>
               <p className="text-xl font-bold mb-6">
                 And 7 more archetypes waiting to be discovered...
               </p>

@@ -84,8 +84,8 @@ export async function POST(req: NextRequest) {
     
     return NextResponse.json(data);
 
-  } catch (error) {
-    console.error("Chat API Route Error:", error);
+  } catch (e: unknown) {
+    console.error("Chat API error:", e);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

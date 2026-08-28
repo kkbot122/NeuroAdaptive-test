@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { Brain, ArrowLeft, CheckCircle2, XCircle, ChevronRight, Trophy } from "lucide-react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { Brain, ArrowLeft, CheckCircle2, ChevronRight, Trophy, Loader2 } from "lucide-react";
 
 interface Question {
   question: string;
@@ -17,28 +17,127 @@ interface QuizData {
   questions: Question[];
 }
 
-export default function QuizPage() {
+export default function AssessmentPage() {
+  const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
+  
+  const courseId = params.courseId as string;
+  const type = searchParams.get("type") || "standard";
+  const lessonId = searchParams.get("lessonId");
+
   const [quiz, setQuiz] = useState<QuizData | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<string[]>([]);
   const [showResults, setShowResults] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     const data = sessionStorage.getItem("current_quiz");
     if (data) {
       try {
         setQuiz(JSON.parse(data));
+        sessionStorage.removeItem("current_quiz"); // Consume it
       } catch (e) {
         console.error("Quiz parsing error", e);
-        router.push("/chat");
       }
     } else {
-      router.push("/chat");
+      generateQuiz();
     }
-  }, [router]);
+  }, []);
 
-  if (!quiz) return null;
+  const generateQuiz = async () => {
+    setIsGenerating(true);
+    try {
+      const prompt = type === "diagnostic" 
+        ? "Please generate a diagnostic quiz for this course to evaluate my prior knowledge. Return ONLY a <quiz> JSON block."
+        : `Please generate an assessment for lesson ${lessonId || "this topic"}. Return ONLY a <quiz> JSON block.`;
+
+      const response = await fetch(`/api/v1/courses/${courseId}/tutor`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: prompt,
+          context_lesson_id: lessonId || undefined,
+        }),
+      });
+
+      if (!response.ok) throw new Error("Failed to generate quiz");
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      
+      let fullResponse = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        
+        const events = chunk.split("\n\n");
+        for (const eventStr of events) {
+          if (!eventStr.trim()) continue;
+          
+          const eventMatch = eventStr.match(/event: (.*?)\n/);
+          const dataMatch = eventStr.match(/data: (.*)/);
+          
+          if (eventMatch && dataMatch && eventMatch[1] === "token") {
+            const data = JSON.parse(dataMatch[1]);
+            fullResponse += data.text;
+          }
+        }
+      }
+
+      // Extract JSON from <quiz> tags
+      const quizMatch = fullResponse.match(/<quiz>([\s\S]*?)<\/quiz>/);
+      if (quizMatch && quizMatch[1]) {
+        setQuiz(JSON.parse(quizMatch[1]));
+      } else {
+        // Fallback mock if tutor failed to return valid quiz
+        setQuiz({
+          title: "Mock Assessment (Tutor failed to generate JSON)",
+          questions: [
+            {
+              question: "This is a fallback question.",
+              topic: "Fallback",
+              options: ["Option A", "Option B", "Option C", "Option D"],
+              correct_answer: "Option A",
+              explanation: "Fallback explanation."
+            }
+          ]
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      setQuiz({
+        title: "Error Generating Quiz",
+        questions: []
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  if (isGenerating) {
+    return (
+      <div className="min-h-screen bg-[#F4F1EA] flex flex-col items-center justify-center font-[family-name:var(--font-kodchasan)]">
+        <Loader2 className="w-16 h-16 text-purple-600 animate-spin mb-4" />
+        <h2 className="text-2xl font-bold">Generating Assessment...</h2>
+        <p className="text-gray-600">The tutor is crafting questions based on your material.</p>
+      </div>
+    );
+  }
+
+  if (!quiz || quiz.questions.length === 0) {
+    return (
+      <div className="min-h-screen bg-[#F4F1EA] flex flex-col items-center justify-center font-[family-name:var(--font-kodchasan)] text-center px-4">
+        <h2 className="text-2xl font-bold mb-4">Could not load assessment</h2>
+        <button onClick={() => router.push(`/dashboard`)} className="bg-black text-white px-6 py-3 rounded-lg font-bold">
+          Return to Dashboard
+        </button>
+      </div>
+    );
+  }
 
   const currentQuestion = quiz.questions[currentStep];
   const isLastStep = currentStep === quiz.questions.length - 1;
@@ -75,43 +174,24 @@ export default function QuizPage() {
   };
 
   const handleFinish = async () => {
-    const results = calculateResults();
-
-    // Persist server-side so the attempt survives the tab and can feed mastery
-    // estimation. The backend re-grades from questions + answers; the score
-    // computed here is only for the results screen. Failure is logged, not
-    // surfaced — a telemetry problem must not trap the learner on this page.
+    // Send attempt to backend
     try {
-      const response = await fetch("/api/quiz", {
+      await fetch("/api/v1/quiz-attempts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: quiz.title,
-          topic: quiz.questions[0]?.topic ?? null,
-          questions: quiz.questions,
-          answers: quiz.questions.map((_, i) => answers[i] ?? null),
+          course_id: courseId,
+          lesson_id: lessonId || undefined,
+          score: calculateResults().score,
+          total: quiz.questions.length,
+          missed_topics: calculateResults().missedTopics,
         }),
       });
-      if (!response.ok) {
-        console.warn(`Quiz attempt not recorded: ${response.status}`);
-      }
-    } catch (error) {
-      console.warn("Quiz attempt failed to send:", error);
+    } catch (e) {
+      console.error(e);
     }
 
-    sessionStorage.setItem("last_quiz_results", JSON.stringify({
-      title: quiz.title,
-      score: results.score,
-      total: results.total,
-      missed_topics: results.missedTopics
-    }));
-    // Include session ID in URL so chat page restores the correct session
-    // (avoids relying solely on sessionStorage which can be lost)
-    const savedSessionId = sessionStorage.getItem("chat_session_id");
-    const returnUrl = savedSessionId
-      ? `/chat?quiz_done=true&sessionId=${savedSessionId}`
-      : "/chat?quiz_done=true";
-    router.push(returnUrl);
+    router.push(`/dashboard`);
   };
 
   if (showResults) {
@@ -125,7 +205,7 @@ export default function QuizPage() {
             <Trophy className="w-12 h-12 text-black" />
           </div>
           
-          <h1 className="text-4xl font-black mb-2 uppercase tracking-tight">Mission Report</h1>
+          <h1 className="text-4xl font-black mb-2 uppercase tracking-tight">Assessment Complete</h1>
           <p className="text-xl font-bold text-gray-600 mb-8">{quiz.title}</p>
           
           <div className="flex items-center justify-center gap-8 mb-10">
@@ -160,7 +240,7 @@ export default function QuizPage() {
             onClick={handleFinish}
             className="w-full bg-black text-white hover:bg-gray-800 border-4 border-black py-4 rounded-2xl font-black text-xl shadow-[6px_6px_0px_0px_rgba(255,159,28,1)] transition-all active:translate-y-1 active:shadow-none"
           >
-            RETURN TO COMMAND CENTER
+            RETURN TO DASHBOARD
           </button>
         </div>
       </div>
@@ -172,7 +252,7 @@ export default function QuizPage() {
       <nav className="w-full bg-white border-b-4 border-black px-6 py-4 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <button 
-            onClick={() => router.push("/chat")}
+            onClick={() => router.back()}
             className="p-2 hover:bg-gray-100 rounded-full border-2 border-transparent hover:border-black transition-all"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -192,7 +272,6 @@ export default function QuizPage() {
 
       <main className="flex-1 flex items-center justify-center p-6 pb-24">
         <div className="max-w-3xl w-full">
-          {/* Progress Bar */}
           <div className="w-full h-6 bg-white border-4 border-black rounded-full mb-12 overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
             <div 
               className="h-full bg-purple-500 border-r-4 border-black transition-all duration-500"

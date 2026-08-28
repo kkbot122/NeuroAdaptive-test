@@ -83,6 +83,7 @@ export default function ProfileDashboard() {
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true);
   }, []);
 
@@ -252,7 +253,7 @@ export default function ProfileDashboard() {
                       />
                       <YAxis domain={[-1, 1]} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
                       <Tooltip
-                        formatter={(val: number) => val.toFixed(3)}
+                        formatter={(val: number | string | any) => typeof val === "number" ? val.toFixed(3) : val}
                         contentStyle={{
                           border: "2px solid black",
                           borderRadius: "8px",

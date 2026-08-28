@@ -32,7 +32,7 @@ services:
     container_name: neuro_backend
     command: sh wait-for-db.sh
     ports:
-      - "8000:8000"
+      - "8001:8000"
     # Notice: We removed the hardcoded DATABASE_URL and INTERNAL_API_KEY
     env_file:
       - ./backend/.env
@@ -52,7 +52,7 @@ services:
       dockerfile: Dockerfile
     container_name: neuro_frontend
     ports:
-      - "3000:3000"
+      - "3001:3000"
     env_file:
       - ./frontend/.env.local
     environment:
