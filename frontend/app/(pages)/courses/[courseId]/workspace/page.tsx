@@ -107,10 +107,15 @@ export default function WorkspacePage() {
         const jobData = await res.json();
         setJob(jobData);
         
-        if (jobData.status === "completed") {
+        // Backend job statuses are READY/FAILED/PAUSED (uppercase --
+        // app/modules/jobs/models.py's JobStatus enum), not "completed"/
+        // "failed": this comparison never matched, so the interval never
+        // cleared and the UI never advanced past step 1 even once the job
+        // had actually finished.
+        if (jobData.status === "READY") {
           clearInterval(interval);
           fetchStructure();
-        } else if (jobData.status === "failed") {
+        } else if (jobData.status === "FAILED" || jobData.status === "PAUSED") {
           clearInterval(interval);
         }
       } catch (err) {
