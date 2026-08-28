@@ -19,6 +19,7 @@ from app.modules.documents import chunk_models as chunk_models
 from app.modules.curriculum import models as curriculum_models
 from app.modules.mastery import models as mastery_models
 from app.modules.adaptation import models as adaptation_models
+from app.modules.tutor import models as tutor_models
 
 # --- Import Routers ---
 from app.modules.auth.router import router as auth_router
@@ -36,6 +37,7 @@ from app.modules.documents.router import router as documents_router
 from app.modules.jobs.router import router as jobs_router
 from app.modules.mastery.router import router as mastery_router
 from app.modules.adaptation.router import router as adaptation_router
+from app.modules.tutor.router import router as tutor_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -80,6 +82,7 @@ app.include_router(documents_router, prefix=settings.API_V1_STR, tags=["document
 app.include_router(jobs_router, prefix=settings.API_V1_STR, tags=["jobs"])
 app.include_router(mastery_router, prefix=settings.API_V1_STR, tags=["mastery"])
 app.include_router(adaptation_router, prefix=settings.API_V1_STR, tags=["adaptation"])
+app.include_router(tutor_router, prefix=settings.API_V1_STR, tags=["tutor"])
 
 # --- Health checks (liveness + database readiness) ---
 app.include_router(health_router, tags=["health"])

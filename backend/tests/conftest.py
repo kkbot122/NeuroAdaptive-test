@@ -113,6 +113,8 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     from app.modules.mastery.service import MasteryService
     from app.modules.retrieval.router import _service as retrieval_service_dep
     from app.modules.retrieval.service import RetrievalService
+    from app.modules.tutor.router import _service as tutor_service_dep
+    from app.modules.tutor.service import TutorService
 
     def _override_get_db():
         try:
@@ -132,6 +134,9 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     )
     app.dependency_overrides[adaptation_service_dep] = lambda: AdaptationService(
         db_session, fake_generation, fake_embeddings
+    )
+    app.dependency_overrides[tutor_service_dep] = lambda: TutorService(
+        db_session, fake_generation, fake_embeddings, fake_vectors
     )
 
     with TestClient(app) as c:
