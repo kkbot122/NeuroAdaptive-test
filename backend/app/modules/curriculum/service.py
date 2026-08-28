@@ -285,10 +285,19 @@ class CurriculumService:
         self.db.refresh(course)
         return course
 
+    def _get_owned_course(self, course_id: UUID, owner_id: int) -> Course:
+        """Every read/write method below resolves ownership through this,
+        so CourseNotFound is never allowed to propagate as itself -- the
+        router only knows to catch CurriculumNotFound."""
+        try:
+            return self.courses.get_owned(course_id, owner_id)
+        except CourseNotFound:
+            raise CurriculumNotFound(str(course_id))
+
     # -- reads ----------------------------------------------------------------
 
     def get_version(self, course_id: UUID, owner_id: int, version_id: UUID) -> CourseVersion:
-        self.courses.get_owned(course_id, owner_id)  # raises CourseNotFound
+        self._get_owned_course(course_id, owner_id)
         version = (
             self.db.query(CourseVersion)
             .filter(CourseVersion.id == version_id, CourseVersion.course_id == course_id)
@@ -299,17 +308,40 @@ class CurriculumService:
         return version
 
     def get_active_structure(self, course_id: UUID, owner_id: int) -> Optional[CourseVersion]:
-        course = self.courses.get_owned(course_id, owner_id)
+        course = self._get_owned_course(course_id, owner_id)
         if course.active_version_id is None:
             return None
         return self.get_version(course_id, owner_id, course.active_version_id)
 
+    def get_review_version(self, course_id: UUID, owner_id: int) -> Optional[CourseVersion]:
+        """
+        The outline review gate's target: the most recently generated
+        version, regardless of status -- a learner reviews (and can edit)
+        the draft before deciding whether to publish it, which means this
+        must show the latest attempt even if it failed validation, not only
+        an already-active one.
+        """
+        self._get_owned_course(course_id, owner_id)
+        return (
+            self.db.query(CourseVersion)
+            .filter(CourseVersion.course_id == course_id)
+            .order_by(CourseVersion.version_number.desc())
+            .first()
+        )
+
     def get_graph(self, course_id: UUID, owner_id: int, version_id: Optional[UUID] = None) -> GraphView:
-        """Defaults to the active version's graph. A course with no active
-        version yet (nothing generated, or the only version failed
-        validation) returns an empty graph rather than raising."""
-        course = self.courses.get_owned(course_id, owner_id)
+        """
+        Defaults to: the requested version, else the active one, else the
+        latest generated (review) version -- matching get_review_version's
+        behaviour, so a learner can inspect a just-generated course's graph
+        before publishing it, not only after. Returns an empty graph rather
+        than raising when nothing has been generated yet.
+        """
+        course = self._get_owned_course(course_id, owner_id)
         target_version_id = version_id or course.active_version_id
+        if target_version_id is None:
+            latest = self.get_review_version(course_id, owner_id)
+            target_version_id = latest.id if latest else None
         if target_version_id is None:
             return GraphView(concepts=[], edges=[])
 
@@ -327,7 +359,7 @@ class CurriculumService:
 
     def rename_lesson(self, course_id: UUID, owner_id: int, lesson_id: UUID, title: str) -> Lesson:
         """The outline review gate's simplest edit: PUT .../structure."""
-        self.courses.get_owned(course_id, owner_id)
+        self._get_owned_course(course_id, owner_id)
         lesson = (
             self.db.query(Lesson)
             .join(Module, Lesson.module_id == Module.id)
