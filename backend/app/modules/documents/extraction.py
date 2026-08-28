@@ -28,6 +28,9 @@ CHUNK_OVERLAP_TOKENS = 75      # midpoint of the 50-100 token overlap range
 
 SUPPORTED_TEXT_SUFFIXES = (".txt", ".md", ".markdown")
 
+# T2 (Phase 6, page-count-bomb protection): named, unvalidated default.
+MAX_PDF_PAGES = 500
+
 # Bumped whenever extraction or chunking logic changes in a way that would
 # alter chunk boundaries or content for the same input. Deterministic chunk
 # IDs are derived from this, so a version bump is what makes a reprocess
@@ -163,6 +166,18 @@ def _extract_pdf(raw: bytes) -> ExtractedDocument:
     if reader.is_encrypted:
         raise NoExtractableText(
             "This PDF is password-protected. Upload an unprotected copy."
+        )
+
+    # T2 (Phase 6): a page-count check, cheap because it walks pypdf's page
+    # tree without calling extract_text() per page -- bounds worst-case
+    # processing time/memory against a page-count-bomb PDF (a small file
+    # engineered to declare an extreme page count) before any real
+    # per-page work starts. Named, unvalidated default.
+    page_count = len(reader.pages)
+    if page_count > MAX_PDF_PAGES:
+        raise NoExtractableText(
+            f"This PDF has {page_count} pages, over the {MAX_PDF_PAGES}-page limit. "
+            "Split it into smaller files and upload them separately."
         )
 
     pages = []

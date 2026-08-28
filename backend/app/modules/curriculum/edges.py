@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import List
 from uuid import UUID
 
+from app.core.prompt_safety import UNTRUSTED_CONTENT_WARNING, wrap_untrusted
 from app.modules.curriculum.graph import ProposedEdge
 from app.services.generation.gateway import GenerationError, GenerationGateway
 
@@ -49,7 +50,7 @@ def propose_edges(
 
     prompt = (
         "Concepts in a course, in no particular order:\n\n"
-        f"{listing}\n\n"
+        f"{wrap_untrusted(listing)}\n\n"
         "Propose prerequisite relationships: which concepts should a learner "
         "understand before another one will make sense. Use only the exact "
         "names listed above.\n\n"
@@ -63,7 +64,9 @@ def propose_edges(
     )
 
     try:
-        raw = generation.generate(prompt, temperature=0.2, max_output_tokens=3000)
+        raw = generation.generate(
+            prompt, system_instruction=UNTRUSTED_CONTENT_WARNING, temperature=0.2, max_output_tokens=3000
+        )
         payload = json.loads(_strip_code_fence(raw))
     except (GenerationError, json.JSONDecodeError, ValueError) as exc:
         raise EdgeParseError(str(exc)) from exc

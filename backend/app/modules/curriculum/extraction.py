@@ -18,6 +18,7 @@ import json
 import re
 from typing import Dict, List
 
+from app.core.prompt_safety import UNTRUSTED_CONTENT_WARNING, wrap_untrusted
 from app.modules.curriculum.normalization import CandidateConcept
 from app.modules.documents.chunk_models import Chunk
 from app.services.embedding.gateway import EmbeddingGateway
@@ -69,7 +70,7 @@ def propose_concepts_for_section(
     heading = section_chunks[0].heading_path or "(untitled section)"
 
     prompt = (
-        f"Section: {heading}\n\n{text}\n\n"
+        f"Section: {heading}\n\n{wrap_untrusted(text)}\n\n"
         "Identify the distinct, independently teachable concepts in this "
         "section. For each, give a name, a self-contained one-to-two "
         "sentence definition grounded ONLY in this text, an importance score "
@@ -83,7 +84,9 @@ def propose_concepts_for_section(
     )
 
     try:
-        raw = generation.generate(prompt, temperature=0.2, max_output_tokens=2000)
+        raw = generation.generate(
+            prompt, system_instruction=UNTRUSTED_CONTENT_WARNING, temperature=0.2, max_output_tokens=2000
+        )
         payload = json.loads(_strip_code_fence(raw))
     except (GenerationError, json.JSONDecodeError, ValueError) as exc:
         raise ExtractionParseError(str(exc)) from exc

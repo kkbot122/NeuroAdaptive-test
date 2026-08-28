@@ -41,7 +41,18 @@ def record_batch(
 
     The user is never taken from the request body. 202 rather than 201: this is
     fire-and-forget telemetry and the client must not block on it.
+
+    Privacy (Phase 6): a user with tracking_consent="minimal" declined
+    behavioral telemetry -- this is purely LearningEvent/personalization
+    data, never the core learning loop (mastery, adaptation, and
+    assessment all live in separate tables this endpoint never touches), so
+    declining costs nothing functional. Accepted with rejected=len(events)
+    rather than a 403: the client sent a legitimate request, the server is
+    just honoring a standing preference, not refusing the caller.
     """
+    if user.tracking_consent == "minimal":
+        return EventBatchOut(accepted=0, rejected=len(body.events))
+
     rows = [_persist(event, user) for event in body.events]
     db.add_all(rows)
     db.commit()

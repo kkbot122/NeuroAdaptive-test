@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.problem_details import ProblemDetailException, problem_detail_exception_handler
 
 # --- Import Models so SQLAlchemy registers them ---
 # Still required without create_all: the string-based relationship() targets
@@ -20,6 +21,8 @@ from app.modules.curriculum import models as curriculum_models
 from app.modules.mastery import models as mastery_models
 from app.modules.adaptation import models as adaptation_models
 from app.modules.tutor import models as tutor_models
+from app.modules.abuse import models as abuse_models
+from app.modules.audit import models as audit_models
 
 # --- Import Routers ---
 from app.modules.auth.router import router as auth_router
@@ -43,6 +46,7 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
+app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)
 
 # Schema is owned by Alembic. `Base.metadata.create_all()` used to run here,
 # which meant two mechanisms could shape the database and silently diverge:

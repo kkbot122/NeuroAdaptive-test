@@ -30,14 +30,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
+from app.core.rate_limit import generation_slot
 from app.core.security import get_current_user
 from app.db.session import get_db
+from app.modules.abuse.service import AbuseControlService
 from app.modules.auth.models import User
 from app.modules.tutor.models import GroundingMode
 from app.modules.tutor.service import TutorNotFound, TutorService
 from app.services.embedding.gemini import GeminiEmbeddingGateway
 from app.services.generation.gemini import GeminiGenerationGateway
 from app.services.vectorstore.qdrant_store import QdrantVectorStore
+
+MAX_CONCURRENT_GENERATIONS_PER_USER = 2
 
 router = APIRouter()
 
@@ -85,12 +89,15 @@ def ask_tutor(
     body: TutorQuestionIn,
     user: User = Depends(get_current_user),
     service: TutorService = Depends(_service),
+    db: Session = Depends(get_db),
 ):
+    AbuseControlService(db).enforce_generation_request_controls(user.id)
     try:
-        result = service.ask(
-            course_id, user.id, body.question,
-            context_lesson_id=body.context_lesson_id, conversation_id=body.conversation_id,
-        )
+        with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER):
+            result = service.ask(
+                course_id, user.id, body.question,
+                context_lesson_id=body.context_lesson_id, conversation_id=body.conversation_id,
+            )
     except TutorNotFound:
         raise HTTPException(status_code=404, detail="Course not found")
 
@@ -107,6 +114,7 @@ def get_lesson_content(
     format: str = "detailed",
     user: User = Depends(get_current_user),
     service: TutorService = Depends(_service),
+    db: Session = Depends(get_db),
 ):
     """
     Real, grounded lesson content -- not a placeholder. Plain JSON, not SSE:
@@ -115,8 +123,10 @@ def get_lesson_content(
     """
     if format not in _VALID_FORMATS:
         raise HTTPException(status_code=422, detail=f"format must be one of {sorted(_VALID_FORMATS)}")
+    AbuseControlService(db).enforce_generation_request_controls(user.id)
     try:
-        result = service.generate_lesson_content(course_id, user.id, lesson_id, format)
+        with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER):
+            result = service.generate_lesson_content(course_id, user.id, lesson_id, format)
     except TutorNotFound:
         raise HTTPException(status_code=404, detail="Course or lesson not found")
 

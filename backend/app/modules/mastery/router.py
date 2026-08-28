@@ -11,8 +11,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.rate_limit import generation_slot
 from app.core.security import get_current_user
 from app.db.session import get_db
+from app.modules.abuse.service import AbuseControlService
 from app.modules.auth.models import User
 from app.modules.mastery.grading import GradingError
 from app.modules.mastery.schemas import (
@@ -28,6 +30,8 @@ from app.services.generation.gemini import GeminiGenerationGateway
 
 router = APIRouter()
 
+MAX_CONCURRENT_GENERATIONS_PER_USER = 2
+
 
 def _service(db: Session = Depends(get_db)) -> MasteryService:
     # Lazy clients: constructing these per request touches no network until
@@ -41,6 +45,7 @@ def generate_diagnostic(
     body: DiagnosticRequest = DiagnosticRequest(),
     user: User = Depends(get_current_user),
     service: MasteryService = Depends(_service),
+    db: Session = Depends(get_db),
 ):
     """
     Skipping the diagnostic is not a separate action: a learner who never
@@ -48,8 +53,10 @@ def generate_diagnostic(
     every concept at the honest "Not assessed" prior (engine.py) -- there is
     no fabricated baseline to opt out of.
     """
+    AbuseControlService(db).enforce_generation_request_controls(user.id)
     try:
-        questions = service.generate_diagnostic(course_id, user.id, body.max_questions)
+        with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER):
+            questions = service.generate_diagnostic(course_id, user.id, body.max_questions)
     except MasteryNotFound:
         raise HTTPException(status_code=404, detail="Course not found")
 

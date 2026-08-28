@@ -25,6 +25,7 @@ from app.modules.adaptation.service import (
     AdaptationService,
 )
 from app.modules.auth.models import User
+from app.modules.privacy.service import PrivacyService
 from app.services.embedding.gemini import GeminiEmbeddingGateway
 from app.services.generation.gemini import GeminiGenerationGateway
 
@@ -92,3 +93,20 @@ def record_presentation_switch(
     correct (guardrail)."""
     service.record_manual_switch(user.id, body.from_format, body.to_format)
     return {"status": "recorded"}
+
+
+@router.post("/presentation-affinity/reset")
+def reset_presentation_affinity(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Clears only presentation-format preference evidence -- ConceptMastery/
+    MasteryEvent rows (what the learner has actually demonstrated knowing)
+    are untouched. A learner resetting "which format works for me" and a
+    learner erasing "what I've proven I know" are different requests with
+    different reasons to exist; conflating them would strand real progress
+    behind a preference-reset button.
+    """
+    removed = PrivacyService(db).reset_presentation_affinity(user.id)
+    return {"status": "reset", "rows_removed": removed}

@@ -84,6 +84,14 @@ class ProcessingJob(Base):
     # frozen-scope.md data-lifecycle rules on logging).
     error_category = Column(String(64), nullable=True)
 
+    # T2 (Phase 6): unlike error_category, this MAY hold a message -- but
+    # only ever one of NoExtractableText's own authored, human-facing
+    # strings (e.g. "This PDF is password-protected...", "This PDF has 750
+    # pages, over the 500-page limit..."). Never populated from a provider
+    # exception or raw document content -- see jobs/service.py's
+    # _run_stage(), which sets this in exactly one except branch.
+    error_detail = Column(String(500), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)

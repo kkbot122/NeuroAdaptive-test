@@ -18,6 +18,11 @@ class FakeGenerationGateway(GenerationGateway):
         self._responses: List[Tuple[str, str]] = []
         self._default: Optional[str] = None
         self.calls: List[str] = []  # prompts received, for assertions
+        # Parallel to `calls` (same index) -- separate so existing
+        # `"x" in gen.calls` assertions on plain prompt strings keep working.
+        # Phase 6 (T3) needs this to verify system_instruction actually
+        # carries the untrusted-content warning, not just the prompt shape.
+        self.system_instructions: List[Optional[str]] = []
 
     @property
     def model_name(self) -> str:
@@ -39,6 +44,7 @@ class FakeGenerationGateway(GenerationGateway):
         max_output_tokens: int = 4096,
     ) -> str:
         self.calls.append(prompt)
+        self.system_instructions.append(system_instruction)
         for substring, response in self._responses:
             if substring in prompt:
                 return response

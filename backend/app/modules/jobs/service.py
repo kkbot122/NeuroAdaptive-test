@@ -200,6 +200,10 @@ class JobService:
             stage.error_category = "NO_EXTRACTABLE_TEXT"
             job.status = JobStatus.NEEDS_INPUT.value
             job.error_category = "NO_EXTRACTABLE_TEXT"
+            # Safe to surface verbatim: every NoExtractableText message is
+            # our own authored, human-facing text (encrypted/too-many-pages/
+            # no-text-found), never provider output or raw document content.
+            job.error_detail = str(exc)
             self._set_course_status(job, CourseStatus.NEEDS_INPUT)
             logger.info("Job %s needs input at %s", job.id, stage.name)
             return StageStatus.FAILED

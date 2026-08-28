@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
 from app.db.session import get_db
+from app.modules.abuse.service import AbuseControlService
 from app.modules.auth.models import User
 from app.modules.courses.service import CourseNotFound, CourseService
 from app.modules.jobs.service import JobNotFound, JobService
@@ -24,6 +25,7 @@ def _out(job) -> dict:
         "current_stage": job.current_stage,
         "retry_count": job.retry_count,
         "error_category": job.error_category,
+        "error_detail": job.error_detail,
         "stages": [
             {
                 "name": s.name,
@@ -49,6 +51,12 @@ def start_processing(
         CourseService(db).get_owned(course_id, user.id)
     except CourseNotFound:
         raise HTTPException(status_code=404, detail="Course not found")
+
+    # T5: checked here, before the job (and the synchronous pipeline run
+    # behind it -- service.run() below executes in-process, not on a queue)
+    # starts, so an over-cap request never gets billed for generation work
+    # only to fail partway through.
+    AbuseControlService(db).enforce_course_regeneration_cap(course_id, user.id)
 
     job = service.create_for_course(course_id, user.id)
     service.run(job.id, user.id)

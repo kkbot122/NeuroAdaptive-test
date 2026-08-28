@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 from uuid import UUID
 
+from app.core.prompt_safety import UNTRUSTED_CONTENT_WARNING, wrap_untrusted
 from app.services.generation.gateway import GenerationError, GenerationGateway
 
 HIGH_CONFIDENCE_THRESHOLD = 0.92
@@ -103,18 +104,20 @@ def _adjudicate(
     that as "keep distinct" (below), since a corrupted adjudication is not
     evidence they should be merged.
     """
+    concept_pair = f'Concept A: "{a.name}" -- {a.definition}\nConcept B: "{b.name}" -- {b.definition}'
     prompt = (
         "Two candidate concepts from a course's source material may be the "
         "same underlying concept described differently.\n\n"
-        f'Concept A: "{a.name}" -- {a.definition}\n'
-        f'Concept B: "{b.name}" -- {b.definition}\n\n'
+        f"{wrap_untrusted(concept_pair)}\n\n"
         "Are these the same concept? Respond with ONLY this JSON shape:\n"
         '{"same_concept": true or false, "merged_definition": "..." or null}\n'
         "merged_definition should combine both descriptions clearly if "
         "same_concept is true, and be null otherwise."
     )
     try:
-        raw = generation.generate(prompt, temperature=0.0, max_output_tokens=500)
+        raw = generation.generate(
+            prompt, system_instruction=UNTRUSTED_CONTENT_WARNING, temperature=0.0, max_output_tokens=500
+        )
         payload = json.loads(_strip_code_fence(raw))
     except (GenerationError, json.JSONDecodeError, ValueError) as exc:
         raise AdjudicationError(str(exc)) from exc
