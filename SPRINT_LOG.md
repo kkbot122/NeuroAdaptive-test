@@ -377,3 +377,49 @@ existing route; deferred rather than rushed across 30+ endpoints in this
 pass. Left for a dedicated pass rather than silently dropped.
 
 Suite: 242 passing.
+
+---
+
+## 2026-08-29 -- Real end-to-end verification against the live stack
+
+The RAG foundation commit above was verified against real infrastructure,
+not just the fake-provider test suite. Docker image rebuilt (tiktoken and
+real qdrant-client usage are new since the last build).
+
+**Real quota problem found and fixed.** Processing the actual 130-chunk,
+92-page OS PDF against live Gemini paused with `EmbeddingError` on the first
+attempt: a batch of 50 realistic-sized chunks in one embed_content call
+raised `ResourceExhausted`, and testing smaller sizes showed even repeated
+batches of 20 failed after the first call succeeded. This is exactly the
+provider-quota scenario frozen-scope.md names ("pauses the job for manual
+retry; there is no automatic provider fallback") and the pipeline correctly
+paused rather than corrupting state or silently producing partial chunks.
+For the pipeline to actually finish on real documents, added bounded
+retry-with-backoff (3 attempts, 10/20/40s) on the same provider -- ordinary
+resilience against a transient, expected limit, not a fallback to a
+different one -- and dropped the batch size to 10, verified stable through
+three consecutive real calls. Writing the regression test for this exposed a
+dead `for/else` branch: the "failed after N retries" message was
+unreachable because the final attempt's exception was already raised inside
+the loop body.
+
+**Full real run, after the fix:**
+
+```
+Upload:    92-page OS lecture-notes PDF (never used elsewhere in this repo)
+Chunking:  130 chunks, real heading paths and page ranges
+INDEXING:  SUCCEEDED -- 130/130 chunks embedded via live gemini-embedding-001
+           and upserted into a real Qdrant collection (verified via
+           /collections/course_chunks: points_count=130, vector size=3072)
+Pipeline:  paused at EXTRACTING_CONCEPTS (Phase 2, correctly unimplemented)
+Query:     "what is a deadlock" -> top result is the actual "Deadlocks"
+           section, page 43, score 0.712, both vector and lexical agreeing
+Isolation: a real unauthorized email against the real course -> HTTP 404
+```
+
+This is the first point in the build where a genuinely unseen document goes
+all the way from upload to a correct, cited, ownership-scoped answer to a
+real question -- the actual research claim, exercised for real rather than
+against fakes.
+
+Suite: 251 passing (9 new retry-behaviour tests).
