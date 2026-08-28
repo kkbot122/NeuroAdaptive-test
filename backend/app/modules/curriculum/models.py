@@ -123,6 +123,13 @@ class Concept(Base):
     importance = Column(Float, nullable=False, default=0.5)  # [0, 1], unvalidated default
     bloom_level = Column(String(32), nullable=True)  # e.g. "remember", "apply", "analyze"
 
+    # The definition's embedding at creation time, kept for regeneration's
+    # carryover matching: canonical_key is the primary match key across
+    # versions, but a concept's name can genuinely change between one
+    # generation and the next, so a similarity fallback needs this on hand
+    # rather than re-embedding every old concept at regeneration time.
+    embedding = Column(JSON, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     sources = relationship(
