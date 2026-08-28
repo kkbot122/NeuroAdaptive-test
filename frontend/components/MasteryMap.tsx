@@ -1,14 +1,22 @@
 import React from "react";
 import { Brain, Star, CheckCircle, ShieldAlert } from "lucide-react";
 
-export type MasteryBand = "NO_EVIDENCE" | "STRUGGLING" | "DEVELOPING" | "COMPETENT" | "MASTERED";
+// Matches backend/app/modules/mastery/engine.py's classify_band() literally
+// -- these exact strings (Title Case, "Not assessed" is two words), not an
+// invented UPPER_SNAKE_CASE vocabulary.
+export type MasteryBand = "Not assessed" | "Needs attention" | "Developing" | "Proficient" | "Mastered";
 
 export interface MasteryRow {
   concept_id: string;
   concept_name: string;
-  qualitative_band: MasteryBand;
-  raw_mastery?: number;
-  raw_uncertainty?: number;
+  band: MasteryBand;
+  // Only present when the caller requests ?include_raw=true
+  // (mastery/schemas.py's MasteryReportRow) -- nested, not flat fields.
+  raw?: {
+    mastery: number;
+    uncertainty: number;
+    evidence_weight_total: number;
+  } | null;
 }
 
 interface MasteryMapProps {
@@ -17,31 +25,31 @@ interface MasteryMapProps {
 }
 
 const bandConfig: Record<MasteryBand, { label: string; color: string; icon: React.ReactNode; bg: string }> = {
-  NO_EVIDENCE: {
+  "Not assessed": {
     label: "Not Started",
     color: "text-gray-500",
     bg: "bg-gray-100",
     icon: <Brain className="w-5 h-5 text-gray-500" />,
   },
-  STRUGGLING: {
+  "Needs attention": {
     label: "Needs Review",
     color: "text-red-600",
     bg: "bg-red-100",
     icon: <ShieldAlert className="w-5 h-5 text-red-600" />,
   },
-  DEVELOPING: {
+  Developing: {
     label: "Developing",
     color: "text-yellow-600",
     bg: "bg-yellow-100",
     icon: <Star className="w-5 h-5 text-yellow-600" />,
   },
-  COMPETENT: {
-    label: "Competent",
+  Proficient: {
+    label: "Proficient",
     color: "text-blue-600",
     bg: "bg-blue-100",
     icon: <CheckCircle className="w-5 h-5 text-blue-600" />,
   },
-  MASTERED: {
+  Mastered: {
     label: "Mastered",
     color: "text-purple-600",
     bg: "bg-purple-100",
@@ -61,7 +69,7 @@ export function MasteryMap({ data, showRawValues = false }: MasteryMapProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {data.map((row) => {
-        const config = bandConfig[row.qualitative_band] || bandConfig["NO_EVIDENCE"];
+        const config = bandConfig[row.band] || bandConfig["Not assessed"];
         return (
           <div
             key={row.concept_id}
@@ -74,9 +82,9 @@ export function MasteryMap({ data, showRawValues = false }: MasteryMapProps) {
               <h4 className="font-bold text-gray-900 truncate">{row.concept_name}</h4>
               <p className={`text-sm font-bold mt-1 ${config.color}`}>{config.label}</p>
               
-              {showRawValues && row.raw_mastery !== undefined && (
+              {showRawValues && row.raw && (
                 <div className="mt-2 text-xs text-gray-500 font-mono">
-                  M: {row.raw_mastery.toFixed(2)} | U: {row.raw_uncertainty?.toFixed(2)}
+                  M: {row.raw.mastery.toFixed(2)} | U: {row.raw.uncertainty.toFixed(2)}
                 </div>
               )}
             </div>

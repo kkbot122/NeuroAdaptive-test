@@ -2,7 +2,7 @@ import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 
 // Define all routes that require authentication
-const protectedRoutes = ["/dashboard", "/chat", "/profile", "/mission"];
+const protectedRoutes = ["/dashboard", "/profile", "/courses"];
 
 export default auth((req) => {
     const isLoggedIn = !!req.auth;
@@ -27,10 +27,9 @@ export const config = {
     // The matcher tells Next.js which routes this middleware should run on.
     // We include all protected paths and the signin page.
     matcher: [
-        "/dashboard/:path*", 
-        "/chat/:path*", 
-        "/profile/:path*", 
-        "/mission/:path*", 
+        "/dashboard/:path*",
+        "/profile/:path*",
+        "/courses/:path*",
         "/signin"
     ],
 };

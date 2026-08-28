@@ -10,7 +10,10 @@ type ChatMessage = {
   id: string;
   role: "user" | "bot";
   content: string;
-  citations?: { claim: string; validation_status: string }[];
+  // chunk_id is what the backend actually sends per citation event
+  // (tutor/router.py's _stream_events) -- previously typed away and
+  // dropped, so a citation could never be traced back to its source chunk.
+  citations?: { claim: string; chunk_id: string; validation_status: string }[];
   isInsufficient?: boolean;
 };
 
@@ -74,9 +77,9 @@ export default function TutorPage() {
       const botMessageId = "bot_" + Date.now();
       let botContent = "";
       let isInsufficient = false;
-      let citations: { claim: string; validation_status: string }[] = [];
+      let citations: { claim: string; chunk_id: string; validation_status: string }[] = [];
 
-      const appendOrUpdateBotMessage = (content: string, insuff: boolean, cits: { claim: string; validation_status: string }[]) => {
+      const appendOrUpdateBotMessage = (content: string, insuff: boolean, cits: { claim: string; chunk_id: string; validation_status: string }[]) => {
         setMessages(prev => {
           const newMessages = [...prev];
           const lastIdx = newMessages.findIndex(m => m.id === botMessageId);
@@ -198,7 +201,10 @@ export default function TutorPage() {
                             <ul className="space-y-1">
                               {msg.citations.map((cit, idx) => (
                                 <li key={idx} className="text-xs text-gray-600">
-                                  [{idx + 1}] {cit.claim} ({cit.validation_status})
+                                  {/* No source-viewer page exists yet to open a
+                                      chunk by id -- showing it plainly rather
+                                      than a fake link to nowhere. */}
+                                  [{idx + 1}] {cit.claim} ({cit.validation_status}, source chunk {cit.chunk_id.slice(0, 8)})
                                 </li>
                               ))}
                             </ul>

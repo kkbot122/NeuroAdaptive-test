@@ -20,7 +20,24 @@ export default function WorkspacePage() {
   const [course, setCourse] = useState<{ title?: string } | null>(null);
   const [documents, setDocuments] = useState<{ filename: string }[]>([]);
   const [job, setJob] = useState<{ id: string; status: string; current_stage?: string } | null>(null);
-  const [structure, setStructure] = useState<{ lessons: { title: string; concepts: { name: string }[] }[] } | null>(null);
+
+  // Matches curriculum/router.py's _version_out() exactly: nested
+  // modules[].lessons[], and a lesson's concepts are {concept_id, role,
+  // weight} -- no concept name. Names come from the separate graph
+  // endpoint, joined in below via conceptNames.
+  interface LessonOut {
+    id: string;
+    title: string;
+    objective: string | null;
+    concepts: { concept_id: string; role: string; weight: number }[];
+  }
+  interface ModuleOut {
+    id: string;
+    title: string;
+    lessons: LessonOut[];
+  }
+  const [structure, setStructure] = useState<{ modules: ModuleOut[] } | null>(null);
+  const [conceptNames, setConceptNames] = useState<Record<string, string>>({});
 
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -124,13 +141,25 @@ export default function WorkspacePage() {
     }, 2000);
   };
 
-  // Fetch Structure for Review
+  // Fetch Structure for Review. The structure response has no concept
+  // names (curriculum/router.py's _version_out only returns concept_id per
+  // lesson) -- the graph endpoint is fetched alongside it to build the
+  // concept_id -> name map the outline needs to display anything readable.
   const fetchStructure = async () => {
     try {
-      const res = await fetch(`/api/v1/courses/${courseId}/structure`);
-      if (res.ok) {
-        setStructure(await res.json());
+      const [structureRes, graphRes] = await Promise.all([
+        fetch(`/api/v1/courses/${courseId}/structure`),
+        fetch(`/api/v1/courses/${courseId}/graph`),
+      ]);
+      if (structureRes.ok) {
+        setStructure(await structureRes.json());
         setActiveTab("outline");
+      }
+      if (graphRes.ok) {
+        const graph = await graphRes.json();
+        const names: Record<string, string> = {};
+        for (const c of graph.concepts || []) names[c.id] = c.name;
+        setConceptNames(names);
       }
     } catch (err) {
       console.error(err);
@@ -187,10 +216,10 @@ export default function WorkspacePage() {
           
           <button
             onClick={handleGenerate}
-            disabled={!!(job && job.status === "running")}
+            disabled={!!(job && job.status === "RUNNING")}
             className="w-full mt-6 flex items-center justify-center gap-2 bg-purple-600 text-white hover:bg-purple-700 border-2 border-black px-6 py-3 rounded-lg font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all active:translate-x-1 active:translate-y-1 active:shadow-none disabled:opacity-50"
           >
-            {(job && job.status === "running") ? (
+            {(job && job.status === "RUNNING") ? (
               <><Loader2 className="w-5 h-5 animate-spin" /> Processing ({job.current_stage})...</>
             ) : "Generate Curriculum"}
           </button>
@@ -205,15 +234,22 @@ export default function WorkspacePage() {
       <p className="text-gray-600 mb-6">Here is the generated structure. Please review before publishing.</p>
       
       {structure ? (
-        <div className="space-y-4 mb-8">
-          {structure.lessons?.map((lesson: { title: string; concepts: { name: string }[] }, i: number) => (
-            <div key={i} className="p-4 bg-gray-50 border-2 border-black rounded-lg">
-              <h4 className="font-bold text-lg mb-2">Lesson {i+1}: {lesson.title}</h4>
-              <ul className="list-disc pl-5 space-y-1 text-gray-700 font-medium">
-                {lesson.concepts?.map((c: { name: string }, j: number) => (
-                  <li key={j}>{c.name}</li>
+        <div className="space-y-6 mb-8">
+          {structure.modules?.map((module) => (
+            <div key={module.id}>
+              <h3 className="font-bold text-xl mb-3">{module.title}</h3>
+              <div className="space-y-4">
+                {module.lessons.map((lesson, i) => (
+                  <div key={lesson.id} className="p-4 bg-gray-50 border-2 border-black rounded-lg">
+                    <h4 className="font-bold text-lg mb-2">Lesson {i + 1}: {lesson.title}</h4>
+                    <ul className="list-disc pl-5 space-y-1 text-gray-700 font-medium">
+                      {lesson.concepts.map((c) => (
+                        <li key={c.concept_id}>{conceptNames[c.concept_id] || c.concept_id}</li>
+                      ))}
+                    </ul>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </div>
           ))}
         </div>
@@ -291,16 +327,16 @@ export default function WorkspacePage() {
             >
               1. Upload
             </button>
-            <button 
-              onClick={() => { if(job?.status === "completed") { fetchStructure(); setActiveTab("outline"); } }}
-              disabled={job?.status !== "completed" && activeTab !== "outline"}
+            <button
+              onClick={() => { if(job?.status === "READY") { fetchStructure(); setActiveTab("outline"); } }}
+              disabled={job?.status !== "READY" && activeTab !== "outline"}
               className={`px-4 py-2 font-bold rounded-lg border-2 border-black ${activeTab === "outline" ? "bg-purple-200 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]" : "bg-white disabled:opacity-50"}`}
             >
               2. Review Outline
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab("diagnostic")}
-              disabled={activeTab !== "diagnostic" && (!structure || job?.status !== "completed")}
+              disabled={activeTab !== "diagnostic" && (!structure || job?.status !== "READY")}
               className={`px-4 py-2 font-bold rounded-lg border-2 border-black ${activeTab === "diagnostic" ? "bg-purple-200 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]" : "bg-white disabled:opacity-50"}`}
             >
               3. Diagnostic

@@ -10,8 +10,6 @@ export default function NewCoursePage() {
   
   const [title, setTitle] = useState("");
   const [goal, setGoal] = useState("");
-  const [deadline, setDeadline] = useState("");
-  const [sessionLength, setSessionLength] = useState("30");
   const [startingConfidence, setStartingConfidence] = useState("3");
   
   const [isLoading, setIsLoading] = useState(false);
@@ -104,30 +102,14 @@ export default function NewCoursePage() {
               />
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block font-bold mb-2">Target Deadline (Optional)</label>
-                <input
-                  type="date"
-                  value={deadline}
-                  onChange={(e) => setDeadline(e.target.value)}
-                  className="w-full bg-gray-50 border-2 border-black rounded-lg px-4 py-3 font-medium focus:outline-none focus:bg-white focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-              
-              <div>
-                <label className="block font-bold mb-2">Session Length (Minutes)</label>
-                <select
-                  value={sessionLength}
-                  onChange={(e) => setSessionLength(e.target.value)}
-                  className="w-full bg-gray-50 border-2 border-black rounded-lg px-4 py-3 font-medium focus:outline-none focus:bg-white focus:ring-2 focus:ring-purple-500"
-                >
-                  <option value="15">15 Minutes (Microlearning)</option>
-                  <option value="30">30 Minutes (Standard)</option>
-                  <option value="60">60 Minutes (Deep Dive)</option>
-                </select>
-              </div>
-            </div>
+            {/* Target deadline / session-length controls were removed: they
+                were captured in state but never sent to the backend, and
+                frozen-scope.md explicitly excludes "time-based planning,
+                calendars, target dates, session fitting" from this product
+                (the same conflict adaptation/policy.py's C-1 resolves for
+                the recommendation scorer) -- there is no field on Course to
+                hold either value, so keeping the inputs would only mislead
+                a learner into thinking a deadline does something. */}
 
             <div>
               <label className="block font-bold mb-2">Starting Confidence Level</label>

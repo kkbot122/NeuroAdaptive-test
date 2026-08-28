@@ -15,11 +15,21 @@ interface Course {
   goal: string;
 }
 
-interface NextActivity {
-  candidate_type: string;
-  lesson_id?: string;
-  concept_id?: string;
+// Matches the actual shape of GET /courses/{id}/next-activity
+// (backend/app/modules/adaptation/router.py's get_next_activity): the
+// activity fields live under `recommended`, not at the top level.
+interface RecommendedActivity {
+  activity_type: string;
+  concept_ids: string[];
+  lesson_id: string | null;
   reason: string;
+  score: number;
+}
+
+interface NextActivity {
+  decision_id: string;
+  recommended: RecommendedActivity;
+  alternatives: RecommendedActivity[];
 }
 
 export default function DashboardPage() {
@@ -186,11 +196,11 @@ export default function DashboardPage() {
                   <div className="bg-purple-50 border-2 border-black rounded-lg p-5">
                     <div className="flex justify-between items-center">
                       <div>
-                        <h4 className="font-bold text-lg">{nextActivity.candidate_type.replace(/_/g, " ")}</h4>
-                        <p className="text-gray-700 mt-1">{nextActivity.reason}</p>
+                        <h4 className="font-bold text-lg">{nextActivity.recommended.activity_type.replace(/_/g, " ")}</h4>
+                        <p className="text-gray-700 mt-1">{nextActivity.recommended.reason}</p>
                       </div>
                       <Link
-                        href={`/courses/${activeCourseId}/study/${nextActivity.lesson_id || "default"}`}
+                        href={`/courses/${activeCourseId}/study/${nextActivity.recommended.lesson_id || "default"}`}
                         className="flex items-center gap-2 bg-black text-white hover:bg-gray-800 border-2 border-black px-5 py-2.5 rounded-lg font-bold shadow-[4px_4px_0px_0px_rgba(168,85,247,0.4)] transition-all active:translate-x-1 active:translate-y-1 active:shadow-none"
                       >
                         Start <ArrowRight className="w-4 h-4" />
