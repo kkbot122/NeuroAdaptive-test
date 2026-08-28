@@ -242,3 +242,138 @@ real user returns a grounded-format answer. Suite at 185.
 **This does not change the RAG position.** Chat still answers from model
 weights: no retrieval, no citations, nothing indexed. Qdrant holds 0
 collections and `chunks` holds 0 rows.
+
+---
+
+## 2026-08-29 -- Phase 1 pack: foundation hardening + ingestion/RAG foundation
+
+An externally-supplied "Phase 1" prompt pack, from the original 11-phase
+NeuroLearn plan that predates the frozen-scope pivot. Reconciled against the
+governing docs per AGENTS.md's authority order before writing any code.
+
+### Two conflicts declared, not silently resolved
+
+**Auth architecture.** The pack wants a homegrown backend-issued JWT plus a
+rotating refresh cookie, replacing the shared-secret header pattern.
+architecture.md names Supabase Auth as the frozen identity provider -- a
+third, different architecture from both the current model and what the pack
+proposes -- and the original build mandate for this branch explicitly said
+"switching identity providers is not on the critical path to a demo."
+Building custom JWT infrastructure now would be throwaway work against the
+frozen target and would spend sprint time the mandate earmarked elsewhere.
+**Resolution: the frozen docs win.** No JWT/refresh work was done. The
+shared-secret model already has no fallback default and a validated minimum
+length (K-1, closed 2026-08-27); that stands as the P0 posture, with K-4
+(header-trust) still tracked open for Stage 4.
+
+**Pipeline stage vocabulary.** The pack specifies
+verify/scan/extract/normalize/chunk/embed/index/quality_check/ready.
+frozen-scope.md's own pipeline (already implemented as
+`ProcessingStageName`) is VALIDATING/EXTRACTING/INTERPRETING_VISUALS/
+CHUNKING/INDEXING/EXTRACTING_CONCEPTS/BUILDING_GRAPH/GENERATING_STRUCTURE/
+VALIDATING_COURSE. **Resolution: kept the frozen names.** Embedding and
+indexing both happen inside the existing INDEXING stage rather than
+introducing a second, conflicting vocabulary.
+
+### Built
+
+**Chunking rework** (already logged in the previous entry's follow-on
+commit): token-based sizing (tiktoken cl100k_base, target 650/cap 800/overlap
+75 -- midpoints of the pack's 500-800/50-100 ranges), char offsets into the
+document's concatenated text, deterministic chunk ids
+(`uuid5(document_id, extraction_version, position)`), upsert-in-place instead
+of delete-then-reinsert.
+
+**Upload hardening:**
+- Magic-byte sniffing (`documents/magic_bytes.py`) -- dependency-free
+  signature check rather than python-magic/libmagic, since the supported
+  format set is exactly {pdf, txt, md} and a handful of known signatures
+  cover it completely without an OS package.
+- SHA-256 checksum dedup, scoped per-course: an identical re-upload returns
+  the existing document (200, not 201) instead of storing and reprocessing a
+  duplicate, and does not count against the per-role file cap.
+- Pasted text as a fourth ingestion path
+  (`POST /courses/{id}/documents/paste`), written to disk as a .txt so it
+  needs no separate extraction/chunking code path.
+
+**Embedding + retrieval (the actual RAG foundation):**
+- `EmbeddingGateway` abstraction with a `GeminiEmbeddingGateway`
+  (gemini-embedding-001, 3072 dims -- verified against the live API) and a
+  deterministic `FakeEmbeddingGateway` for tests.
+- `VectorStore` abstraction with a `QdrantVectorStore` and an in-memory
+  `FakeVectorStore` that implements real cosine similarity, so a test against
+  it exercises the same filter-before-rank contract real Qdrant provides.
+- `INDEXING` stage now actually embeds and upserts: each chunk's heading path
+  is prepended before embedding (retrieval quality) while the stored
+  `chunk.text` stays exactly the source text (citation + inert-data
+  guarantee). Batched, idempotent by chunk id.
+- Lexical search (`retrieval/lexical.py`): PostgreSQL `to_tsvector`/`ts_rank`
+  computed on the fly (no stored column, no GIN index -- reasonable at this
+  corpus size and avoids a Postgres-only column the SQLite test schema can't
+  express); a Python term-overlap fallback on SQLite preserves the identical
+  ownership-filter-in-SQL property for the test suite, differing only in
+  ranking, not in what it's allowed to return.
+- `RetrievalService`: verifies course ownership once via the same
+  `CourseService.get_owned` every other module uses, then applies owner/course
+  filtering INSIDE both the vector query and the lexical query -- never as a
+  post-filter -- with a third, defense-in-depth re-filter on the final
+  hydration query. `GET /courses/{id}/retrieval?q=...`.
+
+### The headline test
+
+`test_isolation_holds_even_when_the_other_users_content_is_more_relevant`:
+seeds another user's course with text that scores far higher against the
+query than anything in the caller's own course, then asserts zero cross-over.
+This is the structural claim the mandate asks for, not a weaker "returns the
+right rows" check.
+
+### A design decision worth flagging: fakes became the default for the whole suite
+
+Wiring INDEXING to actually call embeddings/Qdrant meant the *existing*
+`client` test fixture -- used by every prior test file -- started making real
+network calls the moment any test walked a job to INDEXING, since it had no
+injected fakes. Two tests in test_ingestion.py written before INDEXING
+existed broke as a result, one exposing a real problem: the suite went from
+~17s to 68s, because `settings.QDRANT_URL`'s default (the Compose service
+name) doesn't resolve at all outside the container network, so every such
+test was burning a full connection-timeout.
+
+Fixed at the root rather than per-test: `tests/conftest.py`'s shared `client`
+fixture now overrides the job and retrieval service factories with
+`FakeEmbeddingGateway`/`FakeVectorStore` for every test, not just the new
+retrieval file. No test in this suite may depend on a reachable Gemini key or
+a running Qdrant instance. Suite is back to ~16s.
+
+### Bugs the tests caught before they shipped
+
+- Sentence-boundary sub-splitting for an oversized single block initially
+  double-counted: two ~650-token pieces would both get appended before the
+  target-crossing check tripped, producing a ~1300-token chunk. Fixed by
+  flushing immediately after each already-target-sized sub-piece.
+- SQLite's `Uuid` column type requires real `uuid.UUID` bind values, not
+  strings -- `Chunk.id.in_(all_ids)` failed until `all_ids` (built from
+  string dict keys) was converted back to `UUID` before the query. Same class
+  of bug appeared three more times in test code that filtered by a JSON
+  response's string course id directly.
+- A heredoc-based edit earlier in this session had written literal NUL bytes
+  into test_ingestion.py where `\x00` escapes were meant as source text,
+  which broke pytest collection outright until the file was rebuilt from the
+  last clean commit.
+
+### Verified live
+
+Docker image rebuilt (tiktoken and real qdrant-client usage are new since
+the last build). `alembic upgrade head` re-verified against real PostgreSQL
+after the chunk-provenance and document-checksum migrations.
+`gemini-embedding-001` and `openai/gpt-oss-120b` calls verified against the
+live keys outside the app, before wiring them in, per this session's standing
+practice of not trusting an SDK's behaviour without an empirical check.
+
+### Not done -- Part A items outside this reconciliation
+
+RFC 7807 problem-details bodies, cursor pagination, and Idempotency-Key/
+If-Match support are not implemented. Small in isolation but touch every
+existing route; deferred rather than rushed across 30+ endpoints in this
+pass. Left for a dedicated pass rather than silently dropped.
+
+Suite: 242 passing.
