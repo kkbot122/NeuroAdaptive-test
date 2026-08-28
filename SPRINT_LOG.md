@@ -423,3 +423,146 @@ real question -- the actual research claim, exercised for real rather than
 against fakes.
 
 Suite: 251 passing (9 new retry-behaviour tests).
+
+---
+
+## 2026-08-29 — Phase 2: concept graph and curriculum generation
+
+An externally-supplied "Phase 2" prompt from the original 11-phase pack.
+Reconciled against the governing docs before writing code, same discipline
+as Phase 1.
+
+### Two conflicts declared, not silently resolved
+
+**Hard prerequisites that gate access.** The pack asks for hard edges that
+"gate readiness" (block a dependent concept) versus soft edges that only
+influence scoring. frozen-scope.md is explicit and repeated: "Prerequisite
+weakness produces a warning and influences scoring but does not block access
+to a dependent concept" and "Prerequisites always remain eligible." There is
+no gating prerequisite in the frozen product. **Resolution: frozen-scope
+wins.** `EdgeStrength.HARD/SOFT` is stored as metadata (feeding the
+readiness score's magnitude per the paper's R(c) = min over prerequisites),
+but no code path may use it to block anything — documented in
+curriculum/models.py's module docstring, the actual enforcement point.
+
+**API naming.** The pack's test cases reference `PATCH /courses/{id}/outline`
+and `GET /courses/{id}/concept-graph`. architecture.md's own API surface —
+which states "the API specification is authoritative" — names
+`GET/PUT .../structure`, `GET/PUT .../graph`, `POST .../publish-structure`.
+**Resolution: architecture.md's naming used.** The behaviour the pack's
+tests actually check (a rename persists and is reflected on the next read;
+a graph is owner-scoped) is implemented and tested under the frozen names.
+
+### Built
+
+Own domain module (`curriculum/`) per AGENTS.md's ownership rule — the
+first phase adding genuinely new modelling rather than extending Phase 1's
+ingestion domain.
+
+- **Models**: CourseVersion (immutable, versioned), Concept, ConceptSource,
+  ConceptPrerequisite, Module, Lesson, LessonConcept, AssessmentBlueprint.
+  Four migrations, the last three of which corrected the same design gap
+  found mid-build: Concept and ConceptPrerequisite were initially scoped to
+  course_id only, which would have mixed every prior version's concepts into
+  one pile on regeneration. Added course_version_id before building anything
+  on top of the gap.
+- **graph.py** — DFS cycle detection and resolution (no networkx). Soft
+  edges get no acyclicity exemption; a cycle is a cycle.
+- **normalization.py** — three-band embedding-similarity decision
+  (auto-merge / LLM-adjudicate / keep distinct) plus deterministic
+  `canonical_key()` for cross-version matching.
+- **extraction.py** — one bounded-context LLM call per document section
+  (grouped by heading_path), never a whole-document prompt.
+- **edges.py** — one LLM call over the normalized concept list proposing
+  prerequisite edges; hallucinated names and self-edges are dropped.
+- **validation.py** — the deterministic gate: every concept has a lesson,
+  every ConceptSource resolves to a real owned chunk, the graph is acyclic,
+  every important concept has assessment coverage.
+- **carryover.py** — canonical_key match first, embedding similarity second
+  (0.90 floor), otherwise "new" rather than a guessed match.
+- **service.py** (CurriculumService) — orchestrates all of the above with
+  real persistence. Module/lesson clustering and assessment blueprinting are
+  deterministic and heuristic this phase (grouped by the source document's
+  own heading structure; one MCQ per important concept), not LLM-driven —
+  a scope simplification, not an attempt at the mandate's full ambition.
+- **Job pipeline integration**: wired into Phase 1's existing
+  EXTRACTING_CONCEPTS/BUILDING_GRAPH/GENERATING_STRUCTURE/VALIDATING_COURSE
+  stages (already declared, unimplemented, in frozen-scope's own pipeline)
+  rather than a separate "generate" endpoint. One cohesive call inside
+  EXTRACTING_CONCEPTS; the other three stages succeed trivially immediately
+  after — finer per-stage progress within curriculum generation is deferred.
+- **API**: GET/PUT /courses/{id}/structure (the outline review gate —
+  GET defaults to the latest generated version regardless of status, not
+  only an active one), GET /courses/{id}/graph, POST .../publish-structure
+  (the only route that ever changes `course.active_version_id`).
+
+### Bugs found before they shipped
+
+- Four service methods (`get_graph`, `rename_lesson`, `get_review_version`,
+  `get_active_structure`) called `CourseService.get_owned()` directly, which
+  raises `CourseNotFound` — but the router only ever caught
+  `CurriculumNotFound`, so every one of those routes would 500 for another
+  user's course instead of returning 404. Caught while writing the ownership
+  tests, not by inspection. Fixed with one private `_get_owned_course()`
+  translation point every method now goes through, rather than a
+  try/except repeated at each call site.
+- `get_graph()` defaulted to the *active* version, while `get_structure`
+  correctly defaulted to the latest *reviewable* one — so a freshly
+  generated, unpublished course showed an empty graph even with real
+  concepts already persisted. Made consistent.
+- Same class of test-fixture bug as Phase 1, three more times: SQLite's
+  `Uuid` column type needs real `uuid.UUID` values, not the JSON strings an
+  API response hands back. Each occurrence was a test writing its own
+  assertion query, not application code.
+- `FakeGenerationGateway.when_prompt_contains()` is a plain substring match;
+  my first end-to-end test registered `"memory"` (lowercase) against text
+  containing "Memory management" (capitalized) and silently matched nothing,
+  producing zero concepts instead of the two the test meant to exercise.
+
+### Live verification against real Gemini, not just fakes
+
+`gemini-2.5-flash-lite` (AGENTS.md §5's frozen generation model) is also
+retired for new callers, same class of failure as the earlier Groq and
+embedding-model retirements. The API's own error names
+`gemini-3.5-flash-lite` as the replacement; verified working directly, and
+`GEMINI_GENERATION_MODEL` was already a setting, not a literal, so this was
+a one-line default change — except `backend/.env` carried an explicit
+override to the retired name from before the retirement was known, which
+`docker compose restart` does not clear: **`restart` does not re-read
+`env_file`; only container recreation does.** Lost real time to this before
+finding it — worth remembering for any future env-file change.
+
+With the corrected model, ran the real pipeline end to end on two small,
+previously-unused fixture documents (virtual memory / paging; deadlock /
+deadlock prevention) through the live Docker stack:
+
+```
+9 real concepts extracted, correctly deduplicated, zero false merges
+8 real prerequisite edges proposed, sensible HARD/SOFT distinctions
+  (e.g. "Four Conditions of Deadlock" -> "Deadlock Prevention" is HARD --
+  correctly reflecting you need the conditions before prevention makes sense)
+5 modules / 5 lessons, clustered by the source documents' own heading
+  structure, in document order
+Validation: READY, zero errors
+```
+
+Chased what looked like a real encoding bug (definitions containing mangled
+em-dash bytes) through the database (`psql`: correct), the raw HTTP response
+bytes on disk (hex-dumped: correct 3-byte UTF-8 `e2 80 94`), and the Gemini
+SDK's own output (correct). The data is correct end to end; the mojibake was
+introduced by my own diagnostic commands' terminal/pipe handling on Windows,
+not the application. Recorded here specifically so a future session does
+not re-open this as a real bug without re-checking the raw bytes first.
+
+### Not done — deferred, not silently dropped
+
+- PUT /graph (editing prerequisite edges) — GET only this phase.
+- Dropping a concept or reordering a module via PUT /structure — lesson
+  rename only.
+- Finer per-stage job progress within curriculum generation (one call
+  covers all four frozen stage names internally).
+- Content generation (default lesson variant) and real assessment-question
+  generation from blueprints — blueprints exist and are validated for
+  coverage; no question text is generated yet.
+
+Suite: 363 passing.
