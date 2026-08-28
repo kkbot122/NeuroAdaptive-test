@@ -32,5 +32,13 @@ system is secure, only what has been checked and how.
 - Abuse controls: `backend/app/core/rate_limit.py` (in-memory), `backend/app/modules/abuse/` (durable daily budget, regeneration cap).
 - Problem-details responses: `backend/app/core/problem_details.py`.
 - Privacy/audit: `backend/app/modules/privacy/`, `backend/app/modules/audit/`.
-- Live injection measurement: `backend/scripts/measure_injection_resistance.py`; adversarial payload set: `backend/tests/security/injection_payloads.py`.
+- Live injection measurement: `backend/scripts/measure_injection_resistance.py`; adversarial payload set: `backend/tests/security/injection_payloads.py`. Raw output (re-run each time, not a static claim): `backend/docs/injection_measurement_results.json` -- consumed by Phase 8's `metrics.prompt_injection_attack_success_rate`, which reads this file rather than recomputing or hardcoding a rate.
 - All Phase 6 automated tests: `backend/tests/security/`, plus `backend/tests/unit/test_extraction_t2_security.py`.
+
+## Phase 8 note
+
+The evaluation harness (`backend/app/modules/evaluation/`) reuses this
+document's measured injection rate rather than re-asserting it -- see that
+module's `metrics.py` and `backend/scripts/check_no_fabricated_results.py`,
+which scans this repo (including this file) for hard-coded comparative
+claims and currently finds none.

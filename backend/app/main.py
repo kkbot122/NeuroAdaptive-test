@@ -23,6 +23,7 @@ from app.modules.adaptation import models as adaptation_models
 from app.modules.tutor import models as tutor_models
 from app.modules.abuse import models as abuse_models
 from app.modules.audit import models as audit_models
+from app.modules.evaluation import models as evaluation_models
 
 # --- Import Routers ---
 from app.modules.auth.router import router as auth_router
@@ -41,6 +42,7 @@ from app.modules.jobs.router import router as jobs_router
 from app.modules.mastery.router import router as mastery_router
 from app.modules.adaptation.router import router as adaptation_router
 from app.modules.tutor.router import router as tutor_router
+from app.modules.evaluation.router import router as evaluation_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -87,6 +89,7 @@ app.include_router(jobs_router, prefix=settings.API_V1_STR, tags=["jobs"])
 app.include_router(mastery_router, prefix=settings.API_V1_STR, tags=["mastery"])
 app.include_router(adaptation_router, prefix=settings.API_V1_STR, tags=["adaptation"])
 app.include_router(tutor_router, prefix=settings.API_V1_STR, tags=["tutor"])
+app.include_router(evaluation_router, prefix=settings.API_V1_STR, tags=["evaluation"])
 
 # --- Health checks (liveness + database readiness) ---
 app.include_router(health_router, tags=["health"])

@@ -29,6 +29,11 @@ class ValidationStatus:
     PASSED = "passed"
     FAILED = "failed"
     UNSAMPLED = "unsampled"  # tier 2 was not run on this claim this round
+    # Phase 8, B3 ablation only: citation validation was deliberately
+    # disabled for this call (TutorService.ask(citation_validation_enabled=
+    # False)) to isolate its contribution. Never returned by the real
+    # production pipeline -- never confuse this with PASSED.
+    DISABLED = "disabled"
 
 
 @dataclass(frozen=True)

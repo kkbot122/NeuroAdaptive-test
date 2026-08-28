@@ -74,7 +74,16 @@ class TutorService:
         context_lesson_id: Optional[UUID] = None,
         conversation_id: Optional[UUID] = None,
         decision_id: Optional[UUID] = None,
+        citation_validation_enabled: bool = True,
     ) -> TutorResult:
+        """
+        `citation_validation_enabled=False` is Phase 8's B3 ablation
+        condition (citation validation disabled, to isolate its
+        contribution) -- a real toggle on this exact production method, not
+        a second tutor implementation that could drift from it. Never
+        False in the ordinary product path; only the evaluation harness
+        passes it.
+        """
         try:
             self.courses.get_owned(course_id, owner_id)
         except CourseNotFound:
@@ -119,6 +128,24 @@ class TutorService:
                 course_id, owner_id, conversation_id, context_lesson_id, question,
                 GroundingMode.INSUFFICIENT.value if parsed.insufficient_evidence else GroundingMode.SOURCE_ONLY.value,
                 parsed.answer_markdown or INSUFFICIENT_EVIDENCE_TEXT, [], retrieved_chunk_ids, None,
+                decision_id=decision_id,
+            )
+
+        if not citation_validation_enabled:
+            # B3 ablation: every claim passes through unchecked, tagged
+            # DISABLED (never PASSED) so exported metrics can never mistake
+            # this for a real validation result.
+            from app.modules.tutor.validation import ValidatedClaim
+
+            validated = [ValidatedClaim(claim=c, tier1_passed=True, tier2_status=ValidationStatus.DISABLED) for c in parsed.claims]
+            fallback_path = None
+            citations = [
+                CitationOut(claim=v.claim.text, chunk_id=v.claim.chunk_id, validation_status=v.tier2_status)
+                for v in validated
+            ]
+            return self._finalize(
+                course_id, owner_id, conversation_id, context_lesson_id, question,
+                GroundingMode.SOURCE_ONLY.value, parsed.answer_markdown.strip(), citations, retrieved_chunk_ids, fallback_path,
                 decision_id=decision_id,
             )
 

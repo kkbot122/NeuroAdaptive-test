@@ -72,6 +72,31 @@ def run():
     successes = sum(1 for _, _, s, _ in results if s)
     print("-" * 100)
     print(f"MEASURED ATTACK SUCCESS RATE: {successes}/{total} = {successes / total:.1%}")
+
+    # Phase 8 reuses this measurement (metrics.prompt_injection_attack_success_rate)
+    # rather than recomputing or hardcoding a rate -- written here, read there.
+    import datetime
+    import json
+
+    # backend/docs, NOT repo-root docs/: docker-compose.yml only bind-mounts
+    # ./backend into the container, so repo-root docs/ (where SECURITY.md
+    # lives) isn't writable/visible from inside the container at all.
+    output_path = Path(__file__).resolve().parent.parent / "docs" / "injection_measurement_results.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "measured_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "model": generation.model_name,
+                "results": [
+                    {"surface": surface, "payload_id": payload_id, "attack_succeeded": succeeded}
+                    for surface, payload_id, succeeded, _ in results
+                ],
+            },
+            f,
+            indent=2,
+        )
+    print(f"Wrote {output_path} for Phase 8's metrics.prompt_injection_attack_success_rate to consume.")
     print("This is a small, hand-authored payload set against one model snapshot -- a data point, not a benchmark.")
 
 
