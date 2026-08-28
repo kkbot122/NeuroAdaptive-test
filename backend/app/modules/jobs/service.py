@@ -10,6 +10,7 @@ Stages are idempotent: re-running one replaces its own output rather than
 appending. That is what makes retry safe.
 """
 import logging
+import time
 from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
@@ -36,6 +37,9 @@ from app.modules.jobs.models import (
     ProcessingStageName,
     StageStatus,
 )
+from app.modules.retrieval.service import CHUNKS_COLLECTION
+from app.services.embedding.gateway import EmbeddingError, EmbeddingGateway
+from app.services.vectorstore.store import VectorPoint, VectorStore, VectorStoreError
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +53,33 @@ def _now() -> datetime:
 
 
 class JobService:
-    def __init__(self, db: Session):
+    def __init__(
+        self,
+        db: Session,
+        embeddings: Optional[EmbeddingGateway] = None,
+        vectors: Optional[VectorStore] = None,
+    ):
         self.db = db
         self.documents = DocumentService(db)
+        # Real providers are constructed lazily and only if not injected, so
+        # a JobService built for a test that never reaches INDEXING pays no
+        # cost and needs no credentials.
+        self._embeddings = embeddings
+        self._vectors = vectors
+
+    def _get_embeddings(self) -> EmbeddingGateway:
+        if self._embeddings is None:
+            from app.services.embedding.gemini import GeminiEmbeddingGateway
+
+            self._embeddings = GeminiEmbeddingGateway()
+        return self._embeddings
+
+    def _get_vectors(self) -> VectorStore:
+        if self._vectors is None:
+            from app.services.vectorstore.qdrant_store import QdrantVectorStore
+
+            self._vectors = QdrantVectorStore()
+        return self._vectors
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -129,6 +157,7 @@ class JobService:
             ProcessingStageName.VALIDATING.value: self._stage_validating,
             ProcessingStageName.EXTRACTING.value: self._stage_extracting,
             ProcessingStageName.CHUNKING.value: self._stage_chunking,
+            ProcessingStageName.INDEXING.value: self._stage_indexing,
         }.get(stage.name)
 
         if handler is None:
@@ -152,6 +181,19 @@ class JobService:
             self._set_course_status(job, CourseStatus.NEEDS_INPUT)
             logger.info("Job %s needs input at %s", job.id, stage.name)
             return StageStatus.FAILED
+        except (EmbeddingError, VectorStoreError) as exc:
+            # frozen-scope.md: "Provider quota or availability failure pauses
+            # the job for manual retry; there is no automatic provider
+            # fallback." Distinct from a content problem: nothing about this
+            # document is wrong, the dependency is unavailable right now.
+            # Stage stays PENDING (not FAILED) so a retry re-attempts it
+            # rather than requiring the whole job to be treated as broken.
+            stage.status = StageStatus.PENDING.value
+            stage.started_at = None
+            job.status = JobStatus.PAUSED.value
+            job.error_category = type(exc).__name__
+            logger.error("Job %s paused at %s: %s", job.id, stage.name, type(exc).__name__)
+            return StageStatus.PENDING
         except Exception as exc:
             stage.status = StageStatus.FAILED.value
             stage.finished_at = _now()
@@ -267,6 +309,68 @@ class JobService:
                 Chunk.document_id == document.id, ~Chunk.id.in_(live_ids) if live_ids else True
             ).delete(synchronize_session=False)
 
+            self.db.commit()
+
+    def _stage_indexing(self, job: ProcessingJob) -> None:
+        """
+        Embed every not-yet-indexed chunk and upsert it into the vector
+        store, keyed by the chunk's own id -- re-indexing after a reprocess
+        overwrites the same point rather than creating a second one.
+
+        Item 7's requirement that each chunk's heading path be prepended
+        before embedding is applied here, at embed time, not at chunk-storage
+        time: the stored chunk.text stays exactly the source text (needed for
+        citations and for the "ingest hostile text as inert data" property),
+        while the embedded representation includes the heading for retrieval
+        quality.
+        """
+        embeddings = self._get_embeddings()
+        vectors = self._get_vectors()
+
+        vectors.ensure_collection(CHUNKS_COLLECTION, embeddings.dimensions)
+
+        pending = (
+            self.db.query(Chunk)
+            .filter(Chunk.course_id == job.course_id, Chunk.owner_id == job.owner_id)
+            .filter(Chunk.indexed_at.is_(None))
+            .all()
+        )
+        if not pending:
+            return
+
+        # Matches GeminiEmbeddingGateway._MAX_BATCH_SIZE, tuned against the
+        # live free-tier API (see that module). A different gateway may
+        # tolerate a larger batch; this stage does not assume one.
+        batch_size = 10
+        for index, start in enumerate(range(0, len(pending), batch_size)):
+            if index > 0:
+                # A short pause between batches, independent of the
+                # gateway's own retry-on-rate-limit: spreads requests out so
+                # the retry path is needed less often, not a substitute for it.
+                time.sleep(1)
+            batch = pending[start : start + batch_size]
+            texts_to_embed = [
+                f"{c.heading_path}\n\n{c.text}" if c.heading_path else c.text for c in batch
+            ]
+            vectors_out = embeddings.embed_texts(texts_to_embed)
+
+            points = [
+                VectorPoint(
+                    id=chunk.id,
+                    vector=vector,
+                    payload={
+                        "owner_id": chunk.owner_id,
+                        "course_id": str(chunk.course_id),
+                        "document_id": str(chunk.document_id),
+                    },
+                )
+                for chunk, vector in zip(batch, vectors_out)
+            ]
+            vectors.upsert(CHUNKS_COLLECTION, points)
+
+            for chunk in batch:
+                chunk.embedding_model = embeddings.model_name
+                chunk.indexed_at = _now()
             self.db.commit()
 
     # ── helpers ──────────────────────────────────────────────────────────────

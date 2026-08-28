@@ -24,6 +24,7 @@ from app.modules.profile.router import router as profile_router
 from app.modules.chat.router import router as chat_router
 from app.modules.events.router import router as events_router
 from app.modules.assessment.router import router as assessment_router
+from app.modules.retrieval.router import router as retrieval_router
 from app.modules.courses.router import router as courses_router
 from app.modules.identity.router import router as identity_router
 from app.modules.identity.health import router as health_router
@@ -65,6 +66,7 @@ app.include_router(profile_router, prefix=f"{settings.API_V1_STR}/profile", tags
 app.include_router(chat_router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
 app.include_router(events_router, prefix=f"{settings.API_V1_STR}/events", tags=["events"])
 app.include_router(assessment_router, prefix=f"{settings.API_V1_STR}/assessment", tags=["assessment"])
+app.include_router(retrieval_router, prefix=settings.API_V1_STR, tags=["retrieval"])
 app.include_router(courses_router, prefix=f"{settings.API_V1_STR}/courses", tags=["courses"])
 app.include_router(identity_router, prefix=settings.API_V1_STR, tags=["identity"])
 app.include_router(documents_router, prefix=settings.API_V1_STR, tags=["documents"])

@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     GEMINI_GENERATION_MODEL: str = "gemini-2.5-flash-lite"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
 
+    # Qdrant. Defaults to the compose service name, which only resolves
+    # inside the compose network; local dev outside Docker overrides this.
+    QDRANT_URL: str = "http://qdrant:6333"
+
     @field_validator("INTERNAL_API_KEY", "SECRET_KEY")
     @classmethod
     def _reject_weak_secret(cls, v: str, info) -> str:

@@ -271,7 +271,7 @@ class TestPipeline:
         assert body["error_category"] == "STAGE_NOT_IMPLEMENTED"
 
         done = {s["name"] for s in body["stages"] if s["status"] == "SUCCEEDED"}
-        assert {"VALIDATING", "EXTRACTING", "CHUNKING"} <= done
+        assert {"VALIDATING", "EXTRACTING", "CHUNKING", "INDEXING"} <= done  # INDEXING now runs against fakes
 
     def test_produces_chunks_with_provenance(self, client, owner, course, db_session):
         upload(client, owner.email, course["id"])
@@ -282,7 +282,7 @@ class TestPipeline:
         assert all(c.owner_id == owner.id for c in chunks)
         assert all(str(c.course_id) == course["id"] for c in chunks)
         assert all(c.page_start is not None for c in chunks)
-        assert all(c.indexed_at is None for c in chunks)  # not yet embedded
+        assert all(c.indexed_at is not None for c in chunks)  # embedded by the fake gateway
 
     def test_scanned_pdf_lands_on_needs_input_with_a_reason(self, client, owner, course, db_session):
         """

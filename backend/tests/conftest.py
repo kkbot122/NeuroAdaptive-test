@@ -57,8 +57,44 @@ def db_session():
 
 
 @pytest.fixture()
-def client(db_session):
-    """TestClient with the database dependency pointed at the test session."""
+def fake_embeddings():
+    """
+    Shared across the whole test session's request lifecycle for one test:
+    deterministic, offline, no API key needed.
+    """
+    from app.services.embedding.fake import FakeEmbeddingGateway
+
+    return FakeEmbeddingGateway()
+
+
+@pytest.fixture()
+def fake_vectors():
+    """An in-memory vector store, shared by job processing and retrieval
+    within one test so indexing and querying see the same data."""
+    from app.services.vectorstore.fake import FakeVectorStore
+
+    return FakeVectorStore()
+
+
+@pytest.fixture()
+def client(db_session, fake_embeddings, fake_vectors):
+    """
+    TestClient with the database dependency pointed at the test session, and
+    the job/retrieval service factories overridden to use fake, offline
+    embedding and vector-store providers.
+
+    No test in this suite may depend on a reachable Gemini API or Qdrant
+    instance: doing so makes the suite slow, flaky, and dependent on a live
+    API key, and settings.QDRANT_URL's default (the Compose service name)
+    does not resolve outside the container network at all. A test that wants
+    to exercise the real Gemini/Qdrant adapters does so as a narrow,
+    explicitly-marked integration test, not through this fixture.
+    """
+    from app.modules.jobs.router import _service as job_service_dep
+    from app.modules.jobs.service import JobService
+    from app.modules.retrieval.router import _service as retrieval_service_dep
+    from app.modules.retrieval.service import RetrievalService
+
     def _override_get_db():
         try:
             yield db_session
@@ -66,6 +102,13 @@ def client(db_session):
             pass
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[job_service_dep] = lambda: JobService(
+        db_session, embeddings=fake_embeddings, vectors=fake_vectors
+    )
+    app.dependency_overrides[retrieval_service_dep] = lambda: RetrievalService(
+        db_session, fake_embeddings, fake_vectors
+    )
+
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
