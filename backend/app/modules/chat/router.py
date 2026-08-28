@@ -198,7 +198,7 @@ async def send_message(
     # ── 5. Call Groq LLM ─────────────────────────────────────────────────────
     try:
         response = await get_client().chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=settings.GROQ_MODEL,
             messages=messages_for_llm,
             temperature=0.7,
             max_tokens=2048,

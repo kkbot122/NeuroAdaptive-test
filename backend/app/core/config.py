@@ -38,6 +38,11 @@ class Settings(BaseSettings):
 
     # Groq (legacy chat path)
     GROQ_API_KEY: str = ""
+    # Model id is a setting, not a literal at the call site. Providers retire
+    # models without notice — llama-3.3-70b-versatile was removed and every
+    # chat request began returning 404 — and a retirement should be a config
+    # change, not a code edit in two places.
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
 
     # Gemini — generation, multimodal and embeddings.
     # Model ids are explicit settings, not literals at the call site, so a

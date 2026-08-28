@@ -460,7 +460,7 @@ async def generate_adapted_response(
 
     try:
         response = await get_client().chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=settings.GROQ_MODEL,
             messages=messages,
             temperature=0.7,
         )
