@@ -37,8 +37,11 @@ from app.modules.jobs.models import (
     ProcessingStageName,
     StageStatus,
 )
+from app.modules.curriculum.models import CourseVersionStatus
+from app.modules.curriculum.service import CurriculumService
 from app.modules.retrieval.service import CHUNKS_COLLECTION
 from app.services.embedding.gateway import EmbeddingError, EmbeddingGateway
+from app.services.generation.gateway import GenerationError, GenerationGateway
 from app.services.vectorstore.store import VectorPoint, VectorStore, VectorStoreError
 
 logger = logging.getLogger(__name__)
@@ -46,6 +49,12 @@ logger = logging.getLogger(__name__)
 
 class JobNotFound(Exception):
     """Not found, or not owned by the caller."""
+
+
+class CourseVersionValidationFailed(Exception):
+    """generate_version() produced a version that failed validation. The
+    stage this is raised from is marked FAILED, with the version's own
+    validation_errors as the detail a human would need -- never swallowed."""
 
 
 def _now() -> datetime:
@@ -58,14 +67,16 @@ class JobService:
         db: Session,
         embeddings: Optional[EmbeddingGateway] = None,
         vectors: Optional[VectorStore] = None,
+        generation: Optional[GenerationGateway] = None,
     ):
         self.db = db
         self.documents = DocumentService(db)
         # Real providers are constructed lazily and only if not injected, so
-        # a JobService built for a test that never reaches INDEXING pays no
-        # cost and needs no credentials.
+        # a JobService built for a test that never reaches INDEXING/concept
+        # extraction pays no cost and needs no credentials.
         self._embeddings = embeddings
         self._vectors = vectors
+        self._generation = generation
 
     def _get_embeddings(self) -> EmbeddingGateway:
         if self._embeddings is None:
@@ -80,6 +91,13 @@ class JobService:
 
             self._vectors = QdrantVectorStore()
         return self._vectors
+
+    def _get_generation(self):
+        if self._generation is None:
+            from app.services.generation.gemini import GeminiGenerationGateway
+
+            self._generation = GeminiGenerationGateway()
+        return self._generation
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -158,6 +176,10 @@ class JobService:
             ProcessingStageName.EXTRACTING.value: self._stage_extracting,
             ProcessingStageName.CHUNKING.value: self._stage_chunking,
             ProcessingStageName.INDEXING.value: self._stage_indexing,
+            ProcessingStageName.EXTRACTING_CONCEPTS.value: self._stage_extracting_concepts,
+            ProcessingStageName.BUILDING_GRAPH.value: self._stage_noop,
+            ProcessingStageName.GENERATING_STRUCTURE.value: self._stage_noop,
+            ProcessingStageName.VALIDATING_COURSE.value: self._stage_noop,
         }.get(stage.name)
 
         if handler is None:
@@ -181,7 +203,7 @@ class JobService:
             self._set_course_status(job, CourseStatus.NEEDS_INPUT)
             logger.info("Job %s needs input at %s", job.id, stage.name)
             return StageStatus.FAILED
-        except (EmbeddingError, VectorStoreError) as exc:
+        except (EmbeddingError, VectorStoreError, GenerationError) as exc:
             # frozen-scope.md: "Provider quota or availability failure pauses
             # the job for manual retry; there is no automatic provider
             # fallback." Distinct from a content problem: nothing about this
@@ -372,6 +394,38 @@ class JobService:
                 chunk.embedding_model = embeddings.model_name
                 chunk.indexed_at = _now()
             self.db.commit()
+
+    def _stage_extracting_concepts(self, job: ProcessingJob) -> None:
+        """
+        Runs the whole Phase 2 curriculum pipeline: concept extraction,
+        normalization, prerequisite graph, module/lesson clustering,
+        blueprinting and validation. One stage rather than the four separate
+        ones the frozen pipeline names (BUILDING_GRAPH, GENERATING_STRUCTURE,
+        VALIDATING_COURSE) because CurriculumService.generate_version() is a
+        single cohesive unit internally -- splitting it into four separately
+        resumable stages would mean persisting intermediate state between
+        them, which nothing downstream needs yet. The other three stage names
+        stay in the pipeline (frozen-scope.md's own vocabulary is preserved)
+        and are recorded as trivially succeeding immediately after. Finer
+        per-stage progress within curriculum generation is a scope
+        simplification, not an attempt at the mandate's full granularity.
+
+        Raises CourseVersionValidationFailed (-> stage FAILED, not paused) if
+        the generated version does not pass validation. This is a content
+        problem, not a provider outage, so it is not retried automatically.
+        """
+        service = CurriculumService(self.db, self._get_generation(), self._get_embeddings())
+        version = service.generate_version(job.course_id, job.owner_id)
+        if version.status != CourseVersionStatus.READY.value:
+            raise CourseVersionValidationFailed("; ".join(version.validation_errors) or "unknown")
+
+    def _stage_noop(self, job: ProcessingJob) -> None:
+        """BUILDING_GRAPH, GENERATING_STRUCTURE and VALIDATING_COURSE: their
+        work already happened inside _stage_extracting_concepts. Kept as
+        distinct, always-succeeding stages so the frozen pipeline's stage
+        names stay visible in the job's stage list, matching what
+        frozen-scope.md's polling contract names."""
+        return None
 
     # ── helpers ──────────────────────────────────────────────────────────────
 

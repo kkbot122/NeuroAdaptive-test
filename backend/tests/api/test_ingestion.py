@@ -227,7 +227,7 @@ class TestPastedText:
         response = client.post(
             f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
         )
-        assert response.json()["status"] == "PAUSED"  # reached the same point as an upload
+        assert response.json()["status"] == "READY"  # reaches the same point as an upload
         assert db_session.query(Chunk).count() > 0
 
     def test_rejects_empty_pasted_text(self, client, owner, course):
@@ -255,10 +255,11 @@ class TestPastedText:
 
 
 class TestPipeline:
-    def test_runs_through_chunking_and_pauses(self, client, owner, course, db_session):
+    def test_runs_through_all_stages_to_ready(self, client, owner, course, db_session):
         """
-        The implemented stages complete; the first unimplemented stage pauses
-        the job rather than failing it, so no completed work is lost.
+        All eight frozen-scope stages are implemented as of Phase 2.
+        fake_generation's default response yields zero concepts, which
+        validates trivially, so the pipeline reaches READY end to end.
         """
         upload(client, owner.email, course["id"])
         response = client.post(
@@ -267,11 +268,13 @@ class TestPipeline:
         assert response.status_code == 202
 
         body = response.json()
-        assert body["status"] == "PAUSED"
-        assert body["error_category"] == "STAGE_NOT_IMPLEMENTED"
+        assert body["status"] == "READY"
 
         done = {s["name"] for s in body["stages"] if s["status"] == "SUCCEEDED"}
-        assert {"VALIDATING", "EXTRACTING", "CHUNKING", "INDEXING"} <= done  # INDEXING now runs against fakes
+        assert done == {
+            "VALIDATING", "EXTRACTING", "CHUNKING", "INDEXING",
+            "EXTRACTING_CONCEPTS", "BUILDING_GRAPH", "GENERATING_STRUCTURE", "VALIDATING_COURSE",
+        }
 
     def test_produces_chunks_with_provenance(self, client, owner, course, db_session):
         upload(client, owner.email, course["id"])

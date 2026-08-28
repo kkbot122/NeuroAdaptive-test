@@ -77,7 +77,22 @@ def fake_vectors():
 
 
 @pytest.fixture()
-def client(db_session, fake_embeddings, fake_vectors):
+def fake_generation():
+    """
+    Default: no concepts found in any section. This lets a test that only
+    cares about ingestion (not curriculum content) run the full pipeline to
+    a real READY without asserting anything about generated concepts -- an
+    empty concept set passes validation trivially (no concepts, no lessons
+    required, no cycle possible, no blueprint required). A test that DOES
+    care about curriculum content overrides this fixture's responses.
+    """
+    from app.services.generation.fake import FakeGenerationGateway
+
+    return FakeGenerationGateway().set_default('{"concepts": [], "edges": []}')
+
+
+@pytest.fixture()
+def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     """
     TestClient with the database dependency pointed at the test session, and
     the job/retrieval service factories overridden to use fake, offline
@@ -103,7 +118,7 @@ def client(db_session, fake_embeddings, fake_vectors):
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[job_service_dep] = lambda: JobService(
-        db_session, embeddings=fake_embeddings, vectors=fake_vectors
+        db_session, embeddings=fake_embeddings, vectors=fake_vectors, generation=fake_generation
     )
     app.dependency_overrides[retrieval_service_dep] = lambda: RetrievalService(
         db_session, fake_embeddings, fake_vectors
