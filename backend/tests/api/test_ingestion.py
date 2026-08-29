@@ -387,3 +387,49 @@ class TestJobOwnership:
         response = client.get(f"/api/v1/jobs/{job_id}", headers=auth_headers(owner.email))
         assert response.status_code == 200
         assert len(response.json()["stages"]) == 8
+
+
+class TestConcurrentProcessingIsRejected:
+    """
+    Reproduces live: a UI double/triple-click (no loading feedback on the
+    button) sent overlapping POST .../process requests for the same
+    course. Both passed the "does this chunk id already exist" check
+    before either had committed, then both tried to INSERT the same
+    deterministic chunk id -- a real IntegrityError. The fix rejects a
+    second call outright while one is already active, rather than letting
+    two pipeline runs race.
+    """
+
+    def test_a_second_process_call_while_one_is_active_is_rejected(self, client, owner, course, db_session):
+        from app.modules.jobs.models import JobStatus, ProcessingJob
+
+        upload(client, owner.email, course["id"])
+        # Simulate the first call's job already being RUNNING (rather than
+        # racing two real threads, which pytest's synchronous TestClient
+        # can't reproduce deterministically) -- this exercises the exact
+        # guard that closes the race, regardless of how "active" was reached.
+        from uuid import UUID as _UUID
+
+        db_session.add(ProcessingJob(course_id=_UUID(course["id"]), owner_id=owner.id, status=JobStatus.RUNNING.value))
+        db_session.commit()
+
+        response = client.post(
+            f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
+        )
+        assert response.status_code == 409
+        assert response.headers["content-type"] == "application/problem+json"
+        assert "already" in response.json()["detail"].lower()
+
+    def test_a_process_call_after_the_previous_job_finished_is_allowed(self, client, owner, course, db_session):
+        from app.modules.jobs.models import JobStatus, ProcessingJob
+
+        upload(client, owner.email, course["id"])
+        from uuid import UUID as _UUID
+
+        db_session.add(ProcessingJob(course_id=_UUID(course["id"]), owner_id=owner.id, status=JobStatus.READY.value))
+        db_session.commit()
+
+        response = client.post(
+            f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
+        )
+        assert response.status_code != 409

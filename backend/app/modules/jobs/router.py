@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.problem_details import ProblemDetailException
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.modules.abuse.service import AbuseControlService
@@ -57,6 +58,19 @@ def start_processing(
     # starts, so an over-cap request never gets billed for generation work
     # only to fail partway through.
     AbuseControlService(db).enforce_course_regeneration_cap(course_id, user.id)
+
+    # Concurrency guard: a UI double/triple-click (no loading feedback on
+    # the button) sent two overlapping requests for the same course, which
+    # raced on inserting the same deterministic chunk id and crashed with a
+    # real IntegrityError -- reproduced live. Reject the second call
+    # outright rather than letting two pipeline runs collide.
+    if service.has_active_job_for_course(course_id):
+        raise ProblemDetailException(
+            status_code=409,
+            type_="https://neurolearn.internal/problems/processing-already-running",
+            title="Processing Already In Progress",
+            detail="This course is already being processed. Wait for it to finish before starting another run.",
+        )
 
     job = service.create_for_course(course_id, user.id)
     service.run(job.id, user.id)

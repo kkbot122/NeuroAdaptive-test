@@ -101,6 +101,31 @@ class JobService:
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
+    def has_active_job_for_course(self, course_id: UUID) -> bool:
+        """
+        True if a job for this course is already PENDING or RUNNING.
+
+        Found live: two near-simultaneous POST .../process calls for the
+        same course (a UI double/triple-click with no loading feedback)
+        both passed each chunk's "does this id already exist" check before
+        either had committed, then both tried to INSERT the same
+        deterministic chunk id -- a real IntegrityError, not a hypothetical
+        one. Chunk upsert-by-id (jobs/service.py's _stage_chunking) is
+        idempotent against a SEQUENTIAL retry, exactly as designed, but was
+        never meant to be safe against two of these running at once. This
+        check is the fix: reject the second call before it starts, rather
+        than letting two pipelines race.
+        """
+        return (
+            self.db.query(ProcessingJob)
+            .filter(
+                ProcessingJob.course_id == course_id,
+                ProcessingJob.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+            )
+            .first()
+            is not None
+        )
+
     def create_for_course(self, course_id: UUID, owner_id: int) -> ProcessingJob:
         job = ProcessingJob(
             course_id=course_id, owner_id=owner_id, status=JobStatus.PENDING.value

@@ -20,6 +20,14 @@ export default function WorkspacePage() {
   const [course, setCourse] = useState<{ title?: string } | null>(null);
   const [documents, setDocuments] = useState<{ filename: string }[]>([]);
   const [job, setJob] = useState<{ id: string; status: string; current_stage?: string } | null>(null);
+  // Separate from job.status === "RUNNING": that only becomes true once the
+  // first poll response comes back. Without this, clicking "Generate
+  // Curriculum" gave zero visual feedback for as long as the POST took to
+  // resolve -- reproduced live taking several minutes -- so a learner
+  // clicked it again (and again), sending overlapping /process requests
+  // for the same course that raced each other and crashed the backend.
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   // Matches curriculum/router.py's _version_out() exactly: nested
   // modules[].lessons[], and a lesson's concepts are {concept_id, role,
@@ -110,17 +118,26 @@ export default function WorkspacePage() {
 
   // Generate Curriculum
   const handleGenerate = async () => {
+    if (isGenerating) return; // belt-and-suspenders; the button is also disabled while this is true
+    setIsGenerating(true);
+    setGenerateError(null);
     try {
       const res = await fetch(`/api/v1/courses/${courseId}/process`, {
         method: "POST"
       });
-      if (!res.ok) throw new Error("Failed to start processing");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        // The backend now rejects a second concurrent run for this course
+        // (409, RFC 7807 problem-details) instead of racing with the first.
+        throw new Error(body.detail || "Failed to start processing");
+      }
       const jobData = await res.json();
       setJob(jobData);
       pollJob(jobData.id);
     } catch (err) {
       console.error(err);
-      alert("Failed to start generation");
+      setGenerateError(err instanceof Error ? err.message : "Failed to start generation");
+      setIsGenerating(false);
     }
   };
 
@@ -139,9 +156,14 @@ export default function WorkspacePage() {
         // had actually finished.
         if (jobData.status === "READY") {
           clearInterval(interval);
+          setIsGenerating(false);
           fetchStructure();
         } else if (jobData.status === "FAILED" || jobData.status === "PAUSED") {
           clearInterval(interval);
+          setIsGenerating(false);
+          if (jobData.status === "FAILED") {
+            setGenerateError(jobData.error_detail || "Processing failed. Try again.");
+          }
         }
       } catch (err) {
         console.error(err);
@@ -257,13 +279,16 @@ export default function WorkspacePage() {
           
           <button
             onClick={handleGenerate}
-            disabled={!!(job && job.status === "RUNNING")}
+            disabled={isGenerating || !!(job && job.status === "RUNNING")}
             className="w-full mt-6 flex items-center justify-center gap-2 bg-purple-600 text-white hover:bg-purple-700 border-2 border-black px-6 py-3 rounded-lg font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all active:translate-x-1 active:translate-y-1 active:shadow-none disabled:opacity-50"
           >
-            {(job && job.status === "RUNNING") ? (
-              <><Loader2 className="w-5 h-5 animate-spin" /> Processing ({job.current_stage})...</>
+            {isGenerating || (job && job.status === "RUNNING") ? (
+              <><Loader2 className="w-5 h-5 animate-spin" /> {job?.current_stage ? `Processing (${job.current_stage})...` : "Starting..."}</>
             ) : "Generate Curriculum"}
           </button>
+          {generateError && (
+            <p className="mt-3 text-sm font-medium text-red-600">{generateError}</p>
+          )}
         </div>
       )}
     </div>
