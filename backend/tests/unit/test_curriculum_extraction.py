@@ -21,6 +21,16 @@ class FakeChunk:
         self.text = text
 
 
+class RecordingEmbeddingGateway(FakeEmbeddingGateway):
+    def __init__(self):
+        super().__init__()
+        self.batches = []
+
+    def embed_texts(self, texts):
+        self.batches.append(list(texts))
+        return super().embed_texts(texts)
+
+
 class TestGrouping:
     def test_groups_chunks_by_heading_path(self):
         doc = uuid.uuid4()
@@ -96,6 +106,19 @@ class TestConceptProposal:
 
         assert result[0].embedding
         assert len(result[0].embedding) > 0
+
+    def test_embeds_concepts_in_a_single_ordered_batch(self):
+        chunks = [FakeChunk(uuid.uuid4(), 0, "H", "text")]
+        gateway = FakeGenerationGateway().set_default(
+            '{"concepts": [{"name": "X", "definition": "first"}, '
+            '{"name": "Y", "definition": "second"}]}'
+        )
+        embeddings = RecordingEmbeddingGateway()
+
+        result = propose_concepts_for_section(chunks, gateway, embeddings)
+
+        assert embeddings.batches == [["first", "second"]]
+        assert [candidate.embedding for candidate in result]
 
     def test_empty_concepts_response_is_valid(self):
         chunks = [FakeChunk(uuid.uuid4(), 0, "H", "text with nothing teachable")]

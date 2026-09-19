@@ -160,6 +160,7 @@ class TestGraphOwnership:
 class TestPublishStructure:
     def test_publishing_activates_the_version(self, client, owner, generated_course, db_session):
         course, job = generated_course
+        job = client.get(f"/api/v1/jobs/{job['id']}", headers=auth_headers(owner.email)).json()
         assert job["status"] == "READY"
 
         response = client.post(
@@ -241,6 +242,7 @@ class TestEndToEnd:
         job = client.post(
             f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
         ).json()
+        job = client.get(f"/api/v1/jobs/{job['id']}", headers=auth_headers(owner.email)).json()
         assert job["status"] == "READY"
 
         graph = client.get(

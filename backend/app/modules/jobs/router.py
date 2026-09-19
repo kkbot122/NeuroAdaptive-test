@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.problem_details import ProblemDetailException
@@ -43,6 +43,7 @@ def _out(job) -> dict:
 @router.post("/courses/{course_id}/process", status_code=202)
 def start_processing(
     course_id: UUID,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     service: JobService = Depends(_service),
     db: Session = Depends(get_db),
@@ -73,8 +74,8 @@ def start_processing(
         )
 
     job = service.create_for_course(course_id, user.id)
-    service.run(job.id, user.id)
-    return _out(service.get_owned(job.id, user.id))
+    background_tasks.add_task(service.run, job.id, user.id)
+    return _out(job)
 
 
 @router.get("/jobs/{job_id}")

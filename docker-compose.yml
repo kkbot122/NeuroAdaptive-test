@@ -57,6 +57,9 @@ services:
       - ./frontend/.env.local
     environment:
       # It is okay to leave non-secret configuration variables here
+      # OAuth callbacks must use the host-facing port, not the container's
+      # internal port. This overrides the port-3000 value used by `npm run dev`.
+      - NEXTAUTH_URL=http://localhost:3001
       - INTERNAL_API_URL=http://backend:8000
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true

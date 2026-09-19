@@ -227,7 +227,8 @@ class TestPastedText:
         response = client.post(
             f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
         )
-        assert response.json()["status"] == "READY"  # reaches the same point as an upload
+        job = client.get(f"/api/v1/jobs/{response.json()['id']}", headers=auth_headers(owner.email)).json()
+        assert job["status"] == "READY"  # reaches the same point as an upload
         assert db_session.query(Chunk).count() > 0
 
     def test_rejects_empty_pasted_text(self, client, owner, course):
@@ -267,7 +268,7 @@ class TestPipeline:
         )
         assert response.status_code == 202
 
-        body = response.json()
+        body = client.get(f"/api/v1/jobs/{response.json()['id']}", headers=auth_headers(owner.email)).json()
         assert body["status"] == "READY"
 
         done = {s["name"] for s in body["stages"] if s["status"] == "SUCCEEDED"}
@@ -308,7 +309,8 @@ class TestPipeline:
             f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
         )
 
-        assert response.json()["status"] == "NEEDS_INPUT"
+        job = client.get(f"/api/v1/jobs/{response.json()['id']}", headers=auth_headers(owner.email)).json()
+        assert job["status"] == "NEEDS_INPUT"
         document = db_session.query(Document).one()
         assert document.status == "NEEDS_INPUT"
         assert "scan" in (document.needs_input_reason or "").lower()
@@ -317,7 +319,8 @@ class TestPipeline:
         response = client.post(
             f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
         )
-        assert response.json()["status"] == "FAILED"
+        job = client.get(f"/api/v1/jobs/{response.json()['id']}", headers=auth_headers(owner.email)).json()
+        assert job["status"] == "FAILED"
 
     def test_rerunning_does_not_duplicate_chunks(self, client, owner, course, db_session):
         """Stage idempotency: retry must not append a second set of chunks."""

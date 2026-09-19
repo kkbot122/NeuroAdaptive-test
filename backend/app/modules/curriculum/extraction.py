@@ -25,6 +25,11 @@ from app.services.embedding.gateway import EmbeddingGateway
 from app.services.generation.gateway import GenerationError, GenerationGateway
 
 MAX_SECTION_CHARS = 6000  # bounded-context ceiling for one extraction call
+# Keep concept normalization embeddings within the live Gemini gateway's
+# documented request ceiling.  Sending one request for every concept can
+# exhaust the provider immediately after a large document's chunk-indexing
+# stage has finished.
+MAX_CONCEPT_EMBEDDING_BATCH_SIZE = 10
 
 
 class ExtractionParseError(Exception):
@@ -107,16 +112,24 @@ def propose_concepts_for_section(
         importance = importance if isinstance(importance, (int, float)) else 0.5
         importance = max(0.0, min(1.0, float(importance)))
 
-        embedding = embeddings.embed_texts([definition])[0]
-
         candidates.append(
             CandidateConcept(
                 name=name.strip(),
                 definition=definition.strip(),
                 source_chunk_ids=list(chunk_ids),
-                embedding=embedding,
+                embedding=[],
                 importance=importance,
                 bloom_level=item.get("bloom_level") if isinstance(item.get("bloom_level"), str) else None,
             )
         )
+    # The gateway guarantees one embedding per input in the same order. Batch
+    # here rather than making a provider request for every candidate; this is
+    # both materially gentler on quota and preserves the candidate-to-vector
+    # mapping exactly.
+    for start in range(0, len(candidates), MAX_CONCEPT_EMBEDDING_BATCH_SIZE):
+        batch = candidates[start : start + MAX_CONCEPT_EMBEDDING_BATCH_SIZE]
+        vectors = embeddings.embed_texts([candidate.definition for candidate in batch])
+        for candidate, vector in zip(batch, vectors):
+            candidate.embedding = vector
+
     return candidates

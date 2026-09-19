@@ -28,6 +28,10 @@ _MAX_BATCH_SIZE = 10
 # same provider, retried after backing off, never a different one.
 _MAX_RETRIES = 3
 _RETRY_BACKOFF_SECONDS = (10, 20, 40)
+# The live provider stays reliable with batches no more frequent than this.
+# Enforcing it in the gateway covers every caller, including curriculum
+# concept extraction, rather than relying on each consumer to remember it.
+_MIN_REQUEST_INTERVAL_SECONDS = 2
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
@@ -42,6 +46,7 @@ class GeminiEmbeddingGateway(EmbeddingGateway):
         self._api_key = api_key or settings.GEMINI_API_KEY
         self._model = model or settings.GEMINI_EMBEDDING_MODEL
         self._client = None  # built lazily; see _ensure_configured
+        self._last_request_at = None
 
     @property
     def model_name(self) -> str:
@@ -79,7 +84,12 @@ class GeminiEmbeddingGateway(EmbeddingGateway):
         result = None
         for attempt in range(_MAX_RETRIES + 1):
             try:
+                if self._last_request_at is not None:
+                    elapsed = time.monotonic() - self._last_request_at
+                    if elapsed < _MIN_REQUEST_INTERVAL_SECONDS:
+                        time.sleep(_MIN_REQUEST_INTERVAL_SECONDS - elapsed)
                 result = client.embed_content(model=model_path, content=texts)
+                self._last_request_at = time.monotonic()
                 break
             except Exception as exc:
                 is_last_attempt = attempt == _MAX_RETRIES
