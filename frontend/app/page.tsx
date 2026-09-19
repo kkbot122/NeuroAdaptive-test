@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import Link from "next/link";
-import { Brain, ArrowRight, BookOpen, Shield, Zap, Sparkles } from "lucide-react";
+import { Brain } from "lucide-react";
 import Architect from "@/components/illustrations/Architect";
 import Tinkerer from "@/components/illustrations/Tinker";
 import Sprinter from "@/components/illustrations/Sprinter";

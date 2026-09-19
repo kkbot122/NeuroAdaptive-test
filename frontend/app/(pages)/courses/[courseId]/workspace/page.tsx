@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { StateWrapper } from "@/components/StateWrapper";
 import { Brain, ArrowLeft, Upload, File, Loader2, CheckCircle, RefreshCcw, Pencil, Check, X } from "lucide-react";
@@ -58,7 +58,7 @@ export default function WorkspacePage() {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchCourseData = async () => {
+  const fetchCourseData = useCallback(async () => {
     setIsLoading(true);
     setIsError(false);
     try {
@@ -84,11 +84,14 @@ export default function WorkspacePage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [courseId]);
 
   useEffect(() => {
-    if (courseId) fetchCourseData();
-  }, [courseId]);
+    const timer = window.setTimeout(() => {
+      if (courseId) void fetchCourseData();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [courseId, fetchCourseData]);
 
   // Upload Document
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {

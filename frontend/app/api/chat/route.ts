@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
         try {
           const parsed = JSON.parse(errorText);
           if (parsed.detail) errorDetail = typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail);
-        } catch(e) {}
+        } catch {}
 
         return NextResponse.json({ error: errorDetail }, { status: response.status });
     }

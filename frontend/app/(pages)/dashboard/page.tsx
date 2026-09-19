@@ -92,7 +92,8 @@ export default function DashboardPage() {
     if (status === "unauthenticated") {
       router.push("/signin");
     } else if (status === "authenticated") {
-      fetchDashboardData();
+      const timer = window.setTimeout(() => void fetchDashboardData(), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [status, router]);
 

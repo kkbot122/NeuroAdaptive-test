@@ -253,7 +253,7 @@ export default function ProfileDashboard() {
                       />
                       <YAxis domain={[-1, 1]} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
                       <Tooltip
-                        formatter={(val: number | string | any) => typeof val === "number" ? val.toFixed(3) : val}
+                        formatter={(val: unknown) => typeof val === "number" ? val.toFixed(3) : String(val ?? "")}
                         contentStyle={{
                           border: "2px solid black",
                           borderRadius: "8px",

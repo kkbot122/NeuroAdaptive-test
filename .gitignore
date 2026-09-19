@@ -44,3 +44,6 @@ Thumbs.db
 
 # Stray logs
 debug.log
+
+# Generated repository maps; retain locally but never commit them.
+graphify-out/

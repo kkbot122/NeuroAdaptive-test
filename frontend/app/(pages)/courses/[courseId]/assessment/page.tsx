@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Brain, ArrowLeft, CheckCircle2, ChevronRight, Trophy, Loader2 } from "lucide-react";
 
@@ -36,22 +36,7 @@ export default function AssessmentPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (type !== "diagnostic") {
-      // Per-lesson, on-demand assessment generation has no backend endpoint
-      // yet (Phase 3 only built the diagnostic generator, which samples
-      // across the whole concept graph -- not a per-lesson question set).
-      // Honest gap, not something to fake with an ad-hoc tutor prompt.
-      setIsLoading(false);
-      setLoadError(
-        "A lesson-specific assessment isn't available yet -- only the course-wide diagnostic is implemented."
-      );
-      return;
-    }
-    generateDiagnostic();
-  }, [type]);
-
-  const generateDiagnostic = async () => {
+  const generateDiagnostic = useCallback(async () => {
     setIsLoading(true);
     setLoadError(null);
     try {
@@ -74,7 +59,25 @@ export default function AssessmentPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [courseId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (type !== "diagnostic") {
+        // Per-lesson, on-demand assessment generation has no backend endpoint
+        // yet (Phase 3 only built the diagnostic generator, which samples
+        // across the whole concept graph -- not a per-lesson question set).
+        // Honest gap, not something to fake with an ad-hoc tutor prompt.
+        setIsLoading(false);
+        setLoadError(
+          "A lesson-specific assessment isn't available yet -- only the course-wide diagnostic is implemented."
+        );
+      } else {
+        void generateDiagnostic();
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [type, generateDiagnostic]);
 
   if (isLoading) {
     return (

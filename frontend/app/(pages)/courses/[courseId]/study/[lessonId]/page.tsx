@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { StateWrapper } from "@/components/StateWrapper";
@@ -44,7 +44,7 @@ export default function StudyLessonPage() {
   const [groundingMode, setGroundingMode] = useState<string | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
 
-  const fetchLessonData = async () => {
+  const fetchLessonData = useCallback(async () => {
     setIsLoading(true);
     setIsError(false);
     try {
@@ -85,9 +85,9 @@ export default function StudyLessonPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [courseId, lessonId, setIsLoading, setIsError, setErrorMsg, setCourse, setLesson, setConceptNames]);
 
-  const fetchContent = async (fmt: Format) => {
+  const fetchContent = useCallback(async (fmt: Format) => {
     setIsContentLoading(true);
     try {
       const res = await fetch(`/api/v1/courses/${courseId}/lessons/${lessonId}/content?format=${fmt}`);
@@ -105,21 +105,21 @@ export default function StudyLessonPage() {
     } finally {
       setIsContentLoading(false);
     }
-  };
+  }, [courseId, lessonId, setIsContentLoading, setContentMarkdown, setCitations, setGroundingMode]);
 
   useEffect(() => {
-    if (courseId && lessonId) {
-      fetchLessonData();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseId, lessonId]);
+    const timer = window.setTimeout(() => {
+      if (courseId && lessonId) void fetchLessonData();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [courseId, lessonId, fetchLessonData]);
 
   useEffect(() => {
-    if (courseId && lessonId) {
-      fetchContent(format);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseId, lessonId, format]);
+    const timer = window.setTimeout(() => {
+      if (courseId && lessonId) void fetchContent(format);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [courseId, lessonId, format, fetchContent]);
 
   const handleFormatSwitch = async (newFormat: Format) => {
     if (newFormat === format) return;

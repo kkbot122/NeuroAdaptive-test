@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import { StateWrapper } from "@/components/StateWrapper";
 import { ArrowLeft, FileText } from "lucide-react";
 
@@ -26,7 +25,7 @@ export default function SourceViewerPage() {
   const [isError, setIsError] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
-  const fetchChunk = async () => {
+  const fetchChunk = useCallback(async () => {
     setIsLoading(true);
     setIsError(false);
     try {
@@ -45,12 +44,14 @@ export default function SourceViewerPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [courseId, chunkId]);
 
   useEffect(() => {
-    if (courseId && chunkId) fetchChunk();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseId, chunkId]);
+    const timer = window.setTimeout(() => {
+      if (courseId && chunkId) void fetchChunk();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [courseId, chunkId, fetchChunk]);
 
   return (
     <div className="min-h-screen bg-[#F4F1EA] text-black font-[family-name:var(--font-kodchasan)] pb-28">
