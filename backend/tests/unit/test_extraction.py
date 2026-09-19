@@ -142,6 +142,25 @@ class TestChunking:
         assert "A > B" in paths
         assert "A > C" in paths
 
+    def test_numbered_bare_headings_nest_by_dot_depth(self):
+        """
+        A plain-text PDF has no "#"s to signal heading depth, only numbering
+        like "3" vs "3.1". Every bare heading used to collapse to level 1
+        regardless of its number, flattening a real textbook's module/lesson
+        structure into one lesson per module -- reproduced live on an actual
+        OS textbook (319 concepts, every one its own top-level module).
+        """
+        source = f"3 Process Management\n\n{PROSE}\n\n3.1 Process States\n\n{PROSE}\n\n4 Memory Management\n\n{PROSE}"
+        paths = {c.heading_path for c in chunk(doc(source))}
+        assert "Process Management" in paths
+        assert "Process Management > Process States" in paths
+        assert "Memory Management" in paths
+
+    def test_a_bare_heading_with_no_number_stays_top_level(self):
+        source = f"Introduction\n\n{PROSE}\n\nConclusion\n\n{PROSE}"
+        paths = {c.heading_path for c in chunk(doc(source))}
+        assert paths == {"Introduction", "Conclusion"}
+
     def test_code_fence_is_kept_whole_and_labelled_even_when_oversized(self):
         code = "```python\n" + "\n".join(f"x{i} = {i}" for i in range(400)) + "\n```"
         chunks = chunk(doc(f"{PROSE}\n\n{code}"))

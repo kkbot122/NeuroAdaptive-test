@@ -206,7 +206,14 @@ def _extract_pdf(raw: bytes) -> ExtractedDocument:
 # -- chunking --------------------------------------------------------------------
 
 _MD_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
-_BARE_HEADING = re.compile(r"^(?:\d+(?:\.\d+)*\.?\s+)?[A-Z][^.!?]{2,79}$")
+# Group 1 (optional) is the dotted numbering prefix -- "3" or "3.1" or
+# "3.1.2" -- captured separately from the title so its dot count can stand
+# in for heading depth the way a Markdown "#" count does. A plain-text PDF
+# has no "#"s at all, so without this every bare heading collapsed to level
+# 1 regardless of whether it read "3. Process Management" or "3.1 Process
+# States", flattening every course generated from a PDF into one lesson per
+# module -- reproduced live on a real OS textbook.
+_BARE_HEADING = re.compile(r"^(?:(\d+(?:\.\d+)*)\.?\s+)?([A-Z][^.!?]{2,79})$")
 _FENCE = re.compile(r"^```")
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
@@ -348,10 +355,14 @@ def chunk(document: ExtractedDocument) -> List[ProposedChunk]:
                 continue
 
             md = _MD_HEADING.match(stripped)
-            if md or _looks_like_bare_heading(stripped):
+            bare = None if md else _bare_heading_match(stripped)
+            if md or bare:
                 flush()
-                level = len(md.group(1)) if md else 1
-                title = md.group(2) if md else stripped
+                if md:
+                    level, title = len(md.group(1)), md.group(2)
+                else:
+                    number, title = bare.group(1), bare.group(2)
+                    level = number.count(".") + 1 if number else 1
                 del heading_stack[level - 1:]
                 heading_stack.append(title)
                 continue
@@ -407,7 +418,7 @@ def _split_blocks(text: str) -> List[str]:
     return re.split(r"\n\s*\n", text or "")
 
 
-def _looks_like_bare_heading(line: str) -> bool:
+def _bare_heading_match(line: str):
     if "\n" in line or len(line) > 80:
-        return False
-    return bool(_BARE_HEADING.match(line))
+        return None
+    return _BARE_HEADING.match(line)
