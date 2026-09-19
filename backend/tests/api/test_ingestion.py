@@ -436,3 +436,71 @@ class TestConcurrentProcessingIsRejected:
             f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
         )
         assert response.status_code != 409
+
+
+class TestOrphanedJobReconciledOnStartup:
+    """
+    jobs/service.py runs the pipeline in-process, not on a queue (see that
+    module's docstring), so a job stuck PENDING/RUNNING can only mean the
+    process that owned it died mid-run (crash, OOM, container restart)
+    before marking it FAILED. Without the app.main lifespan's reconciliation,
+    that stuck job would block every future /process call for the course
+    with a 409 forever, since no other process is ever coming back to finish
+    it -- reproduced live after a backend OOM crash left a job RUNNING.
+    """
+
+    def test_a_stale_running_job_is_marked_failed_on_restart(self, client, owner, course, db_session):
+        from uuid import UUID as _UUID
+
+        from app.modules.courses.models import Course, CourseStatus
+        from app.modules.jobs.models import (
+            JobStatus,
+            ProcessingJob,
+            ProcessingStage,
+            ProcessingStageName,
+            StageStatus,
+        )
+
+        job = ProcessingJob(
+            course_id=_UUID(course["id"]),
+            owner_id=owner.id,
+            status=JobStatus.RUNNING.value,
+            current_stage=ProcessingStageName.INDEXING.value,
+        )
+        db_session.add(job)
+        db_session.flush()
+        stage = ProcessingStage(
+            job_id=job.id,
+            name=ProcessingStageName.INDEXING.value,
+            position=3,
+            status=StageStatus.RUNNING.value,
+        )
+        db_session.add(stage)
+        db_session.commit()
+
+        # Simulate the backend restarting: re-run app.main's lifespan on the
+        # same app instance. dependency_overrides from the `client` fixture
+        # still point get_db at this same db_session, so this reconciles the
+        # job just inserted above rather than a real database.
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        with TestClient(app):
+            pass
+
+        db_session.refresh(job)
+        assert job.status == JobStatus.FAILED.value
+        assert job.error_category == "INTERRUPTED"
+
+        db_session.refresh(stage)
+        assert stage.status == StageStatus.FAILED.value
+
+        reconciled_course = db_session.query(Course).filter(Course.id == job.course_id).first()
+        assert reconciled_course.status == CourseStatus.FAILED.value
+
+        # The course is no longer blocked: a fresh /process call is accepted.
+        response = client.post(
+            f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
+        )
+        assert response.status_code != 409

@@ -1,8 +1,12 @@
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.problem_details import ProblemDetailException, problem_detail_exception_handler
+from app.db.session import get_db
 
 # --- Import Models so SQLAlchemy registers them ---
 # Still required without create_all: the string-based relationship() targets
@@ -44,9 +48,59 @@ from app.modules.adaptation.router import router as adaptation_router
 from app.modules.tutor.router import router as tutor_router
 from app.modules.evaluation.router import router as evaluation_router
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # jobs/service.py runs the pipeline in-process, not on a queue -- a job
+    # stuck PENDING or RUNNING can therefore only mean the process that owned
+    # it died mid-run (crash, OOM, container restart) before it could mark
+    # the job FAILED. Left alone, has_active_job_for_course() (jobs/service.py)
+    # would reject every future /process call for that course with a 409
+    # forever, since no other process is ever coming back to finish it.
+    # Reclaim any such job as FAILED/INTERRUPTED on startup so a fresh
+    # attempt is unblocked.
+    from app.modules.courses.models import Course, CourseStatus
+    from app.modules.jobs.models import JobStatus, ProcessingJob, StageStatus
+
+    # Route through whatever get_db is overridden to (tests point this at an
+    # isolated in-memory session via app.dependency_overrides -- see
+    # conftest.py's `client` fixture). TestClient runs this lifespan on every
+    # `with TestClient(app) as c:` entry, so hitting the real, schema-less
+    # settings.DATABASE_URL engine directly broke every single test with
+    # "no such table: processing_jobs" the first time this was tried.
+    db_dependency = app.dependency_overrides.get(get_db, get_db)
+    db_gen = db_dependency()
+    db = next(db_gen)
+    try:
+        orphaned = (
+            db.query(ProcessingJob)
+            .filter(ProcessingJob.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]))
+            .all()
+        )
+        for job in orphaned:
+            job.status = JobStatus.FAILED.value
+            job.error_category = "INTERRUPTED"
+            job.finished_at = datetime.now(timezone.utc)
+            for stage in job.stages:
+                if stage.status == StageStatus.RUNNING.value:
+                    stage.status = StageStatus.FAILED.value
+                    stage.finished_at = datetime.now(timezone.utc)
+            course = db.query(Course).filter(Course.id == job.course_id).first()
+            if course is not None:
+                course.status = CourseStatus.FAILED.value
+        if orphaned:
+            db.commit()
+    finally:
+        try:
+            next(db_gen)
+        except StopIteration:
+            pass
+    yield
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan,
 )
 app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)
 
