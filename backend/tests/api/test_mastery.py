@@ -133,6 +133,38 @@ class TestAttemptsAndReport:
         )
         assert resp.status_code == 404
 
+    def test_a_concept_assigned_to_a_lesson_reports_that_lesson_id(
+        self, client, owner, db_session, course_with_concepts
+    ):
+        """The dashboard's mastery grid links a concept card straight to its
+        lesson -- this is what makes that link possible."""
+        from app.modules.curriculum.models import Lesson, LessonConcept, Module
+
+        course, version, concept_a, _ = course_with_concepts
+        module = Module(course_version_id=version.id, position=0, title="Memory")
+        db_session.add(module)
+        db_session.flush()
+        lesson = Lesson(module_id=module.id, position=0, title="Virtual Memory")
+        db_session.add(lesson)
+        db_session.flush()
+        db_session.add(LessonConcept(lesson_id=lesson.id, concept_id=concept_a.id, weight=0.9))
+        db_session.commit()
+
+        report = client.get(
+            f"/api/v1/courses/{course.id}/mastery-report", headers=auth_headers(owner.email)
+        ).json()
+        row = next(r for r in report if r["concept_id"] == str(concept_a.id))
+        assert row["lesson_id"] == str(lesson.id)
+
+    def test_a_concept_with_no_lesson_reports_lesson_id_none(self, client, owner, course_with_concepts):
+        """Never guessed -- no LessonConcept row means no link to offer."""
+        course, version, concept_a, _ = course_with_concepts
+        report = client.get(
+            f"/api/v1/courses/{course.id}/mastery-report", headers=auth_headers(owner.email)
+        ).json()
+        row = next(r for r in report if r["concept_id"] == str(concept_a.id))
+        assert row["lesson_id"] is None
+
     def test_attempting_another_users_question_is_404(
         self, client, owner, other_user, fake_generation, course_with_concepts
     ):

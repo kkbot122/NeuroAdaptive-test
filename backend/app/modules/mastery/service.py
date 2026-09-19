@@ -13,6 +13,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.modules.courses.service import CourseNotFound, CourseService
+from app.modules.curriculum.models import LessonConcept
 from app.modules.curriculum.service import CurriculumService
 from app.modules.mastery import diagnostic, engine
 from app.modules.mastery.grading import grade_attempt
@@ -269,13 +270,28 @@ class MasteryService:
         self._get_owned_course(course_id, owner_id)
         graph = self.curriculum.get_graph(course_id, owner_id)
 
+        # Module/lesson clustering (curriculum/service.py) assigns each
+        # concept to exactly one lesson, so the first match is the only one
+        # in practice -- bulk-loaded here rather than one query per concept.
+        lesson_by_concept: Dict[UUID, UUID] = {}
+        if graph.concepts:
+            concept_ids = [c.id for c in graph.concepts]
+            for link in (
+                self.db.query(LessonConcept)
+                .filter(LessonConcept.concept_id.in_(concept_ids))
+                .all()
+            ):
+                lesson_by_concept.setdefault(link.concept_id, link.lesson_id)
+
         report = []
         for concept in graph.concepts:
             state = self.get_concept_mastery(owner_id, concept.id)
+            lesson_id = lesson_by_concept.get(concept.id)
             row = {
                 "concept_id": str(concept.id),
                 "concept_name": concept.name,
                 "band": engine.classify_band(state),
+                "lesson_id": str(lesson_id) if lesson_id else None,
             }
             if include_raw:
                 row["raw"] = {

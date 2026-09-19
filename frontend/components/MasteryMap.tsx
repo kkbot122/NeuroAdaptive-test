@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 import { Brain, Star, CheckCircle, ShieldAlert } from "lucide-react";
 
 // Matches backend/app/modules/mastery/engine.py's classify_band() literally
@@ -10,6 +11,10 @@ export interface MasteryRow {
   concept_id: string;
   concept_name: string;
   band: MasteryBand;
+  // None when module/lesson clustering never assigned this concept to a
+  // lesson (mastery/schemas.py's MasteryReportRow) -- never guessed, so a
+  // card without one renders as plain status, not a broken link.
+  lesson_id?: string | null;
   // Only present when the caller requests ?include_raw=true
   // (mastery/schemas.py's MasteryReportRow) -- nested, not flat fields.
   raw?: {
@@ -22,6 +27,9 @@ export interface MasteryRow {
 interface MasteryMapProps {
   data: MasteryRow[];
   showRawValues?: boolean;
+  // Required to build a card's lesson link (/courses/{courseId}/study/{lessonId}).
+  // Omit it to keep the grid a read-only status view.
+  courseId?: string;
 }
 
 const bandConfig: Record<MasteryBand, { label: string; color: string; icon: React.ReactNode; bg: string }> = {
@@ -57,7 +65,7 @@ const bandConfig: Record<MasteryBand, { label: string; color: string; icon: Reac
   },
 };
 
-export function MasteryMap({ data, showRawValues = false }: MasteryMapProps) {
+export function MasteryMap({ data, showRawValues = false, courseId }: MasteryMapProps) {
   if (!data || data.length === 0) {
     return (
       <div className="p-8 text-center bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
@@ -70,24 +78,39 @@ export function MasteryMap({ data, showRawValues = false }: MasteryMapProps) {
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {data.map((row) => {
         const config = bandConfig[row.band] || bandConfig["Not assessed"];
-        return (
-          <div
-            key={row.concept_id}
-            className="flex items-center p-4 bg-white border-2 border-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-transform hover:-translate-y-1"
-          >
+        const cardClass =
+          "flex items-center p-4 bg-white border-2 border-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-transform hover:-translate-y-1";
+        const content = (
+          <>
             <div className={`p-3 rounded-lg border-2 border-black mr-4 ${config.bg}`}>
               {config.icon}
             </div>
             <div className="flex-1">
               <h4 className="font-bold text-gray-900 truncate">{row.concept_name}</h4>
               <p className={`text-sm font-bold mt-1 ${config.color}`}>{config.label}</p>
-              
+
               {showRawValues && row.raw && (
                 <div className="mt-2 text-xs text-gray-500 font-mono">
                   M: {row.raw.mastery.toFixed(2)} | U: {row.raw.uncertainty.toFixed(2)}
                 </div>
               )}
             </div>
+          </>
+        );
+
+        // Only clickable when both a course and this concept's lesson are
+        // known -- a concept module/lesson clustering never assigned to a
+        // lesson has nowhere honest to link to.
+        if (courseId && row.lesson_id) {
+          return (
+            <Link key={row.concept_id} href={`/courses/${courseId}/study/${row.lesson_id}`} className={cardClass}>
+              {content}
+            </Link>
+          );
+        }
+        return (
+          <div key={row.concept_id} className={cardClass}>
+            {content}
           </div>
         );
       })}

@@ -218,7 +218,7 @@ export default function DashboardPage() {
               {/* MASTERY MAP */}
               <div>
                 <h3 className="text-xl font-bold mb-2">Here&apos;s your learning path</h3>
-                <MasteryMap data={masteryData} />
+                <MasteryMap data={masteryData} courseId={activeCourseId ?? undefined} />
               </div>
             </div>
           )}
