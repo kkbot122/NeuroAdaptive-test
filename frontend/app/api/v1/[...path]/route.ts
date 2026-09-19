@@ -24,6 +24,7 @@
  * (text/event-stream) response.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { Agent } from "undici";
 import { auth } from "@/auth";
 import { requireInternalToken } from "@/lib/internal-auth";
 
@@ -31,6 +32,13 @@ const BACKEND_URL =
   process.env.INTERNAL_API_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   "http://backend:8000";
+
+// undici's default Agent gives up on a slow-to-respond server after a 300s
+// headersTimeout. Most calls here are quick, but the tutor's SSE stream and
+// any future long-running proxied request (e.g. a big multipart upload)
+// could legitimately exceed that and get a false 502. Raise both timeouts
+// well past any realistic call instead of fighting slow-but-working ones.
+const backendDispatcher = new Agent({ headersTimeout: 1_800_000, bodyTimeout: 1_800_000 });
 
 // Hop-by-hop / connection-management headers must not be forwarded verbatim
 // in either direction -- copying them can corrupt the proxied response
@@ -73,6 +81,7 @@ async function proxy(req: NextRequest, context: { params: Promise<{ path: string
       // Required by undici/fetch when streaming a request body from a
       // ReadableStream (the incoming request) rather than a buffered value.
       ...(hasBody ? { duplex: "half" } : {}),
+      dispatcher: backendDispatcher,
     } as RequestInit);
   } catch (err) {
     console.error("api/v1 proxy: backend unreachable:", err);

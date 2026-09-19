@@ -132,7 +132,10 @@ export default function WorkspacePage() {
         const body = await res.json().catch(() => ({}));
         // The backend now rejects a second concurrent run for this course
         // (409, RFC 7807 problem-details) instead of racing with the first.
-        throw new Error(body.detail || "Failed to start processing");
+        // The proxy route (app/api/v1/[...path]/route.ts) reports its own
+        // failures (401/500/502) under "error", not "detail" -- falling
+        // through to the generic string for those hid the real cause.
+        throw new Error(body.detail || body.error || "Failed to start processing");
       }
       const jobData = await res.json();
       setJob(jobData);
