@@ -14,6 +14,7 @@ here and in SPRINT_LOG: a graph-community-detection pass or an LLM-polished
 lesson objective is future work, not attempted this phase.
 """
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -24,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.modules.courses.models import Course
 from app.modules.courses.service import CourseNotFound, CourseService
 from app.modules.curriculum.carryover import CarryoverCandidate, compute_carryover
-from app.modules.curriculum.edges import ConceptForEdges, propose_edges
+from app.modules.curriculum.edges import ConceptForEdges, EdgeParseError, propose_edges
 from app.modules.curriculum.extraction import (
     group_chunks_into_sections,
     propose_concepts_for_section,
@@ -50,6 +51,8 @@ from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
 from app.services.embedding.gateway import EmbeddingGateway
 from app.services.generation.gateway import GenerationGateway
+
+logger = logging.getLogger(__name__)
 
 # Minimum lesson weight: LessonConcept.weight is documented as (0, 1], so a
 # concept with importance 0.0 still needs a strictly positive weight.
@@ -158,9 +161,26 @@ class CurriculumService:
             ]
             version.concept_carryover_map = compute_carryover(old_candidates, new_candidates)
 
-        # Prerequisite graph.
+        # Prerequisite graph. A single LLM call proposes edges over every
+        # concept at once; a large document (a real OS textbook produced 319
+        # concepts) can overrun the call's output budget and come back as
+        # truncated, unparseable JSON. That used to fail this entire version
+        # -- discarding the extraction, chunking and indexing work already
+        # committed -- for a step that is a sequencing enhancement, not a
+        # requirement for the course to be usable. Continue with no edges
+        # instead: the same degraded state fake_generation's default
+        # response (`{"concepts": [], "edges": []}`) already exercises
+        # throughout the test suite.
         edge_inputs = [ConceptForEdges(id=c.id, name=c.name, definition=c.definition) for c in concepts]
-        proposed = propose_edges(edge_inputs, self.generation)
+        try:
+            proposed = propose_edges(edge_inputs, self.generation)
+        except EdgeParseError as exc:
+            logger.warning(
+                "Edge proposal failed for course %s (%d concepts): %s -- "
+                "continuing without a prerequisite graph",
+                course_id, len(concepts), exc,
+            )
+            proposed = []
         acyclic, _dropped = resolve_cycles(proposed)
         for edge in acyclic:
             self.db.add(

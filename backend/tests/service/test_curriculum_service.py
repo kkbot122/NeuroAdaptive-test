@@ -90,6 +90,46 @@ class TestGenerateVersionHappyPath:
         with pytest.raises(CurriculumNotFound):
             service.generate_version(course.id, other_user.id)
 
+    def test_unparseable_edge_response_does_not_fail_the_version(self, db_session, owner, course):
+        """
+        A real OS textbook produced 319 concepts, which overran the edge
+        proposal call's output budget and came back as truncated JSON --
+        this used to fail the whole version, discarding the already-committed
+        extraction/chunking/indexing work for what is a sequencing
+        enhancement, not a requirement for the course to be usable.
+        """
+        add_chunks(
+            db_session, course, owner,
+            [("Intro", ["Deadlock marker text."]), ("Sync", ["Semaphore marker text."])],
+        )
+        gateway = (
+            FakeGenerationGateway()
+            .when_prompt_contains(
+                "Deadlock marker text",
+                '{"concepts": [{"name": "Deadlock", "definition": "def", '
+                '"importance": 0.5, "bloom_level": "understand"}]}',
+            )
+            .when_prompt_contains(
+                "Semaphore marker text",
+                '{"concepts": [{"name": "Semaphore", "definition": "def", '
+                '"importance": 0.5, "bloom_level": "understand"}]}',
+            )
+            .when_prompt_contains("Propose prerequisite relationships", "this is not valid json")
+        )
+        service = CurriculumService(db_session, gateway, FakeEmbeddingGateway())
+
+        version = service.generate_version(course.id, owner.id)
+
+        assert version.status == CourseVersionStatus.READY.value
+        from app.modules.curriculum.models import ConceptPrerequisite
+
+        assert (
+            db_session.query(ConceptPrerequisite)
+            .filter(ConceptPrerequisite.course_version_id == version.id)
+            .count()
+            == 0
+        )
+
 
 class TestActivationGating:
     def test_cannot_activate_a_failed_version(self, db_session, owner, course):
