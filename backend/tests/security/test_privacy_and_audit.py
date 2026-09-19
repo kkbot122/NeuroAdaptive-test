@@ -37,8 +37,15 @@ class TestConsentDegradesGracefully:
             data={"role": "STUDY"},
             headers=auth_headers(owner.email),
         )
-        process = client.post(
+        started = client.post(
             f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
+        ).json()
+        # /process returns 202 with the job PENDING and runs the pipeline via
+        # BackgroundTasks (jobs/router.py) rather than inline -- TestClient
+        # still runs it to completion before this call returns, so the
+        # immediate follow-up GET already sees the terminal status.
+        process = client.get(
+            f"/api/v1/jobs/{started['id']}", headers=auth_headers(owner.email)
         ).json()
         assert process["status"] == "READY"
 

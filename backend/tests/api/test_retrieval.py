@@ -35,10 +35,15 @@ def make_course_with_content(client, email, title, text):
         data={"role": "STUDY"},
         headers=auth_headers(email),
     )
-    process = client.post(
+    started = client.post(
         f"/api/v1/courses/{course['id']}/process", headers=auth_headers(email)
     ).json()
-    return course, process
+    # /process now returns 202 with the job PENDING and runs the pipeline via
+    # BackgroundTasks (see jobs/router.py) rather than inline -- TestClient
+    # still runs the background task to completion before this call returns,
+    # so the immediate follow-up GET already sees the terminal status.
+    job = client.get(f"/api/v1/jobs/{started['id']}", headers=auth_headers(email)).json()
+    return course, job
 
 
 DEADLOCK_TEXT = (
