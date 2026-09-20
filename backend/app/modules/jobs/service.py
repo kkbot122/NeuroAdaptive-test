@@ -17,6 +17,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.provider_errors import PROVIDER_ERROR_MESSAGES, classify_provider_error
 from app.modules.courses.models import Course, CourseStatus
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.extraction import (
@@ -243,6 +244,12 @@ class JobService:
             stage.started_at = None
             job.status = JobStatus.PAUSED.value
             job.error_category = type(exc).__name__
+            # Authored, never provider text (see provider_errors.py) -- the
+            # same column NoExtractableText already uses for a human-facing
+            # reason. Without this, a paused job carried no reason at all:
+            # the frontend showed nothing, indistinguishable from silently
+            # doing nothing (reproduced live against a real exhausted quota).
+            job.error_detail = PROVIDER_ERROR_MESSAGES[classify_provider_error(exc)]
             logger.error("Job %s paused at %s: %s", job.id, stage.name, type(exc).__name__)
             return StageStatus.PENDING
         except Exception as exc:

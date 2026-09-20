@@ -85,11 +85,13 @@ class ProcessingJob(Base):
     error_category = Column(String(64), nullable=True)
 
     # T2 (Phase 6): unlike error_category, this MAY hold a message -- but
-    # only ever one of NoExtractableText's own authored, human-facing
+    # only ever our own authored, human-facing text: NoExtractableText's
     # strings (e.g. "This PDF is password-protected...", "This PDF has 750
-    # pages, over the 500-page limit..."). Never populated from a provider
-    # exception or raw document content -- see jobs/service.py's
-    # _run_stage(), which sets this in exactly one except branch.
+    # pages, over the 500-page limit...") on FAILED, or one of
+    # provider_errors.PROVIDER_ERROR_MESSAGES on PAUSED. Never populated
+    # from a provider exception or raw document content -- see
+    # jobs/service.py's _run_stage(), which sets this in exactly two
+    # except branches.
     error_detail = Column(String(500), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
