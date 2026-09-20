@@ -392,6 +392,77 @@ class TestJobOwnership:
         assert len(response.json()["stages"]) == 8
 
 
+class TestLatestJobRecovery:
+    """
+    A page reload (or navigating away and back) loses whatever job id the
+    frontend held in memory -- this is the only way it can recover "is this
+    course mid-processing, paused, or untouched" without one. Reproduced
+    live: a course stuck PAUSED had no way back to it from the workspace
+    page after a reload, which fell back to showing a fresh "Generate
+    Curriculum" button as if nothing had ever run.
+    """
+
+    def test_never_processed_returns_null_not_404(self, client, owner, course):
+        response = client.get(
+            f"/api/v1/courses/{course['id']}/jobs/latest", headers=auth_headers(owner.email)
+        )
+        assert response.status_code == 200
+        assert response.json() is None
+
+    def test_returns_the_most_recently_created_job(self, client, owner, course, db_session):
+        upload(client, owner.email, course["id"])
+        first_id = client.post(
+            f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
+        ).json()["id"]
+
+        # A second job for the same course (e.g. a retry-by-reprocessing
+        # after the first one finished) must be the one returned. Explicit,
+        # distinct created_at values: SQLite's CURRENT_TIMESTAMP (what
+        # func.now() compiles to for this test's in-memory engine) is only
+        # second-resolution, so two inserts in the same test can tie --
+        # Postgres's microsecond resolution never does in practice, but the
+        # ordering itself must not depend on that difference to be correct.
+        from datetime import datetime, timedelta, timezone
+
+        from app.modules.jobs.models import JobStatus, ProcessingJob
+        from uuid import UUID as _UUID
+
+        now = datetime.now(timezone.utc)
+        db_session.query(ProcessingJob).filter(ProcessingJob.id == _UUID(first_id)).update(
+            {"status": JobStatus.READY.value, "created_at": now}
+        )
+        db_session.commit()
+        second = ProcessingJob(
+            course_id=_UUID(course["id"]), owner_id=owner.id, status=JobStatus.PENDING.value,
+            created_at=now + timedelta(seconds=1),
+        )
+        db_session.add(second)
+        db_session.commit()
+
+        response = client.get(
+            f"/api/v1/courses/{course['id']}/jobs/latest", headers=auth_headers(owner.email)
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == str(second.id)
+
+    def test_other_user_gets_404_not_someone_elses_job(self, client, owner, other_user, course):
+        upload(client, owner.email, course["id"])
+        client.post(f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email))
+
+        response = client.get(
+            f"/api/v1/courses/{course['id']}/jobs/latest", headers=auth_headers(other_user.email)
+        )
+        assert response.status_code == 404
+
+    def test_unknown_course_is_404(self, client, owner):
+        import uuid
+
+        response = client.get(
+            f"/api/v1/courses/{uuid.uuid4()}/jobs/latest", headers=auth_headers(owner.email)
+        )
+        assert response.status_code == 404
+
+
 class TestConcurrentProcessingIsRejected:
     """
     Reproduces live: a UI double/triple-click (no loading feedback on the

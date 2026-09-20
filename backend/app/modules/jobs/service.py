@@ -127,6 +127,26 @@ class JobService:
             is not None
         )
 
+    def get_latest_for_course(self, course_id: UUID, owner_id: int) -> Optional[ProcessingJob]:
+        """
+        The most recently created job for this course, or None if
+        processing has never been started.
+
+        The frontend has no other way to recover a job's id: it is only
+        ever handed one in the POST /courses/{id}/process /
+        /jobs/{id}/retry response body, held in React state. A page reload
+        or navigating away and back loses that state entirely -- reproduced
+        live as a course stuck PAUSED with no visible way back to it, since
+        the workspace page had nothing to poll and fell back to showing a
+        fresh "Generate Curriculum" button as if no job had ever run.
+        """
+        return (
+            self.db.query(ProcessingJob)
+            .filter(ProcessingJob.course_id == course_id, ProcessingJob.owner_id == owner_id)
+            .order_by(ProcessingJob.created_at.desc())
+            .first()
+        )
+
     def create_for_course(self, course_id: UUID, owner_id: int) -> ProcessingJob:
         job = ProcessingJob(
             course_id=course_id, owner_id=owner_id, status=JobStatus.PENDING.value

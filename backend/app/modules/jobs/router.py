@@ -90,6 +90,30 @@ def get_job(
         raise HTTPException(status_code=404, detail="Job not found")
 
 
+@router.get("/courses/{course_id}/jobs/latest")
+def get_latest_job(
+    course_id: UUID,
+    user: User = Depends(get_current_user),
+    service: JobService = Depends(_service),
+    db: Session = Depends(get_db),
+):
+    """
+    So a client can recover "is this course mid-processing, paused, or
+    never started" without already holding a job id in memory -- the only
+    other way to learn one is the response of the call that created it,
+    which a page reload or navigating away loses. Returns null (200), not
+    404, when processing has never been started for this course: that is
+    an ordinary state, not an error.
+    """
+    try:
+        CourseService(db).get_owned(course_id, user.id)
+    except CourseNotFound:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    job = service.get_latest_for_course(course_id, user.id)
+    return _out(job) if job else None
+
+
 @router.post("/jobs/{job_id}/retry", status_code=202)
 def retry_job(
     job_id: UUID,
