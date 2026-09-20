@@ -28,6 +28,13 @@ export default function WorkspacePage() {
   // for the same course that raced each other and crashed the backend.
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  // True only while a PAUSED job's cause is a provider issue (quota/rate
+  // limit/outage -- jobs/service.py's frozen-scope-mandated behavior for
+  // that case), never a FAILED job: "paused" is retryable in place, "failed"
+  // needs a fresh attempt. Drives whether the button below reads "Retry"
+  // (calls /jobs/{id}/retry, resuming from the stage that paused) instead
+  // of "Generate Curriculum" (starts an entirely new job from scratch).
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Matches curriculum/router.py's _version_out() exactly: nested
   // modules[].lessons[], and a lesson's concepts are {concept_id, role,
@@ -58,6 +65,66 @@ export default function WorkspacePage() {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Fetch Structure for Review. The structure response has no concept
+  // names (curriculum/router.py's _version_out only returns concept_id per
+  // lesson) -- the graph endpoint is fetched alongside it to build the
+  // concept_id -> name map the outline needs to display anything readable.
+  const fetchStructure = useCallback(async () => {
+    try {
+      const [structureRes, graphRes] = await Promise.all([
+        fetch(`/api/v1/courses/${courseId}/structure`),
+        fetch(`/api/v1/courses/${courseId}/graph`),
+      ]);
+      if (structureRes.ok) {
+        setStructure(await structureRes.json());
+        setActiveTab("outline");
+      }
+      if (graphRes.ok) {
+        const graph = await graphRes.json();
+        const names: Record<string, string> = {};
+        for (const c of graph.concepts || []) names[c.id] = c.name;
+        setConceptNames(names);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }, [courseId]);
+
+  const pollJob = useCallback((jobId: string) => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/v1/jobs/${jobId}`);
+        if (!res.ok) throw new Error("Failed to fetch job status");
+        const jobData = await res.json();
+        setJob(jobData);
+
+        // Backend job statuses are READY/FAILED/PAUSED (uppercase --
+        // app/modules/jobs/models.py's JobStatus enum), not "completed"/
+        // "failed": this comparison never matched, so the interval never
+        // cleared and the UI never advanced past step 1 even once the job
+        // had actually finished.
+        if (jobData.status === "READY") {
+          clearInterval(interval);
+          setIsGenerating(false);
+          fetchStructure();
+        } else if (jobData.status === "FAILED" || jobData.status === "PAUSED") {
+          clearInterval(interval);
+          setIsGenerating(false);
+          // PAUSED used to fall through here with no message at all -- the
+          // spinner just vanished and the button went back to idle,
+          // indistinguishable from having done nothing. Reproduced live
+          // against a real exhausted Gemini quota.
+          const fallback = jobData.status === "PAUSED"
+            ? "Processing paused. The AI provider may be temporarily unavailable -- try Retry below."
+            : "Processing failed. Try again.";
+          setGenerateError(jobData.error_detail || fallback);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }, 2000);
+  }, [fetchStructure]);
+
   const fetchCourseData = useCallback(async () => {
     setIsLoading(true);
     setIsError(false);
@@ -77,6 +144,31 @@ export default function WorkspacePage() {
       if (docsRes.ok) {
         setDocuments(await docsRes.json());
       }
+
+      // Recover an in-flight/paused/failed job across a reload or a
+      // navigate-away-and-back -- without this, the only place a job id
+      // ever lived was React state, so returning to this page showed a
+      // fresh "Generate Curriculum" button with no memory of a job that
+      // was paused (e.g. by a provider quota hit) or still running.
+      const jobRes = await fetch(`/api/v1/courses/${courseId}/jobs/latest`);
+      if (jobRes.ok) {
+        const latestJob = await jobRes.json();
+        if (latestJob) {
+          setJob(latestJob);
+          if (latestJob.status === "RUNNING" || latestJob.status === "PENDING") {
+            setIsGenerating(true);
+            pollJob(latestJob.id);
+          } else if (latestJob.status === "PAUSED" || latestJob.status === "FAILED") {
+            const fallback = latestJob.status === "PAUSED"
+              ? "Processing paused. The AI provider may be temporarily unavailable -- try Retry below."
+              : "Processing failed. Try again.";
+            setGenerateError(latestJob.error_detail || fallback);
+          } else if (latestJob.status === "READY") {
+            fetchStructure();
+            setActiveTab("outline");
+          }
+        }
+      }
     } catch (err: unknown) {
       console.error(err);
       setIsError(true);
@@ -84,7 +176,7 @@ export default function WorkspacePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [courseId]);
+  }, [courseId, pollJob, fetchStructure]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -147,58 +239,28 @@ export default function WorkspacePage() {
     }
   };
 
-  const pollJob = async (jobId: string) => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/v1/jobs/${jobId}`);
-        if (!res.ok) throw new Error("Failed to fetch job status");
-        const jobData = await res.json();
-        setJob(jobData);
-        
-        // Backend job statuses are READY/FAILED/PAUSED (uppercase --
-        // app/modules/jobs/models.py's JobStatus enum), not "completed"/
-        // "failed": this comparison never matched, so the interval never
-        // cleared and the UI never advanced past step 1 even once the job
-        // had actually finished.
-        if (jobData.status === "READY") {
-          clearInterval(interval);
-          setIsGenerating(false);
-          fetchStructure();
-        } else if (jobData.status === "FAILED" || jobData.status === "PAUSED") {
-          clearInterval(interval);
-          setIsGenerating(false);
-          if (jobData.status === "FAILED") {
-            setGenerateError(jobData.error_detail || "Processing failed. Try again.");
-          }
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    }, 2000);
-  };
-
-  // Fetch Structure for Review. The structure response has no concept
-  // names (curriculum/router.py's _version_out only returns concept_id per
-  // lesson) -- the graph endpoint is fetched alongside it to build the
-  // concept_id -> name map the outline needs to display anything readable.
-  const fetchStructure = async () => {
+  // Resume a PAUSED/FAILED job in place (jobs/router.py's /jobs/{id}/retry)
+  // instead of starting a whole new pipeline run via handleGenerate --
+  // stages that already succeeded are not re-run.
+  const handleRetryJob = async () => {
+    if (!job || isRetrying) return;
+    setIsRetrying(true);
+    setGenerateError(null);
     try {
-      const [structureRes, graphRes] = await Promise.all([
-        fetch(`/api/v1/courses/${courseId}/structure`),
-        fetch(`/api/v1/courses/${courseId}/graph`),
-      ]);
-      if (structureRes.ok) {
-        setStructure(await structureRes.json());
-        setActiveTab("outline");
+      const res = await fetch(`/api/v1/jobs/${job.id}/retry`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || body.error || "Failed to retry processing");
       }
-      if (graphRes.ok) {
-        const graph = await graphRes.json();
-        const names: Record<string, string> = {};
-        for (const c of graph.concepts || []) names[c.id] = c.name;
-        setConceptNames(names);
-      }
+      const jobData = await res.json();
+      setJob(jobData);
+      setIsGenerating(true);
+      pollJob(job.id);
     } catch (err) {
       console.error(err);
+      setGenerateError(err instanceof Error ? err.message : "Failed to retry processing");
+    } finally {
+      setIsRetrying(false);
     }
   };
 
@@ -283,17 +345,30 @@ export default function WorkspacePage() {
             ))}
           </ul>
           
-          <button
-            onClick={handleGenerate}
-            disabled={isGenerating || !!(job && job.status === "RUNNING")}
-            className="w-full mt-6 flex items-center justify-center gap-2 bg-purple-600 text-white hover:bg-purple-700 border-2 border-black px-6 py-3 rounded-lg font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all active:translate-x-1 active:translate-y-1 active:shadow-none disabled:opacity-50"
-          >
-            {isGenerating || (job && job.status === "RUNNING") ? (
-              <><Loader2 className="w-5 h-5 animate-spin" /> {job?.current_stage ? `Processing (${job.current_stage})...` : "Starting..."}</>
-            ) : "Generate Curriculum"}
-          </button>
+          {(() => {
+            const isBusy = isGenerating || isRetrying || job?.status === "RUNNING" || job?.status === "PENDING";
+            const canRetry = !isBusy && job && (job.status === "PAUSED" || job.status === "FAILED");
+            return (
+              <button
+                onClick={canRetry ? handleRetryJob : handleGenerate}
+                disabled={isBusy}
+                className="w-full mt-6 flex items-center justify-center gap-2 bg-purple-600 text-white hover:bg-purple-700 border-2 border-black px-6 py-3 rounded-lg font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all active:translate-x-1 active:translate-y-1 active:shadow-none disabled:opacity-50"
+              >
+                {isBusy ? (
+                  <><Loader2 className="w-5 h-5 animate-spin" /> {job?.current_stage ? `Processing (${job.current_stage})...` : "Starting..."}</>
+                ) : canRetry ? (
+                  <><RefreshCcw className="w-5 h-5" /> Retry Processing</>
+                ) : "Generate Curriculum"}
+              </button>
+            );
+          })()}
           {generateError && (
             <p className="mt-3 text-sm font-medium text-red-600">{generateError}</p>
+          )}
+          {job?.status === "PAUSED" && (
+            <p className="mt-1 text-xs text-gray-500">
+              Retrying resumes from where it stopped -- completed steps are not redone.
+            </p>
           )}
         </div>
       )}
