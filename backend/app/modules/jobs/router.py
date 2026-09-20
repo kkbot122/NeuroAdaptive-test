@@ -90,9 +90,10 @@ def get_job(
         raise HTTPException(status_code=404, detail="Job not found")
 
 
-@router.post("/jobs/{job_id}/retry")
+@router.post("/jobs/{job_id}/retry", status_code=202)
 def retry_job(
     job_id: UUID,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     service: JobService = Depends(_service),
     db: Session = Depends(get_db),
@@ -100,6 +101,11 @@ def retry_job(
     """
     Resume a paused or failed job. Stages that already succeeded are not
     re-run, so a retry never duplicates completed work.
+
+    Runs in the background like start_processing (9bc8cfb) -- this used to
+    call service.run() inline and block the request for the full remaining
+    pipeline duration, the same false-502-under-the-proxy's-timeout failure
+    mode start_processing had before that fix, just never caught here.
     """
     try:
         job = service.get_owned(job_id, user.id)
@@ -108,5 +114,5 @@ def retry_job(
 
     job.retry_count += 1
     db.commit()
-    service.run(job.id, user.id)
-    return _out(service.get_owned(job.id, user.id))
+    background_tasks.add_task(service.run, job.id, user.id)
+    return _out(job)

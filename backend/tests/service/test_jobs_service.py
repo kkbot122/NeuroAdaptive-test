@@ -115,3 +115,37 @@ class TestProviderFailurePausesWithAFriendlyReason:
 
         indexing_stage = next(s for s in result.stages if s.name == "INDEXING")
         assert indexing_stage.status == StageStatus.PENDING.value  # retryable, not FAILED
+
+    def test_retrying_after_the_provider_recovers_resumes_past_the_pause(
+        self, db_session, owner, course
+    ):
+        """What /jobs/{id}/retry (jobs/router.py) relies on: re-running a
+        PAUSED job with a now-working provider must resume from the stage
+        that paused it, not restart the whole pipeline."""
+        job = _job_ready_for_indexing(db_session, course, owner)
+        broken_service = JobService(
+            db_session,
+            embeddings=_AlwaysQuotaExhaustedEmbeddings(),
+            vectors=FakeVectorStore(),
+            generation=FakeGenerationGateway().set_default('{"concepts": [], "edges": []}'),
+        )
+        paused = broken_service.run(job.id, owner.id)
+        assert paused.status == JobStatus.PAUSED.value
+
+        from app.services.embedding.fake import FakeEmbeddingGateway
+
+        recovered_service = JobService(
+            db_session,
+            embeddings=FakeEmbeddingGateway(),
+            vectors=FakeVectorStore(),
+            generation=FakeGenerationGateway().set_default('{"concepts": [], "edges": []}'),
+        )
+        result = recovered_service.run(job.id, owner.id)
+
+        assert result.status == JobStatus.READY.value
+        stages_by_name = {s.name: s.status for s in result.stages}
+        # The stages that already succeeded before the pause were not re-run.
+        assert stages_by_name["VALIDATING"] == StageStatus.SUCCEEDED.value
+        assert stages_by_name["EXTRACTING"] == StageStatus.SUCCEEDED.value
+        assert stages_by_name["CHUNKING"] == StageStatus.SUCCEEDED.value
+        assert stages_by_name["INDEXING"] == StageStatus.SUCCEEDED.value
