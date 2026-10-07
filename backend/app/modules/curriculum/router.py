@@ -16,6 +16,8 @@ or reordering a module is not implemented yet (deferred, see SPRINT_LOG).
 PUT /graph (editing prerequisite edges) is not implemented this phase either;
 GET is, which is what ownership scoping actually needs to be proven for.
 """
+import logging
+
 from app.services.providers import generation_gateway, embedding_gateway, vector_store
 from app.modules.curriculum.schemas import StructureOut, GraphOut, PublishedStructureOut
 from typing import List, Optional
@@ -28,6 +30,13 @@ from sqlalchemy.orm import Session
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.modules.auth.models import User
+from app.modules.preparation.dependencies import get_preparation_service
+from app.modules.preparation.service import (
+    ActivityPreparationService,
+    PreparationConflict,
+    PreparationFailure,
+    PreparationNotFound,
+)
 from app.modules.curriculum.service import (
     CurriculumNotFound,
     CurriculumService,
@@ -37,6 +46,7 @@ from app.services.embedding.gemini import GeminiEmbeddingGateway
 from app.services.generation.gemini import GeminiGenerationGateway
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _service(db: Session = Depends(get_db)) -> CurriculumService:
@@ -172,6 +182,7 @@ def publish_structure(
     version_id: Optional[UUID] = None,
     user: User = Depends(get_current_user),
     service: CurriculumService = Depends(_service),
+    preparation: ActivityPreparationService = Depends(get_preparation_service),
 ):
     """
     Explicit confirmation, per the mandate: this is the only route that ever
@@ -196,5 +207,13 @@ def publish_structure(
             status_code=409,
             detail=f"This version has not passed validation (status: {exc}) and cannot be published.",
         )
+
+    if preparation is not None:
+        try:
+            preparation.prepare_first_activity(course_id, user.id)
+        except (PreparationConflict, PreparationFailure, PreparationNotFound) as exc:
+            # Publication is already committed. Preparation remains a separate,
+            # recoverable worker stage and must not make the publish response fail.
+            logger.info("First activity preparation was not queued (%s)", type(exc).__name__)
 
     return {"course_id": str(course.id), "active_version_id": str(course.active_version_id)}

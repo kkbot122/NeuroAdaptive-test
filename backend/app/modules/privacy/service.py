@@ -49,6 +49,13 @@ from app.modules.documents.models import Document
 from app.modules.events.models import LearningEvent
 from app.modules.jobs.models import ProcessingJob, ProcessingStage
 from app.modules.mastery.models import MasteryEvent, Question, QuestionAttempt, QuestionConcept
+from app.modules.preparation.models import (
+    ActivityPreparation,
+    LessonContentArtifact,
+    LessonContentCitation,
+    PreparedActivityQuestion,
+    QuestionSource,
+)
 from app.modules.learning.models import (
     AnswerSubmission,
     AssessmentQuestion,
@@ -76,6 +83,33 @@ class PrivacyService:
         course_ids = _owned_course_ids(db, user_id)
 
         if course_ids:
+            preparation_ids = [
+                row[0]
+                for row in db.query(ActivityPreparation.id)
+                .filter(ActivityPreparation.course_id.in_(course_ids))
+                .all()
+            ]
+            artifact_ids = [
+                row[0]
+                for row in db.query(LessonContentArtifact.id)
+                .filter(LessonContentArtifact.course_id.in_(course_ids))
+                .all()
+            ]
+            if preparation_ids:
+                db.query(PreparedActivityQuestion).filter(
+                    PreparedActivityQuestion.preparation_id.in_(preparation_ids)
+                ).delete(synchronize_session=False)
+                db.query(ActivityPreparation).filter(
+                    ActivityPreparation.id.in_(preparation_ids)
+                ).delete(synchronize_session=False)
+            if artifact_ids:
+                db.query(LessonContentCitation).filter(
+                    LessonContentCitation.artifact_id.in_(artifact_ids)
+                ).delete(synchronize_session=False)
+                db.query(LessonContentArtifact).filter(
+                    LessonContentArtifact.id.in_(artifact_ids)
+                ).delete(synchronize_session=False)
+
             db.query(MasteryEvent).filter(MasteryEvent.course_id.in_(course_ids)).delete(synchronize_session=False)
             db.query(QuestionAttempt).filter(QuestionAttempt.course_id.in_(course_ids)).delete(synchronize_session=False)
 
@@ -115,6 +149,9 @@ class PrivacyService:
 
             question_ids = [row[0] for row in db.query(Question.id).filter(Question.course_id.in_(course_ids)).all()]
             if question_ids:
+                db.query(QuestionSource).filter(QuestionSource.question_id.in_(question_ids)).delete(
+                    synchronize_session=False
+                )
                 db.query(QuestionConcept).filter(QuestionConcept.question_id.in_(question_ids)).delete(
                     synchronize_session=False
                 )

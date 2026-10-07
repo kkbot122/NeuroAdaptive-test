@@ -1,7 +1,7 @@
 import uuid
 import pytest
 from app.core.config import settings
-from app.modules.tutor.entailment import GeminiEntailmentChecker
+from app.modules.tutor.entailment import EntailmentUnavailable, GeminiEntailmentChecker
 from app.modules.tutor.parsing import parse_tutor_response, TutorParseError
 from app.services.generation.fake import FakeGenerationGateway
 from app.modules.jobs.router import _dispatcher
@@ -12,6 +12,19 @@ from tests.conftest import auth_headers
 def test_entailment_requires_a_real_boolean(value):
     gateway = FakeGenerationGateway().set_default('{"supported": ' + value + '}')
     assert GeminiEntailmentChecker(gateway)("claim", "source") is False
+
+
+def test_strict_entailment_distinguishes_unavailable_checks_from_unsupported_claims():
+    malformed = FakeGenerationGateway().set_default('{"supported": "false"}')
+    with pytest.raises(EntailmentUnavailable):
+        GeminiEntailmentChecker(malformed, raise_on_error=True)("claim", "source")
+
+    unavailable = FakeGenerationGateway()
+    with pytest.raises(EntailmentUnavailable):
+        GeminiEntailmentChecker(unavailable, raise_on_error=True)("claim", "source")
+
+    supported_false = FakeGenerationGateway().set_default('{"supported": false}')
+    assert GeminiEntailmentChecker(supported_false, raise_on_error=True)("claim", "source") is False
 
 
 def test_tutor_parse_errors_never_include_response_content():

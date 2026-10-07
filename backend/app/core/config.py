@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     INDEXING_BATCH_SIZE_V1: int = 10
     INDEXING_WORKER_CONCURRENCY_V1: int = 2
 
+    # P2 preparation defaults. These are versioned operational/product
+    # defaults, not calibrated values; changing them requires a new policy
+    # version and does not change mastery thresholds or recommendation scores.
+    P2_ASSESSMENT_DEFAULT_QUESTION_COUNT_V1: int = Field(default=5, ge=1, le=8)
+    P2_ASSESSMENT_MAX_QUESTION_COUNT_V1: int = Field(default=8, ge=1, le=8)
+    P2_MCQ_DEFAULT_DIFFICULTY_V1: float = Field(default=0.5, ge=0.0, le=1.0)
+    P2_PREPARATION_MAX_CANDIDATES_V1: int = Field(default=3, ge=1, le=5)
+    P2_PREPARATION_MAX_LOOKAHEAD_V1: int = Field(default=1, ge=0, le=1)
+    P2_PREPARATION_MAX_SOURCE_CHUNKS_V1: int = Field(default=12, ge=1, le=24)
+
     # Private S3-compatible storage (Supabase Storage production endpoint).
     STORAGE_BUCKET: str = "neurolearn-sources"
     STORAGE_S3_ENDPOINT: str = ""
@@ -109,6 +119,8 @@ class Settings(BaseSettings):
             raise ValueError("JOB_LEASE_SECONDS_V1 must exceed JOB_HEARTBEAT_SECONDS_V1")
         if self.WORKER_TASK_TIME_LIMIT_SECONDS_V1 <= self.WORKER_TASK_SOFT_TIME_LIMIT_SECONDS_V1:
             raise ValueError("WORKER_TASK_TIME_LIMIT_SECONDS_V1 must exceed the soft time limit")
+        if self.P2_ASSESSMENT_DEFAULT_QUESTION_COUNT_V1 > self.P2_ASSESSMENT_MAX_QUESTION_COUNT_V1:
+            raise ValueError("P2 assessment default question count must not exceed its maximum")
         return self
 
     model_config = ConfigDict(

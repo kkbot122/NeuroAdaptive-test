@@ -1,6 +1,8 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -8,16 +10,24 @@ from app.db.session import get_db
 from app.modules.auth.models import User
 from app.modules.learning.schemas import (
     ActivityProgressIn,
+    ActivityContentResponseOut,
     AnswerIn,
     AssessmentSessionOut,
     LearningActivityOut,
     LearningStateOut,
+    PresentationFormat,
 )
 from app.modules.learning.service import (
     AssessmentUnavailable,
     LearningConflict,
     LearningNotFound,
     LearningService,
+)
+from app.modules.preparation.dependencies import get_preparation_service as _preparation_service
+from app.modules.preparation.service import (
+    ActivityPreparationService,
+    PreparationConflict,
+    PreparationNotFound,
 )
 from app.services.providers import embedding_gateway, generation_gateway
 
@@ -32,6 +42,10 @@ def _raise_learning_error(exc: Exception) -> None:
     if isinstance(exc, LearningNotFound):
         raise HTTPException(status_code=404, detail="Learning resource not found") from exc
     if isinstance(exc, (LearningConflict, AssessmentUnavailable)):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, PreparationNotFound):
+        raise HTTPException(status_code=404, detail="Learning resource not found") from exc
+    if isinstance(exc, PreparationConflict):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     raise exc
 
@@ -53,10 +67,15 @@ def select_or_resume_activity(
     course_id: UUID,
     user: User = Depends(get_current_user),
     service: LearningService = Depends(_service),
+    preparation: ActivityPreparationService = Depends(_preparation_service),
 ):
     try:
-        return service.select_or_resume(course_id, user.id)
-    except (LearningNotFound, LearningConflict) as exc:
+        activity = service.select_or_resume(course_id, user.id)
+        if preparation is not None and activity["lesson_id"] and activity["activity_type"] in {"NEW_LESSON", "RESUME_INTERRUPTED"}:
+            preparation.request_activity(course_id, activity["id"], user.id)
+            return service.get_activity(course_id, activity["id"], user.id)
+        return activity
+    except (LearningNotFound, LearningConflict, PreparationNotFound, PreparationConflict) as exc:
         _raise_learning_error(exc)
 
 
@@ -66,10 +85,60 @@ def get_activity(
     activity_id: UUID,
     user: User = Depends(get_current_user),
     service: LearningService = Depends(_service),
+    preparation: ActivityPreparationService = Depends(_preparation_service),
 ):
     try:
+        activity = service.get_activity(course_id, activity_id, user.id)
+        if preparation is not None and activity["lesson_id"] and activity["activity_type"] in {"NEW_LESSON", "RESUME_INTERRUPTED"}:
+            preparation.request_activity(course_id, activity_id, user.id)
+            return service.get_activity(course_id, activity_id, user.id)
+        return activity
+    except (LearningNotFound, LearningConflict, PreparationNotFound, PreparationConflict) as exc:
+        _raise_learning_error(exc)
+
+
+@router.post(
+    "/courses/{course_id}/activities/{activity_id}/preparation/retry",
+    response_model=LearningActivityOut,
+    response_model_exclude_none=True,
+)
+def retry_activity_preparation(
+    course_id: UUID,
+    activity_id: UUID,
+    format: PresentationFormat | None = None,
+    user: User = Depends(get_current_user),
+    service: LearningService = Depends(_service),
+    preparation: ActivityPreparationService = Depends(_preparation_service),
+):
+    try:
+        if preparation is None:
+            raise HTTPException(status_code=409, detail="Preparation is unavailable")
+        preparation.retry(course_id, activity_id, user.id, format)
         return service.get_activity(course_id, activity_id, user.id)
-    except (LearningNotFound, LearningConflict) as exc:
+    except (LearningNotFound, LearningConflict, PreparationNotFound, PreparationConflict) as exc:
+        _raise_learning_error(exc)
+
+
+@router.get(
+    "/courses/{course_id}/activities/{activity_id}/content",
+    response_model=ActivityContentResponseOut,
+    response_model_exclude_none=True,
+    responses={202: {"model": ActivityContentResponseOut, "description": "Preparation is pending or running"}},
+)
+def get_prepared_activity_content(
+    course_id: UUID,
+    activity_id: UUID,
+    format: PresentationFormat = "detailed",
+    user: User = Depends(get_current_user),
+    preparation: ActivityPreparationService = Depends(_preparation_service),
+):
+    try:
+        if preparation is None:
+            raise PreparationConflict("Preparation is unavailable")
+        result = preparation.content_response(course_id, activity_id, user.id, format)
+        status_code = 200 if result["status"] in {"READY", "RECOVERABLE_FAILURE"} else 202
+        return JSONResponse(status_code=status_code, content=jsonable_encoder(result))
+    except (PreparationNotFound, PreparationConflict) as exc:
         _raise_learning_error(exc)
 
 
@@ -116,10 +185,15 @@ def start_activity_assessment(
     activity_id: UUID,
     user: User = Depends(get_current_user),
     service: LearningService = Depends(_service),
+    preparation: ActivityPreparationService = Depends(_preparation_service),
 ):
     try:
+        if preparation is not None:
+            activity = service.get_activity(course_id, activity_id, user.id)
+            if activity["lesson_id"] is not None:
+                preparation.require_assessment_ready(course_id, activity_id, user.id)
         return service.start_activity_assessment(course_id, activity_id, user.id)
-    except (LearningNotFound, LearningConflict, AssessmentUnavailable) as exc:
+    except (LearningNotFound, LearningConflict, AssessmentUnavailable, PreparationNotFound, PreparationConflict) as exc:
         _raise_learning_error(exc)
 
 

@@ -1,8 +1,8 @@
 # NeuroLearn product plan
 
-Status: agreed product direction. P0 repository configuration and P1 lifecycle contracts
-are implemented locally; hosted deployment and runtime pass conditions have not been
-demonstrated. Date: 2026-10-07.
+Status: agreed product direction. P0 repository configuration and P1/P2 learning
+contracts are implemented locally; hosted deployment and runtime pass conditions have
+not been demonstrated. Date: 2026-10-08.
 
 ## Read in this order
 
@@ -12,6 +12,7 @@ demonstrated. Date: 2026-10-07.
 | [screens.md](screens.md) | What appears on each screen, and what actions are available? |
 | [learning-rules.md](learning-rules.md) | How do teaching, assessment, mastery, and selection behave? |
 | [p1-lifecycle-contract.md](p1-lifecycle-contract.md) | What durable P1 states, API payloads, and P2 seams are implemented? |
+| [p2-grounded-preparation-contract.md](p2-grounded-preparation-contract.md) | How are first-activity content and lesson MCQs prepared, validated, and reused? |
 | [implementation-gap.md](implementation-gap.md) | What can we reuse, and what is missing? |
 | [build-plan.md](build-plan.md) | What should we implement first, and how do we demonstrate it? |
 
@@ -103,25 +104,26 @@ Demo both a real prepared course and a fresh upload through the production path.
 | Decision | Must be settled before |
 | --- | --- |
 | Mastery bands, evidence-strength labels, completion criteria, and decay policy | Progress/selection acceptance |
-| Question count, rubric scoring, difficulty, and fresh-question checks | Assessment release |
+| Short-answer rubric and review policy; calibrated mastery/selection rules | P3–P5 policy acceptance |
 | Reliable cross-course concept matching and evidence reuse | Linked-course integration |
 | Missing-prerequisite detection and supporting evidence for warnings | Prerequisite-warning release |
 | Reviewer access, review operations, retention, and correction propagation | Report-grading-issue release |
 | What ends an activity whose assessment stays unavailable | Full recovery acceptance |
-| Preparation limits, AI budgets, job timeouts, fair capacity, and retry bounds | Worker/deployment acceptance |
+| Hosted worker capacity, cross-process concurrency, and operational AI limits | Hosted worker acceptance |
 | Provider eligibility, region/network configuration, and storage credentials | Hosted verification |
-| Retention/deletion details and complete answer claim coverage | Safeguard acceptance |
+| Retention/deletion details for new entities and complete short-answer claim coverage | Safeguard acceptance |
 
-Existing numeric constants are unvalidated defaults, not approved calibration.
-Future tunable numbers need named, versioned, configurable policies.
+P2 defaults are approved for implementation, but unvalidated. They are named,
+versioned, configurable policies in the P2 contract. They do not change mastery
+thresholds, decay, or recommendation scoring. Other numeric defaults are unvalidated;
+future tunable numbers need named, versioned, configurable policies.
 
 ## Scope and authority
 
-This folder records approved product/architecture decisions, not authorization to
-begin implementation or evidence that they exist. Operational rules for migrations,
-contracts, ownership, and honest reporting still apply. P1 implementation status and
-executed local checks are recorded in [p1-lifecycle-contract.md](p1-lifecycle-contract.md)
-and [implementation-gap.md](implementation-gap.md); neither is a deployment claim.
+This folder records approved product/architecture decisions and implementation evidence;
+it is not a deployment claim. Operational rules for migrations, contracts, ownership,
+and honest reporting still apply. P1 and P2 status/checks are recorded in their contracts
+and [implementation-gap.md](implementation-gap.md).
 
 Explicit scope revisions: linked-course grounding/evidence, visible factual selection
 reasons, replacement before publication, support checks for all factual claims, and

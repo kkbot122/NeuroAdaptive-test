@@ -3,9 +3,9 @@
 Agreed product and safeguard behavior. Numeric policies and implementation details
 remain open where noted in [README.md](README.md).
 
-P1's implemented state and API contract is in [p1-lifecycle-contract.md](p1-lifecycle-contract.md).
-The rules below remain the agreed product direction; the contract identifies the subset
-currently implemented and the pieces that await later work.
+P1 and P2 implemented behavior is in [p1-lifecycle-contract.md](p1-lifecycle-contract.md)
+and [p2-grounded-preparation-contract.md](p2-grounded-preparation-contract.md). The
+rules below identify implemented behavior and pieces that await later work.
 
 ## Activities
 
@@ -37,12 +37,18 @@ must have honest recovery; the ultimate exit policy remains open.
 
 ## Assessment and evidence
 
-- MCQ and short answer only in the planned product. Short sets cover the activity's
-  concepts; count visible before starting. Exact size is undecided.
+- P2 implements lesson MCQs through the existing P1 fixed-session lifecycle. Its
+  approved, unvalidated policy is 5 questions by default, increasing to cover each
+  taught concept, capped at 8 (`P2_ASSESSMENT_*_V1`). Lessons exceeding the bound
+  remain recoverably unavailable.
 - Persist a fixed set per assessment; one confirmed answer per question. No hints or
   same-question retries. Transport/grading retries reuse the saved answer.
-- Questions, expected answers, rubrics, and feedback need supporting course passages.
-  Check freshness against earlier questions; the duplicate policy is still open.
+- P2 MCQ correctness is binary with difficulty 0.5 (`P2_MCQ_DEFAULT_DIFFICULTY_V1`);
+  both are unvalidated defaults. Mastery formulas and recommendation scoring are
+  unchanged.
+- Questions, expected answers, explanations, and feedback need supporting course
+  passages. P2 rejects normalized duplicate prompts within the course version and
+  never assigns diagnostic questions to a lesson assessment.
 - Correctness and explanations appear after all questions are submitted. MCQ comparison
   is server-side; short answer uses an automated rubric judgment that can be wrong.
 - Grading failure stores Awaiting grading, not incorrect. Evidence enters mastery once
@@ -87,8 +93,10 @@ must have honest recovery; the ultimate exit policy remains open.
   Redis handles delivery/coordination, not authoritative learning records.
 - Prioritize waiting-student work, first-course readiness, then bounded lookahead.
   Reserve capacity so speculative generation cannot crowd out interactive work.
-- Prepare first lesson/assessment early; do not wait for every variant/lesson. Publish
-  validated outlines only; start studying when the first activity is ready.
+- P2 prepares the selected first lesson and assessment after the validated outline is
+  published; the student can inspect/publish the outline while preparation runs.
+  Studying starts when the first activity is ready, without waiting for all
+  lessons/formats. The default format comes first; other formats prepare on demand.
 - Cache validated artifacts/variants with provenance; reuse only matching course/source
   versions, concepts, and formats. Resume uses fixed sets; follow-up needs fresh questions.
 - Use current-course or explicitly linked owner-authorized passages only. Uploaded/
@@ -96,10 +104,15 @@ must have honest recovery; the ultimate exit policy remains open.
 - Check every factual claim's citation ownership/existence and semantic support before
   display. Strip unsupported claims; abstain if the remainder cannot adequately answer.
   Structural checks alone are insufficient; all displayed factual text must be covered.
-- Bounded retries stay on the configured provider, then pause with recovery. Outages/
+- P2 permits three candidates per stage (`P2_PREPARATION_MAX_CANDIDATES_V1`), then
+  exposes a retry from the failed stage. One content-only next lesson may be prepared
+  at lower priority after first readiness (`P2_PREPARATION_MAX_LOOKAHEAD_V1`). These
+  are unvalidated bounds.
+- Bounded retries stay on the configured provider, then pause with recovery. P2 counts
+  each worker generation/validation request and candidate retry against the existing
+  daily call-count budget. This is request accounting, not token accounting; deployed
+  cross-worker capacity and actual provider usage remain to be verified. Outages or
   exhausted allowances preserve saved content/progress; ungraded answers stay pending.
-  Account for actual provider work including preparation, retries, and validation;
-  accounting and limits need an explicit policy.
 - Keep required learning evidence/progress/decisions when optional telemetry is disabled.
   Reading time and interaction analytics are optional, not mastery evidence.
 

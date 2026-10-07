@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.modules.adaptation.models import AdaptationDecision
 from app.modules.adaptation.service import AdaptationNotFound, AdaptationService
 from app.modules.courses.models import Course, CourseStatus
@@ -26,6 +27,7 @@ from app.modules.learning.models import (
 from app.modules.mastery.grading import grade_attempt
 from app.modules.mastery.models import Question, QuestionAttempt, QuestionConcept
 from app.modules.mastery.service import MasteryNotFound, MasteryService
+from app.modules.preparation.models import ActivityPreparation, PreparationStatus, PreparedActivityQuestion, QuestionSource
 from app.services.embedding.gateway import EmbeddingGateway
 from app.services.generation.gateway import GenerationGateway
 
@@ -151,6 +153,26 @@ class LearningService:
         if len(valid_targets) != len(set(target_ids)):
             raise LearningNotFound(str(activity.id))
         session = self._session_for_activity(activity.id)
+        preparation = (
+            self.db.query(ActivityPreparation)
+            .filter(
+                ActivityPreparation.activity_id == activity.id,
+                ActivityPreparation.include_assessment.is_(True),
+            )
+            .order_by(ActivityPreparation.created_at.asc())
+            .first()
+        )
+        prepared_count = (
+            self.db.query(PreparedActivityQuestion.id)
+            .filter(PreparedActivityQuestion.preparation_id == preparation.id)
+            .count()
+            if preparation is not None
+            else 0
+        )
+        expected_prepared_count = max(
+            settings.P2_ASSESSMENT_DEFAULT_QUESTION_COUNT_V1,
+            len(activity.target_concept_ids or []),
+        )
         return {
             "id": activity.id,
             "course_version_id": activity.course_version_id,
@@ -164,6 +186,18 @@ class LearningService:
             "reading_position": activity.reading_position,
             "reading_completed_at": activity.reading_completed_at,
             "assessment_session_id": session.id if session else None,
+            "preparation": None if preparation is None else {
+                "id": preparation.id,
+                "status": preparation.status,
+                "stage": preparation.stage,
+                "progress": preparation.progress,
+                "error_category": preparation.error_category,
+                "content_ready": preparation.content_artifact_id is not None,
+                "assessment_ready": preparation is not None
+                and preparation.status == PreparationStatus.READY
+                and prepared_count == expected_prepared_count,
+                "updated_at": preparation.updated_at,
+            },
         }
 
     def _owned_activity(self, course_id: UUID, activity_id: UUID, owner_id: int, *, lock: bool = False):
@@ -208,6 +242,48 @@ class LearningService:
         concept_ids = [UUID(item) if isinstance(item, str) else item for item in activity.target_concept_ids]
         if not concept_ids:
             return []
+        preparation = (
+            self.db.query(ActivityPreparation)
+            .filter(
+                ActivityPreparation.activity_id == activity.id,
+                ActivityPreparation.include_assessment.is_(True),
+            )
+            .order_by(ActivityPreparation.created_at.asc())
+            .first()
+        )
+        if preparation is not None:
+            if preparation.status != PreparationStatus.READY:
+                return []
+            prepared_items = (
+                self.db.query(PreparedActivityQuestion, Question)
+                .join(Question, Question.id == PreparedActivityQuestion.question_id)
+                .filter(
+                    PreparedActivityQuestion.preparation_id == preparation.id,
+                    Question.owner_id == activity.owner_id,
+                    Question.course_id == activity.course_id,
+                    Question.course_version_id == activity.course_version_id,
+                    Question.version == PreparedActivityQuestion.question_version,
+                    Question.is_diagnostic == 0,
+                )
+                .order_by(PreparedActivityQuestion.position)
+                .all()
+            )
+            expected_count = self.db.query(PreparedActivityQuestion.id).filter_by(
+                preparation_id=preparation.id
+            ).count()
+            if len(prepared_items) != expected_count:
+                return []
+            target_set = set(concept_ids)
+            for _, question in prepared_items:
+                question_concepts = {
+                    item[0]
+                    for item in self.db.query(QuestionConcept.concept_id)
+                    .filter(QuestionConcept.question_id == question.id)
+                    .all()
+                }
+                if not question_concepts or not question_concepts.issubset(target_set):
+                    return []
+            return [question for _, question in prepared_items]
         query = self.db.query(Question).join(QuestionConcept).filter(
             Question.course_id == activity.course_id,
             Question.course_version_id == activity.course_version_id,
@@ -797,10 +873,19 @@ class LearningService:
             attempt = attempts.get(assessment_question.id)
             result = None
             if session.status == AssessmentStatus.SUBMITTED.value:
+                source_ids = [
+                    row[0]
+                    for row in self.db.query(QuestionSource.chunk_id)
+                    .filter(QuestionSource.question_id == question.id)
+                    .order_by(QuestionSource.chunk_id)
+                    .all()
+                ]
                 result = {
                     "correctness": attempt.correctness if attempt else None,
                     "expected_answer": question.correct_answer,
                     "rubric": question.rubric,
+                    "explanation": question.explanation,
+                    "source_chunk_ids": source_ids,
                 }
             question_out.append(
                 {

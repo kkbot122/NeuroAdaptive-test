@@ -3,6 +3,7 @@ Privacy (consent degradation, account deletion, presentation-affinity
 reset) and audit logging, exercised end to end -- not just implemented.
 """
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -10,10 +11,18 @@ from app.modules.abuse.models import AIUsageDaily
 from app.modules.adaptation.models import AdaptationDecision, PresentationAffinity
 from app.modules.audit.models import AuditLog
 from app.modules.courses.models import Course
-from app.modules.curriculum.models import Concept, CourseVersion, CourseVersionStatus
+from app.modules.curriculum.models import Concept, CourseVersion, CourseVersionStatus, Lesson, Module
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
-from app.modules.mastery.models import MasteryEvent
+from app.modules.learning.models import ActivityStatus, LearningActivity
+from app.modules.mastery.models import MasteryEvent, Question
+from app.modules.preparation.models import (
+    ActivityPreparation,
+    LessonContentArtifact,
+    LessonContentCitation,
+    PreparedActivityQuestion,
+    QuestionSource,
+)
 from tests.conftest import auth_headers
 
 
@@ -127,6 +136,109 @@ def owner_with_full_footprint(db_session, owner):
 
 
 class TestAccountDeletion:
+    def test_deletion_removes_p2_preparation_content_and_question_provenance(
+        self, client, owner, db_session, owner_with_full_footprint
+    ):
+        course, concept = owner_with_full_footprint
+        version = db_session.query(CourseVersion).filter_by(course_id=course.id).one()
+        chunk = db_session.query(Chunk).filter_by(course_id=course.id).one()
+        module = Module(course_version_id=version.id, position=0, title="Module")
+        db_session.add(module)
+        db_session.flush()
+        lesson = Lesson(module_id=module.id, position=0, title="Lesson", objective="Teach the concept")
+        db_session.add(lesson)
+        db_session.flush()
+        activity = LearningActivity(
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            activity_type="NEW_LESSON",
+            target_concept_ids=[str(concept.id)],
+            lesson_id=lesson.id,
+            status=ActivityStatus.READY.value,
+            presentation_format="detailed",
+        )
+        db_session.add(activity)
+        db_session.flush()
+        artifact = LessonContentArtifact(
+            artifact_key="a" * 64,
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            lesson_id=lesson.id,
+            source_fingerprint="b" * 64,
+            curriculum_fingerprint="c" * 64,
+            presentation_format="detailed",
+            sections={"objective": [], "explanation": [], "example": [], "recap": []},
+            source_chunk_ids=[str(chunk.id)],
+            model_id="fixture-model",
+            validation_model_id="fixture-model",
+            prompt_version="p2-lesson-content-v1",
+            schema_version="p2-lesson-content-schema-v1",
+            validation_policy_version="p2-grounding-validation-v1",
+            validated_at=datetime.now(timezone.utc),
+        )
+        db_session.add(artifact)
+        db_session.flush()
+        preparation = ActivityPreparation(
+            preparation_key=f"activity:{activity.id}:default",
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            activity_id=activity.id,
+            lesson_id=lesson.id,
+            presentation_format="detailed",
+            include_assessment=True,
+            status="READY",
+            stage="COMPLETE",
+            progress=100,
+            artifact_keys={"lesson_content": str(artifact.id)},
+            content_artifact_id=artifact.id,
+        )
+        question = Question(
+            course_id=course.id,
+            course_version_id=version.id,
+            owner_id=owner.id,
+            question_type="MCQ",
+            prompt="Which answer is supported by the source passage?",
+            options=["Supported", "Other A", "Other B", "Other C"],
+            correct_answer="Supported",
+            explanation="The source passage supports this answer.",
+            content_hash="d" * 64,
+            schema_version="p2-lesson-mcq-schema-v1",
+            validation_policy_version="p2-grounding-validation-v1",
+            difficulty=0.5,
+            is_diagnostic=0,
+            model_id="fixture-model",
+            prompt_version="p2-lesson-mcq-v1",
+        )
+        db_session.add_all([preparation, question])
+        db_session.flush()
+        db_session.add_all(
+            [
+                LessonContentCitation(artifact_id=artifact.id, chunk_id=chunk.id),
+                PreparedActivityQuestion(
+                    preparation_id=preparation.id,
+                    question_id=question.id,
+                    question_version=question.version,
+                    position=0,
+                ),
+                QuestionSource(question_id=question.id, chunk_id=chunk.id),
+            ]
+        )
+        db_session.commit()
+        preparation_id = preparation.id
+        artifact_id = artifact.id
+        question_id = question.id
+
+        response = client.delete("/api/v1/me", headers=auth_headers(owner.email))
+        assert response.status_code == 202
+        assert db_session.query(ActivityPreparation).filter_by(id=preparation_id).count() == 0
+        assert db_session.query(LessonContentArtifact).filter_by(id=artifact_id).count() == 0
+        assert db_session.query(LessonContentCitation).filter_by(artifact_id=artifact_id).count() == 0
+        assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=preparation_id).count() == 0
+        assert db_session.query(QuestionSource).filter_by(question_id=question_id).count() == 0
+
     def test_deletion_cascades_and_a_refetch_is_404(
         self, client, owner, db_session, owner_with_full_footprint
     ):

@@ -232,6 +232,7 @@ def test_existing_course_flow_through_http_and_real_postgres(pg_engine):
     from app.main import app
     from app.db.session import get_db
     from app.modules.jobs.router import _service as job_dependency, _dispatcher
+    from app.modules.preparation.dependencies import get_preparation_service as preparation_dependency
     from app.modules.tutor.router import _service as tutor_dependency
     from app.modules.tutor.service import TutorService
     from app.modules.documents.chunk_models import Chunk
@@ -256,7 +257,7 @@ def test_existing_course_flow_through_http_and_real_postgres(pg_engine):
             tutor_generation = FakeGenerationGateway().set_default(answer)
             return TutorService(db, tutor_generation, FakeEmbeddingGateway(3072), PgVectorStore(db),
                 cheap_generation=FakeGenerationGateway().set_default('{"supported": true}'))
-        app.dependency_overrides.update({get_db: database, job_dependency: job_service, _dispatcher: Inline, tutor_dependency: tutor_service})
+        app.dependency_overrides.update({get_db: database, job_dependency: job_service, _dispatcher: Inline, tutor_dependency: tutor_service, preparation_dependency: lambda: None})
         try:
             with TestClient(app) as client:
                 headers = auth_headers(email)

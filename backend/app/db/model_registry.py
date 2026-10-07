@@ -20,3 +20,4 @@ from app.modules.tutor import models as tutor_models
 from app.modules.abuse import models as abuse_models
 from app.modules.audit import models as audit_models
 from app.modules.evaluation import models as evaluation_models
+from app.modules.preparation import models as preparation_models

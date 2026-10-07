@@ -10,8 +10,9 @@ from app.services.generation.gateway import GenerationError, GenerationGateway
 
 
 class GeminiEntailmentChecker:
-    def __init__(self, generation: GenerationGateway):
+    def __init__(self, generation: GenerationGateway, *, raise_on_error: bool = False):
         self.generation = generation
+        self.raise_on_error = raise_on_error
 
     def __call__(self, claim_text: str, chunk_text: str) -> bool:
         prompt = (
@@ -25,9 +26,18 @@ class GeminiEntailmentChecker:
             if text.startswith("```"):
                 text = text.split("\n", 1)[1] if "\n" in text else ""
                 text = text[:-3] if text.endswith("```") else text
-            return json.loads(text.strip())["supported"] is True
-        except (GenerationError, json.JSONDecodeError, KeyError, ValueError, TypeError, AttributeError):
-            # An unparseable or failed entailment check is treated as
-            # unsupported -- fail closed, never let an unverifiable claim
-            # through as if it had passed.
+            supported = json.loads(text.strip())["supported"]
+            if type(supported) is not bool:
+                raise ValueError("Entailment response must contain a boolean")
+            return supported
+        except (GenerationError, json.JSONDecodeError, KeyError, ValueError, TypeError, AttributeError) as exc:
+            # Legacy tutor validation treats unavailable checks as unsupported.
+            # Preparation uses strict mode so it can retry instead of treating
+            # an unchecked distractor as evidence that the option is false.
+            if self.raise_on_error:
+                raise EntailmentUnavailable from exc
             return False
+
+
+class EntailmentUnavailable(Exception):
+    """The semantic support check could not produce a valid boolean result."""

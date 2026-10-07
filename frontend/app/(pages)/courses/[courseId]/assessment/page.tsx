@@ -3,6 +3,7 @@
 import type { components } from "@/lib/generated/api";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Brain, ArrowLeft, CheckCircle2, ChevronRight, Trophy, Loader2 } from "lucide-react";
 
 type AssessmentSession = components["schemas"]["AssessmentSessionOut"];
@@ -198,6 +199,18 @@ export default function AssessmentPage() {
                 )}
                 {question.result?.expected_answer !== undefined && (
                   <p className="mt-1 text-gray-700">Expected answer: {JSON.stringify(question.result.expected_answer)}</p>
+                )}
+                {question.result?.explanation && (
+                  <p className="mt-2 text-gray-700">Explanation: {question.result.explanation}</p>
+                )}
+                {(question.result?.source_chunk_ids?.length ?? 0) > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-x-3 text-sm font-bold text-blue-700">
+                    {question.result?.source_chunk_ids?.map((chunkId, index) => (
+                      <Link key={chunkId} href={`/courses/${courseId}/sources/${chunkId}`} className="hover:underline">
+                        Supporting source {index + 1}
+                      </Link>
+                    ))}
+                  </div>
                 )}
                 {question.result?.rubric && <p className="mt-1 text-gray-700">Rubric: {question.result.rubric.join("; ")}</p>}
                 {question.answer?.status !== "GRADED" && (

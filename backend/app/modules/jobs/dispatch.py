@@ -3,6 +3,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.modules.jobs.tasks import run_processing_job
+from app.modules.preparation.dispatch import CeleryPreparationDispatcher, PreparationDispatcher
 
 
 class JobDispatcher(Protocol):
@@ -14,3 +15,6 @@ class CeleryJobDispatcher:
 
     def enqueue(self, job_id: UUID, owner_id: int) -> None:
         run_processing_job.delay(str(job_id), owner_id)
+
+
+__all__ = ["CeleryJobDispatcher", "CeleryPreparationDispatcher", "JobDispatcher", "PreparationDispatcher"]

@@ -91,23 +91,22 @@ question set, ownership, correctness, expected answers, or rubrics. The legacy
 to this session response. The legacy standalone attempt endpoint returns 404
 for questions assigned to a fixed session so it cannot bypass set submission.
 
-## P2 handoff and limits
+## P2 integration and later limits
 
-P2 can create activity/version-scoped persisted questions, then call the
-existing activity assessment lifecycle to snapshot their immutable IDs,
-versions, and order. It can prepare asynchronously by advancing activities
-through the reserved states, while preserving owner/course/version checks and
-the answer → grading → evidence transaction boundary. It can rely on
-idempotent answer records and the existing `MasteryService.record_graded_attempt`
-path for one attempt/evidence write per assessment question.
+P2 now creates activity/version-scoped persisted MCQs, then uses this lifecycle to
+snapshot their immutable IDs, versions, and order. It prepares content asynchronously
+through the existing activity states and preserves owner/course/version checks and the
+answer → grading → evidence transaction boundary. P3 can rely on idempotent answer
+records and the existing `MasteryService.record_graded_attempt` path for one
+attempt/evidence write per assessment question. See
+[P2 grounded preparation](p2-grounded-preparation-contract.md) for defaults, API,
+migration, tests, and limits.
 
-P1 deliberately does not add new question generation, recommendation scoring,
-short-answer AI grading workers, linked courses, calibrated mastery/completion
-policies, or a redesigned learning UI. Activity assessment currently selects
-from saved questions matching the activity's target concepts and course
-version. Short-answer grading can fail and persist `GRADING_FAILED`; durable
-worker-based retries belong to a later milestone. Deployment, provider behavior,
-and production migration remain unverified and untouched.
+P2 does not add recommendation scoring, short-answer AI grading workers, linked
+courses, calibrated mastery/completion policies, or a redesigned learning UI.
+Short-answer grading can fail and persist `GRADING_FAILED`; durable worker-based retries
+belong to a later milestone. Deployment, live provider behavior, and production
+migration remain unverified and untouched.
 
 ## Local verification executed
 

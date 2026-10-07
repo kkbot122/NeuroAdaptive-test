@@ -5,7 +5,6 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { components } from "@/lib/generated/api";
 import { StateWrapper } from "@/components/StateWrapper";
-import { MarkdownMessage } from "@/components/MarkdownMessage";
 import { Brain, ArrowLeft, Settings, CheckCircle, Loader2 } from "lucide-react";
 
 // Keep the persisted activity format and content endpoint in sync with the
@@ -21,8 +20,6 @@ const FORMATS = [
   "quiz_first",
 ] as const;
 type Format = (typeof FORMATS)[number];
-
-type Citation = components["schemas"]["CitationOut"];
 
 export default function StudyLessonPage() {
   const params = useParams();
@@ -44,10 +41,9 @@ export default function StudyLessonPage() {
   const [conceptNames, setConceptNames] = useState<Record<string, string>>({});
   const [format, setFormat] = useState<Format>(FORMATS.includes(initialFormat) ? initialFormat : "detailed");
 
-  const [contentMarkdown, setContentMarkdown] = useState<string | null>(null);
-  const [contentFormat, setContentFormat] = useState<Format | null>(null);
-  const [citations, setCitations] = useState<Citation[]>([]);
-  const [groundingMode, setGroundingMode] = useState<string | null>(null);
+  const [content, setContent] = useState<components["schemas"]["PreparedLessonContentOut"] | null>(null);
+  const [preparation, setPreparation] = useState<components["schemas"]["PreparationOut"] | null>(null);
+  const [contentError, setContentError] = useState<string | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
   const [readingPosition, setReadingPosition] = useState(0);
   const [progressError, setProgressError] = useState<string | null>(null);
@@ -84,6 +80,7 @@ export default function StudyLessonPage() {
       if (activityRes?.ok) {
         const activity: components["schemas"]["LearningActivityOut"] = await activityRes.json();
         setReadingPosition(activity.reading_position);
+        setPreparation(activity.preparation ?? null);
         if (FORMATS.includes(activity.presentation_format as Format)) {
           setFormat(activity.presentation_format as Format);
         }
@@ -107,25 +104,41 @@ export default function StudyLessonPage() {
   }, [courseId, lessonId, activityId, setIsLoading, setIsError, setErrorMsg, setCourse, setLesson, setConceptNames]);
 
   const fetchContent = useCallback(async (fmt: Format) => {
+    if (!activityId) {
+      setContent(null);
+      setContentError("Open this lesson from Continue studying so its saved activity content can load.");
+      return;
+    }
     setIsContentLoading(true);
     try {
-      const res = await fetch(`/api/v1/courses/${courseId}/lessons/${lessonId}/content?format=${fmt}`);
-      if (res.ok) {
-        const data: components["schemas"]["LessonContentOut"] = await res.json();
-        setContentMarkdown(data.content_markdown);
-        setContentFormat(fmt);
-        setCitations(data.citations || []);
-        setGroundingMode(data.grounding_mode);
+      const res = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/content?format=${fmt}`, {
+        cache: "no-store",
+      });
+      const data: components["schemas"]["ActivityContentResponseOut"] = await res.json();
+      setPreparation(data.preparation ?? null);
+      if (res.ok && data.status === "READY" && data.content) {
+        setContent(data.content);
+        setContentError(data.preparation?.status === "RECOVERABLE_FAILURE"
+          ? "Preparation paused. Your saved lesson is available, but its assessment or requested format needs a retry."
+          : null);
+      } else if (data.status === "RECOVERABLE_FAILURE") {
+        setContent(null);
+        setContentError("Preparation paused. Your saved course is safe. Retry when you are ready.");
+      } else if (!res.ok && res.status !== 202) {
+        setContent(null);
+        setContentError("Saved lesson content is unavailable right now. Try again shortly.");
       } else {
-        setContentMarkdown(null);
+        setContent(null);
+        setContentError(null);
       }
     } catch (err) {
-      console.error("Failed to load lesson content", err);
-      setContentMarkdown(null);
+      console.error("Failed to load prepared lesson content", err);
+      setContent(null);
+      setContentError("Saved lesson content is unavailable right now. Try again shortly.");
     } finally {
       setIsContentLoading(false);
     }
-  }, [courseId, lessonId, setIsContentLoading, setContentMarkdown, setCitations, setGroundingMode]);
+  }, [activityId, courseId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -142,6 +155,12 @@ export default function StudyLessonPage() {
   }, [courseId, lessonId, format, fetchContent]);
 
   useEffect(() => {
+    if (!preparation || !["PENDING", "RUNNING"].includes(preparation.status)) return;
+    const timer = window.setTimeout(() => void fetchContent(format), 2000);
+    return () => window.clearTimeout(timer);
+  }, [preparation, format, fetchContent]);
+
+  useEffect(() => {
     formatRef.current = format;
   }, [format]);
 
@@ -150,12 +169,26 @@ export default function StudyLessonPage() {
       readingPosition > 0 &&
       !isLoading &&
       !isContentLoading &&
-      contentMarkdown !== null &&
-      contentFormat === format
+      content !== null
     ) {
       window.scrollTo(0, readingPosition);
     }
-  }, [readingPosition, isLoading, isContentLoading, contentMarkdown, contentFormat, format]);
+  }, [readingPosition, isLoading, isContentLoading, content]);
+
+  const retryPreparation = async () => {
+    if (!activityId) return;
+    setContentError(null);
+    try {
+      const response = await fetch(
+        `/api/v1/courses/${courseId}/activities/${activityId}/preparation/retry?format=${encodeURIComponent(format)}`,
+        { method: "POST" },
+      );
+      if (!response.ok) throw new Error("Preparation could not be retried.");
+      await fetchContent(format);
+    } catch {
+      setContentError("Preparation could not be restarted. Your saved course is safe; try again shortly.");
+    }
+  };
 
   const saveProgress = useCallback(async (position: number, selectedFormat: Format, keepalive = false) => {
     if (!activityId) return;
@@ -220,6 +253,10 @@ export default function StudyLessonPage() {
 
   const handleComplete = async () => {
     if (!activityId) return;
+    if (!preparation?.assessment_ready) {
+      setProgressError("The lesson is saved. Questions are still preparing; this button will be ready when they are.");
+      return;
+    }
     try {
       await saveProgress(Math.max(0, Math.round(window.scrollY)), format);
       const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/reading-complete`, {
@@ -273,7 +310,6 @@ export default function StudyLessonPage() {
               {/* Header */}
               <div className="bg-white border-4 border-black p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] rotate-1">
                 <h1 className="text-4xl font-extrabold mb-4">{lesson.title}</h1>
-                <p className="text-xl font-medium text-gray-700">{lesson.objective}</p>
               </div>
 
               {/* Format Controls */}
@@ -299,10 +335,7 @@ export default function StudyLessonPage() {
                 </div>
               </div>
 
-              {/* Lesson Content Area -- real, grounded generation, not a
-                  placeholder: GET /courses/{id}/lessons/{lessonId}/content
-                  reuses the tutor's own retrieval + citation-validated
-                  generation pipeline. */}
+              {/* This view renders only saved, fully validated statements. */}
               <div className="bg-white border-2 border-black p-8 rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] min-h-[400px]">
                 <div className="mb-6 inline-block bg-blue-100 border-2 border-black px-3 py-1 font-bold text-sm uppercase tracking-widest shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
                   {format.replace("_", " ")} VARIANT
@@ -315,40 +348,55 @@ export default function StudyLessonPage() {
                   ))}
                 </ul>
 
-                {isContentLoading ? (
+                {isContentLoading || (preparation && ["PENDING", "RUNNING"].includes(preparation.status) && !content) ? (
                   <div className="flex items-center gap-3 p-6 bg-gray-50 border-2 border-dashed border-gray-400 rounded-lg text-gray-600 font-medium">
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Generating content grounded in your uploaded material...
+                    Preparing saved lesson content and its assessment…
                   </div>
-                ) : contentMarkdown ? (
+                ) : content ? (
                   <div>
-                    {groundingMode === "insufficient" && (
-                      <div className="mb-4 inline-block bg-orange-100 border-2 border-orange-500 text-orange-700 px-2 py-1 text-xs font-bold rounded">
-                        UNCOVERED BY YOUR MATERIAL
+                    {preparation?.status === "RECOVERABLE_FAILURE" && (
+                      <div className="mb-6 rounded-lg border-2 border-orange-400 bg-orange-50 p-4 font-medium text-orange-900">
+                        <p>{contentError || "Assessment preparation paused. Your saved lesson is still available."}</p>
+                        <button onClick={() => void retryPreparation()} className="mt-3 border-2 border-black bg-white px-4 py-2 font-bold text-black">
+                          Retry preparation
+                        </button>
                       </div>
                     )}
-                    <MarkdownMessage content={contentMarkdown} />
-                    {citations.length > 0 && (
-                      <div className="mt-6 pt-4 border-t border-gray-200">
-                        <h4 className="text-sm font-bold text-gray-500 mb-2">Sources</h4>
-                        <ul className="space-y-1">
-                          {citations.map((c, i) => (
-                            <li key={i} className="text-xs">
-                              <Link
-                                href={`/courses/${courseId}/sources/${c.chunk_id}`}
-                                className="text-blue-600 hover:underline"
-                              >
-                                [{i + 1}] {c.claim}
-                              </Link>
-                            </li>
+                    {preparation?.status === "RUNNING" && !preparation.assessment_ready && (
+                      <div className="mb-6 flex items-center gap-3 rounded-lg border-2 border-blue-300 bg-blue-50 p-4 font-medium text-blue-900">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        Lesson saved. Assessment preparation: {preparation.progress}%.
+                      </div>
+                    )}
+                    {(["objective", "explanation", "example", "recap"] as const).map((sectionName) => (
+                      <section key={sectionName} className="mb-8 last:mb-0">
+                        <h3 className="mb-3 text-2xl font-bold capitalize">{sectionName}</h3>
+                        <div className="space-y-4 text-lg leading-relaxed text-gray-800">
+                          {(content.sections[sectionName] || []).map((statement, index) => (
+                            <div key={`${sectionName}-${index}`}>
+                              <p>{statement.text}</p>
+                              <p className="mt-1 flex flex-wrap gap-x-3 text-xs font-bold text-blue-700">
+                                {statement.citation_chunk_ids.map((chunkId, citationIndex) => (
+                                  <Link key={chunkId} href={`/courses/${courseId}/sources/${chunkId}`} className="hover:underline">
+                                    Source {citationIndex + 1}
+                                  </Link>
+                                ))}
+                              </p>
+                            </div>
                           ))}
-                        </ul>
-                      </div>
-                    )}
+                        </div>
+                      </section>
+                    ))}
                   </div>
                 ) : (
-                  <div className="p-6 bg-red-50 border-2 border-dashed border-red-300 rounded-lg text-red-600 font-medium">
-                    Could not generate content for this lesson right now.
+                  <div className="p-6 bg-orange-50 border-2 border-dashed border-orange-300 rounded-lg font-medium text-orange-900">
+                    {contentError || "Saved lesson content is not available yet."}
+                    {(preparation?.status === "RECOVERABLE_FAILURE" || contentError) && (
+                      <button onClick={() => void retryPreparation()} className="mt-4 block border-2 border-black bg-white px-4 py-2 font-bold text-black">
+                        Retry preparation
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -358,11 +406,11 @@ export default function StudyLessonPage() {
                 {progressError && <p role="status" className="text-red-700 font-bold">{progressError}</p>}
                 <button
                   onClick={() => void handleComplete()}
-                  disabled={!activityId}
+                  disabled={!activityId || !preparation?.assessment_ready}
                   className="flex items-center justify-center gap-2 bg-[#FF9F1C] hover:bg-[#ff8c00] border-2 border-black px-8 py-3 rounded-lg font-bold transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-1 active:translate-y-1 active:shadow-none"
                 >
                   <CheckCircle className="w-5 h-5" />
-                  Ready for questions
+                  {preparation?.assessment_ready ? "Ready for questions" : "Preparing questions…"}
                 </button>
               </div>
             </div>

@@ -4,6 +4,8 @@ Set P1_TEST_DATABASE_URL to a disposable PostgreSQL database URL to run these
 checks. Each test creates and drops only its own schema.
 """
 import importlib.util
+import hashlib
+import json
 import os
 import threading
 import uuid
@@ -19,8 +21,20 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
 from app.modules.auth.models import User
+from app.modules.abuse.models import AIUsageDaily
+from app.modules.abuse.service import AbuseControlService
+from app.modules.documents.chunk_models import Chunk
+from app.modules.documents.models import Document
 from app.modules.courses.models import Course, CourseStatus
-from app.modules.curriculum.models import Concept, CourseVersion, CourseVersionStatus
+from app.modules.curriculum.models import (
+    Concept,
+    ConceptSource,
+    CourseVersion,
+    CourseVersionStatus,
+    Lesson,
+    LessonConcept,
+    Module,
+)
 from app.modules.learning.models import (
     ActivityStatus,
     AnswerStatus,
@@ -33,6 +47,13 @@ from app.modules.learning.models import (
 )
 from app.modules.learning.service import LearningService
 from app.modules.mastery.models import MasteryEvent, Question, QuestionAttempt, QuestionConcept
+from app.core.problem_details import ProblemDetailException
+from app.modules.preparation.models import (
+    ActivityPreparation,
+    LessonContentArtifact,
+    PreparedActivityQuestion,
+)
+from app.modules.preparation.service import ActivityPreparationService
 from app.services.embedding.fake import FakeEmbeddingGateway
 from app.services.generation.fake import FakeGenerationGateway
 
@@ -56,6 +77,7 @@ def postgres_schema_engine():
         cursor = dbapi_connection.cursor()
         cursor.execute(f'SET search_path TO "{schema}", public')
         cursor.close()
+        dbapi_connection.commit()
 
     try:
         yield engine
@@ -233,3 +255,241 @@ def test_postgresql_submit_and_final_grading_interleave_completes_activity(postg
         assert db.query(AnswerSubmission).count() == 1
         assert db.query(QuestionAttempt).filter(QuestionAttempt.assessment_question_id.isnot(None)).count() == 1
         assert db.query(MasteryEvent).filter(MasteryEvent.question_attempt_id.isnot(None)).count() == 1
+
+
+def _load_preparation_migration():
+    path = Path(__file__).parents[2] / "alembic/versions/b2e7c19a4d63_async_grounded_preparation.py"
+    spec = importlib.util.spec_from_file_location("preparation_migration_postgres", path)
+    migration = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(migration)
+    return migration
+
+
+def test_preparation_migration_upgrades_and_downgrades_a_postgresql_schema(postgres_schema_engine):
+    metadata = MetaData()
+    Table("users", metadata, Column("id", Integer, primary_key=True))
+    for name in ("courses", "course_versions", "lessons", "chunks", "learning_activities"):
+        Table(name, metadata, Column("id", Uuid, primary_key=True))
+    Table(
+        "questions",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("course_version_id", Uuid, nullable=False),
+    )
+    metadata.create_all(postgres_schema_engine)
+    migration = _load_preparation_migration()
+    version_id = uuid.uuid4()
+
+    with postgres_schema_engine.begin() as connection:
+        context = MigrationContext.configure(connection)
+        with Operations.context(context):
+            migration.upgrade()
+        tables = set(inspect(connection).get_table_names())
+        assert {
+            "lesson_content_artifacts",
+            "lesson_content_citations",
+            "activity_preparations",
+            "prepared_activity_questions",
+            "question_sources",
+        }.issubset(tables)
+        assert "last_dispatched_at" in {
+            column["name"] for column in inspect(connection).get_columns("activity_preparations")
+        }
+        connection.execute(
+            text("INSERT INTO questions (id, course_version_id, content_hash) VALUES (:id, :version, :hash)"),
+            {"id": str(uuid.uuid4()), "version": str(version_id), "hash": "same-prompt"},
+        )
+        with pytest.raises(sa.exc.IntegrityError), connection.begin_nested():
+            connection.execute(
+                text("INSERT INTO questions (id, course_version_id, content_hash) VALUES (:id, :version, :hash)"),
+                {"id": str(uuid.uuid4()), "version": str(version_id), "hash": "same-prompt"},
+            )
+        with Operations.context(context):
+            migration.downgrade()
+        assert not {
+            "lesson_content_artifacts",
+            "lesson_content_citations",
+            "activity_preparations",
+            "prepared_activity_questions",
+            "question_sources",
+        }.intersection(set(inspect(connection).get_table_names()))
+        assert "content_hash" not in {
+            column["name"] for column in inspect(connection).get_columns("questions")
+        }
+
+
+def test_postgresql_concurrent_preparation_requests_and_workers_deduplicate_artifacts(postgres_schema_engine):
+    Base.metadata.create_all(postgres_schema_engine)
+    session_factory = sessionmaker(bind=postgres_schema_engine, expire_on_commit=False)
+    seed = session_factory()
+    source_text = "A source passage supports the first course concept and its assessment."
+    checksum = hashlib.sha256(source_text.encode()).hexdigest()
+    user = User(email=f"p2-{uuid.uuid4().hex}@example.test", full_name="P2 learner", is_active=True)
+    seed.add(user)
+    seed.flush()
+    course = Course(owner_id=user.id, title="P2 PostgreSQL", status=CourseStatus.PUBLISHED.value)
+    seed.add(course)
+    seed.flush()
+    version = CourseVersion(
+        course_id=course.id,
+        owner_id=user.id,
+        version_number=1,
+        status=CourseVersionStatus.READY.value,
+        source_fingerprint=hashlib.sha256(checksum.encode()).hexdigest(),
+    )
+    seed.add(version)
+    seed.flush()
+    course.active_version_id = version.id
+    concept = Concept(
+        course_id=course.id,
+        course_version_id=version.id,
+        owner_id=user.id,
+        canonical_key=f"p2-{uuid.uuid4().hex}",
+        name="Concurrent preparation",
+        definition="One deterministic concept for the PostgreSQL worker test.",
+        importance=0.8,
+    )
+    seed.add(concept)
+    seed.flush()
+    document = Document(
+        course_id=course.id,
+        owner_id=user.id,
+        filename="source.txt",
+        role="STUDY",
+        status="EXTRACTED",
+        storage_path=f"/tmp/{uuid.uuid4().hex}.txt",
+        size_bytes=len(source_text),
+        checksum_sha256=checksum,
+    )
+    seed.add(document)
+    seed.flush()
+    chunk = Chunk(
+        id=uuid.uuid4(),
+        document_id=document.id,
+        course_id=course.id,
+        owner_id=user.id,
+        position=0,
+        text=source_text,
+        char_count=len(source_text),
+        token_count=12,
+    )
+    seed.add(chunk)
+    seed.flush()
+    seed.add(ConceptSource(concept_id=concept.id, chunk_id=chunk.id, course_id=course.id, owner_id=user.id))
+    module = Module(course_version_id=version.id, position=0, title="Module")
+    seed.add(module)
+    seed.flush()
+    lesson = Lesson(module_id=module.id, position=0, title="Lesson", objective="Teach one concept")
+    seed.add(lesson)
+    seed.flush()
+    seed.add(LessonConcept(lesson_id=lesson.id, concept_id=concept.id, weight=1.0))
+    activity = LearningActivity(
+        owner_id=user.id,
+        course_id=course.id,
+        course_version_id=version.id,
+        activity_type="NEW_LESSON",
+        target_concept_ids=[str(concept.id)],
+        lesson_id=lesson.id,
+        status=ActivityStatus.READY.value,
+        presentation_format="detailed",
+    )
+    seed.add(activity)
+    seed.commit()
+    course_id, activity_id, owner_id = course.id, activity.id, user.id
+    concept_id, chunk_id = concept.id, chunk.id
+    seed.close()
+
+    lesson_output = {
+        "insufficient_evidence": False,
+        "objective": [{"text": "This objective states the source supported idea.", "concept_ids": [str(concept_id)], "citation_chunk_ids": [str(chunk_id)]}],
+        "explanation": [{"text": "The source explains the first concept in simple terms.", "concept_ids": [str(concept_id)], "citation_chunk_ids": [str(chunk_id)]}],
+        "example": [{"text": "This example follows the supplied source passage.", "concept_ids": [str(concept_id)], "citation_chunk_ids": [str(chunk_id)]}],
+        "recap": [{"text": "The recap repeats the source supported idea.", "concept_ids": [str(concept_id)], "citation_chunk_ids": [str(chunk_id)]}],
+    }
+    questions = []
+    for index in range(5):
+        answer = f"Supported option {index}"
+        questions.append({
+            "concept_id": str(concept_id),
+            "prompt": f"Which source supported idea is tested in question number {index}?",
+            "options": [answer, f"Distractor {index} B", f"Distractor {index} C", f"Distractor {index} D"],
+            "correct_answer": answer,
+            "explanation": "The passage directly supports this answer.",
+            "source_chunk_ids": [str(chunk_id)],
+        })
+    generation = FakeGenerationGateway().when_prompt_contains(
+        "Prepare the first lesson", json.dumps(lesson_output)
+    ).when_prompt_contains(
+        "Write exactly 5 single-answer", json.dumps({"insufficient_evidence": False, "questions": questions})
+    ).when_prompt_contains(
+        "is also a supported correct answer.", '{"supported": false}'
+    ).set_default('{"supported": true}')
+
+    class ConcurrentDispatcher:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.jobs = []
+
+        def enqueue(self, preparation_id, dispatched_owner_id, *, speculative=False):
+            with self.lock:
+                self.jobs.append((preparation_id, dispatched_owner_id, speculative))
+
+    dispatcher = ConcurrentDispatcher()
+
+    def request_preparation():
+        with session_factory() as db:
+            return ActivityPreparationService(db, generation, dispatcher).request_activity(
+                course_id, activity_id, owner_id
+            ).id
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        preparation_ids = list(pool.map(lambda _: request_preparation(), range(2)))
+    assert len(set(preparation_ids)) == 1
+    assert len(dispatcher.jobs) == 1
+    preparation_id = preparation_ids[0]
+
+    def run_preparation():
+        with session_factory() as db:
+            return ActivityPreparationService(db, generation, dispatcher).run(preparation_id, owner_id)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda _: run_preparation(), range(2)))
+    with session_factory() as db:
+        preparation = db.query(ActivityPreparation).filter_by(id=preparation_id).one()
+        assert preparation.status == "READY"
+        assert db.query(PreparedActivityQuestion).filter_by(preparation_id=preparation_id).count() == 5
+        assert db.query(Question).filter_by(course_version_id=version.id, is_diagnostic=0).count() == 5
+        assert db.query(LessonContentArtifact).filter_by(course_version_id=version.id).count() == 1
+    assert len(generation.calls) > 0
+
+
+def test_postgresql_daily_ai_budget_reservations_are_atomic(postgres_schema_engine):
+    Base.metadata.create_all(postgres_schema_engine)
+    session_factory = sessionmaker(bind=postgres_schema_engine, expire_on_commit=False)
+    with session_factory() as db:
+        user = User(email=f"quota-{uuid.uuid4().hex}@example.test", full_name="Quota", is_active=True)
+        db.add(user)
+        db.commit()
+        owner_id = user.id
+
+    workers = 20
+    budget = 7
+    barrier = threading.Barrier(workers)
+
+    def reserve_one():
+        barrier.wait(timeout=10)
+        with session_factory() as db:
+            try:
+                AbuseControlService(db).enforce_daily_budget(owner_id, budget=budget)
+                return True
+            except ProblemDetailException:
+                return False
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(lambda _index: reserve_one(), range(workers)))
+
+    assert sum(results) == budget
+    with session_factory() as db:
+        usage = db.query(AIUsageDaily).filter_by(owner_id=owner_id).one()
+        assert usage.call_count == budget

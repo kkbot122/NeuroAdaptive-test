@@ -111,6 +111,7 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     from app.modules.mastery.router import _learning_service as mastery_learning_service_dep
     from app.modules.learning.router import _service as learning_service_dep
     from app.modules.learning.service import LearningService
+    from app.modules.learning.router import _preparation_service as preparation_service_dep
     from app.modules.retrieval.router import _service as retrieval_service_dep
     from app.modules.retrieval.service import RetrievalService
     from app.modules.tutor.router import _service as tutor_service_dep
@@ -148,6 +149,9 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     app.dependency_overrides[learning_service_dep] = lambda: LearningService(
         db_session, fake_generation, fake_embeddings
     )
+    # Existing lifecycle tests exercise the P1 contracts directly. P2 tests
+    # opt into a deterministic preparation dispatcher explicitly.
+    app.dependency_overrides[preparation_service_dep] = lambda: None
     app.dependency_overrides[adaptation_service_dep] = lambda: AdaptationService(
         db_session, fake_generation, fake_embeddings
     )

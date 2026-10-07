@@ -17,7 +17,7 @@ Paths below are relative to repository root.
 | Subjects/links | Inspected `courses/models.py` has no subject/link fields | New ownership-scoped relationships and matching/evidence policy |
 | Curriculum | `curriculum/service.py` extracts concepts, builds/validates versions, creates blueprints | Reuse; blueprints are not generated lesson assessments |
 | Diagnostic | P1 persists/resumes fixed question ID/version/order sets and distinguishes saved answers from grading; small graphs may yield fewer questions than the PDF's stated minimum | Later define skip/retry policy; do not restore historical minimum counts as guarantees |
-| Lesson assessment | P1 activity sessions reuse existing questions for the saved course version and target concepts | P2 generates and persists activity-scoped questions before using the P1 session contract |
+| Lesson assessment | P1 activity sessions reuse existing questions for the saved course version and target concepts | **P2 implemented locally:** grounded MCQs are generated for the prepared activity, versioned, and attached to its fixed P1 session; see [P2 contract](p2-grounded-preparation-contract.md) |
 | Grading/evidence | P1 persists answers independently, gates feedback until set submission, retries failed grading, and deduplicates existing attempt/evidence writes | Later add durable grading workers and authorized corrections preserving original judgments |
 | Mastery | `mastery/engine.py` computes weighted prior/uncertainty/decay | Agree policies; expose honest bands/evidence strength; no calibration claim |
 | Selection | P1 persists the selected recommendation trace with one unfinished activity per owner/course and resumes it before selecting again | Later policy work may refine eligibility/scoring; do not change existing mastery thresholds in P1 |
@@ -32,8 +32,8 @@ Additional deployment gaps:
 
 | Area | Inspected evidence | Required change |
 | --- | --- | --- |
-| Workers | `backend/app/core/celery_app.py`; `jobs/tasks.py`, `dispatch.py`, `service.py`: dispatch, stages, leases/heartbeats | Preparation/grading tasks, capacity priorities, bounded lookahead, reuse, recovery checks |
-| Grounding | `tutor/validation.py` samples semantic checks; `retrieval/service.py` scopes current course | Check every factual claim; complete answer coverage; explicit linked-course retrieval |
+| Workers | `backend/app/core/celery_app.py`; jobs and preparation tasks use PostgreSQL stages/leases and Celery priority | **P2 implemented locally:** prioritized first-activity preparation, one content-only lookahead, deduplication, retry/reuse; grading-worker recovery remains later |
+| Grounding | `tutor/validation.py`; P2 typed lesson/MCQ schemas and per-claim validation | **P2 checks every displayed lesson statement and generated MCQ against current-course owned chunks.** Explicit linked-course retrieval remains P8. |
 | Hosting/storage | P0 repository config now includes production API/worker commands and private Supabase S3 uploads; no hosted behavior verified | Configure provider projects, run the controlled migration, then verify networking, credentials, storage, worker recovery, and persistence |
 | AI accounting | `abuse/service.py` counts controlled requests; some limits are process-local | Include worker/validation/retry provider work; enforce deployed cross-process budgets/concurrency |
 
@@ -112,8 +112,22 @@ cleanup; additive migration `a61c9e7d4b20`; generated OpenAPI/TypeScript contrac
 minimal learn/study/assessment consumer updates. Details and precise routes are in
 [p1-lifecycle-contract.md](p1-lifecycle-contract.md).
 
-**Still open for later milestones:** activity-scoped lesson question generation and
-asynchronous preparation, durable worker grading/recovery, new scoring policy, calibrated
-mastery/completion criteria, short-answer AI grading, and the full learning-screen design.
-Activity assessment currently uses existing persisted questions matching the activity's
-course version and target concepts. These gaps do not change the verified P1 contract.
+**Still open for later milestones:** durable worker grading/recovery, short-answer AI
+grading, calibrated mastery/completion criteria, and the full learning-screen design.
+P2 now provides activity-scoped lesson questions and asynchronous preparation. These gaps
+do not change the verified P1 contract.
+
+## P2 implementation update — 2026-10-08
+
+P2 is implemented locally on `feat/p2-grounded-preparation`. Migration
+`b2e7c19a4d63_async_grounded_preparation` adds durable preparation/content,
+citations, per-preparation question membership, question source provenance, and
+normalized-prompt uniqueness. FastAPI OpenAPI is regenerated in `backend/openapi.json`;
+generated frontend types are in `frontend/lib/generated/api.ts`. Exact behavior,
+approved defaults, API paths, verification commands/results, and remaining limits are
+in [P2 contract](p2-grounded-preparation-contract.md).
+
+The first course remains learner-owned and current-course grounded. P2 does not add
+linked-course retrieval, short-answer grading/review, new recommendation or mastery
+rules, or production migration/deployment. Hosted worker capacity and live Gemini
+behavior remain unverified.

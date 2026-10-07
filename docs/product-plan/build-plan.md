@@ -21,7 +21,7 @@ numeric and operational details remain open.
 | --- | --- | --- | --- |
 | P0 | Hosted foundation and worker/storage verification | Deployment/configuration | **Repository configuration implemented; hosted pass conditions remain unverified.** Vercel reaches Railway API; worker consumes Railway Redis tasks; API/worker access private Supabase originals; deployed identity/DB/migrations work; restart recovery demonstrated |
 | P1 | Activity/assessment lifecycle and saved progress contracts | Policy review | **Implemented locally.** Durable resume, fixed question sets, safe answer/grading states, and coverage/mastery separation; see [P1 contract](p1-lifecycle-contract.md) for checks and limits. Not deployed. |
-| P2 | Async first-activity preparation, grounded MCQ assessment, reliable submission | P1; question/citation policy | Unseen upload prioritizes validated lesson/question set; saved artifacts reused; submissions lock once; restart resumes same questions; feedback withheld until set submitted |
+| P2 | Async first-activity preparation, grounded MCQ assessment, reliable submission | P1; approved P2 defaults | **Implemented locally.** Deterministic upload → outline publish → prepared lesson/MCQs path; saved artifacts reused; feedback withheld until set submission. See [P2 contract](p2-grounded-preparation-contract.md). Not deployed. |
 | P3 | Results, evidence, progress, and next-activity integration | P0, P2; mastery policy | Deployed graded answers update relevant concepts once; reading does not; results show changes; Continue uses recorded selection/progress; bounded next-activity preparation starts |
 | P4 | Remediation, targeted practice, and challenge experiences | P3; eligibility policy | Weak/mixed/strong evidence reaches the appropriate distinct activity; fresh questions; no unsupported prerequisite teaching |
 | P5 | Short-answer grading and authorized review | P2–P3; rubric/access/retention policy | Rubric feedback has sources; failed grading remains pending; retries don't duplicate evidence; reviewer correction preserves original judgment and updates evidence once |
@@ -30,8 +30,8 @@ numeric and operational details remain open.
 | P8 | Subjects and explicitly linked earlier courses | P3; cross-course/matching policy | Unit 2 can use supported Unit 1 evidence/source links; uncertain match offers optional check; standalone path works; foreign courses inaccessible |
 | P9 | Completion, full polish, and acceptance evidence | P4–P8; completion policy | Coverage differs from mastery; sufficient evidence leads to summary and optional guided practice; no unfinished advertised action |
 
-Build MCQ end-to-end first, then add short answers and the full agreed scope. P1 is a
-repository checkpoint; later checkpoints remain outstanding. Finalize layout/styling
+Build MCQ end-to-end first, then add short answers and the full agreed scope. P1 and P2 are
+repository checkpoints; later checkpoints remain outstanding. Finalize layout/styling
 across screens after the state contracts are stable; include responsive, empty, loading,
 and recovery states.
 

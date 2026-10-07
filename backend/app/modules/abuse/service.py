@@ -10,9 +10,12 @@ per-call token usage anywhere in this codebase, and extending that
 interface is a larger change than this phase's abuse controls need to make
 first. Documented as a stated simplification, not silently substituted.
 """
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.core.problem_details import ProblemDetailException
@@ -41,32 +44,51 @@ class AbuseControlService:
         self.db = db
 
     def enforce_daily_budget(self, owner_id: int, budget: int = DAILY_AI_CALL_BUDGET) -> None:
-        """Raises a 429 problem-details error if the caller has already
-        used their daily AI-call budget; otherwise increments it. Call
-        exactly once per AI generation request, before the generation call
-        happens -- a failed generation still consumed a slot in the
-        provider's own capacity even if it didn't help the learner."""
-        today = date.today()
-        row = (
-            self.db.query(AIUsageDaily)
-            .filter(AIUsageDaily.owner_id == owner_id, AIUsageDaily.usage_date == today)
-            .first()
-        )
-        if row is None:
-            row = AIUsageDaily(owner_id=owner_id, usage_date=today, call_count=0)
-            self.db.add(row)
-            self.db.flush()
+        """Atomically reserves one daily AI-call slot or raises a 429.
 
-        if row.call_count >= budget:
+        The unique owner/date row is inserted idempotently, then a guarded
+        UPDATE performs the increment. Concurrent workers therefore cannot
+        overwrite one another or exceed the configured budget.
+        """
+        today = datetime.now(timezone.utc).date()
+        dialect = self.db.get_bind().dialect.name
+        insert = {
+            "postgresql": postgresql_insert,
+            "sqlite": sqlite_insert,
+        }.get(dialect)
+        if insert is None:
+            raise RuntimeError(f"Atomic AI budget reservation is unsupported for database dialect {dialect}")
+
+        self.db.execute(
+            insert(AIUsageDaily)
+            .values(owner_id=owner_id, usage_date=today, call_count=0)
+            .on_conflict_do_nothing(index_elements=[AIUsageDaily.owner_id, AIUsageDaily.usage_date])
+        )
+        reserved = self.db.execute(
+            update(AIUsageDaily)
+            .where(
+                AIUsageDaily.owner_id == owner_id,
+                AIUsageDaily.usage_date == today,
+                AIUsageDaily.call_count < budget,
+            )
+            .values(call_count=AIUsageDaily.call_count + 1)
+            .returning(AIUsageDaily.call_count)
+        ).scalar_one_or_none()
+        if reserved is None:
+            self.db.rollback()
+            row = (
+                self.db.query(AIUsageDaily)
+                .filter(AIUsageDaily.owner_id == owner_id, AIUsageDaily.usage_date == today)
+                .first()
+            )
+            used = row.call_count if row is not None else 0
             raise ProblemDetailException(
                 status_code=429,
                 type_="https://neurolearn.internal/problems/daily-budget-exhausted",
                 title="Daily AI Budget Exhausted",
                 detail=f"You've used your {budget}-request daily AI budget. It resets at midnight UTC.",
-                extra={"reset_at": _next_utc_midnight_iso(), "budget": budget, "used": row.call_count},
+                extra={"reset_at": _next_utc_midnight_iso(), "budget": budget, "used": used},
             )
-
-        row.call_count += 1
         self.db.commit()
 
     def enforce_generation_request_controls(self, owner_id: int) -> None:

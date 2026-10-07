@@ -202,6 +202,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/courses/{course_id}/activities/{activity_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Prepared Activity Content */
+        get: operations["get_prepared_activity_content_api_v1_courses__course_id__activities__activity_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/activities/{activity_id}/preparation/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Activity Preparation */
+        post: operations["retry_activity_preparation_api_v1_courses__course_id__activities__activity_id__preparation_retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/courses/{course_id}/activities/{activity_id}/reading-complete": {
         parameters: {
             query?: never;
@@ -1259,6 +1293,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivityContentResponseOut */
+        ActivityContentResponseOut: {
+            content?: components["schemas"]["PreparedLessonContentOut"] | null;
+            preparation?: components["schemas"]["PreparationOut"] | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PENDING" | "RUNNING" | "READY" | "RECOVERABLE_FAILURE";
+        };
         /** ActivityOut */
         ActivityOut: {
             /** Activity Type */
@@ -1799,6 +1843,7 @@ export interface components {
             id: string;
             /** Lesson Id */
             lesson_id: string | null;
+            preparation?: components["schemas"]["PreparationOut"] | null;
             /** Presentation Format */
             presentation_format: string;
             /** Reading Completed At */
@@ -1937,6 +1982,83 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /** PreparationOut */
+        PreparationOut: {
+            /** Assessment Ready */
+            assessment_ready: boolean;
+            /** Content Ready */
+            content_ready: boolean;
+            /** Error Category */
+            error_category?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Progress */
+            progress: number;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "CONTENT" | "QUESTIONS" | "COMPLETE";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PENDING" | "RUNNING" | "READY" | "RECOVERABLE_FAILURE";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** PreparedLessonContentOut */
+        PreparedLessonContentOut: {
+            /**
+             * Artifact Id
+             * Format: uuid
+             */
+            artifact_id: string;
+            /**
+             * Course Version Id
+             * Format: uuid
+             */
+            course_version_id: string;
+            /**
+             * Lesson Id
+             * Format: uuid
+             */
+            lesson_id: string;
+            /**
+             * Presentation Format
+             * @enum {string}
+             */
+            presentation_format: "concise" | "detailed" | "worked_example" | "analogy" | "diagram" | "source_view" | "quiz_first";
+            sections: components["schemas"]["PreparedLessonSectionsOut"];
+            /** Source Chunk Ids */
+            source_chunk_ids: string[];
+        };
+        /** PreparedLessonSectionsOut */
+        PreparedLessonSectionsOut: {
+            /** Example */
+            example: components["schemas"]["PreparedStatementOut"][];
+            /** Explanation */
+            explanation: components["schemas"]["PreparedStatementOut"][];
+            /** Objective */
+            objective: components["schemas"]["PreparedStatementOut"][];
+            /** Recap */
+            recap: components["schemas"]["PreparedStatementOut"][];
+        };
+        /** PreparedStatementOut */
+        PreparedStatementOut: {
+            /** Citation Chunk Ids */
+            citation_chunk_ids: string[];
+            /** Concept Ids */
+            concept_ids: string[];
+            /** Text */
+            text: string;
+        };
         /** PresentationOutcomeIn */
         PresentationOutcomeIn: {
             /** Format */
@@ -1996,8 +2118,12 @@ export interface components {
             correctness?: number | null;
             /** Expected Answer */
             expected_answer?: unknown;
+            /** Explanation */
+            explanation?: string | null;
             /** Rubric */
             rubric?: string[] | null;
+            /** Source Chunk Ids */
+            source_chunk_ids?: string[] | null;
         };
         /**
          * QuizAttemptIn
@@ -2793,6 +2919,89 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssessmentSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_prepared_activity_content_api_v1_courses__course_id__activities__activity_id__content_get: {
+        parameters: {
+            query?: {
+                format?: "concise" | "detailed" | "worked_example" | "analogy" | "diagram" | "source_view" | "quiz_first";
+            };
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityContentResponseOut"];
+                };
+            };
+            /** @description Preparation is pending or running */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityContentResponseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_activity_preparation_api_v1_courses__course_id__activities__activity_id__preparation_retry_post: {
+        parameters: {
+            query?: {
+                format?: ("concise" | "detailed" | "worked_example" | "analogy" | "diagram" | "source_view" | "quiz_first") | null;
+            };
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningActivityOut"];
                 };
             };
             /** @description Validation Error */

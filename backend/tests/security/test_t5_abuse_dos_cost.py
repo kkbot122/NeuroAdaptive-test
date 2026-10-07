@@ -5,6 +5,7 @@ RFC 7807 problem-details bodies (application/problem+json), not a silent
 failure or a generic error shape.
 """
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -58,7 +59,7 @@ class TestDailyBudget:
 
         course, _ = course_with_chunk
         # Pre-exhaust today's budget directly rather than firing 200 real requests.
-        db_session.add(AIUsageDaily(owner_id=owner.id, usage_date=__import__("datetime").date.today(), call_count=DAILY_AI_CALL_BUDGET))
+        db_session.add(AIUsageDaily(owner_id=owner.id, usage_date=datetime.now(timezone.utc).date(), call_count=DAILY_AI_CALL_BUDGET))
         db_session.commit()
 
         resp = client.post(
