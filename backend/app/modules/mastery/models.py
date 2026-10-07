@@ -34,6 +34,7 @@ from sqlalchemy import (
     Uuid,
     UniqueConstraint,
 )
+from sqlalchemy.orm import query_expression
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -69,6 +70,9 @@ class Question(Base):
     options = Column(JSON, nullable=True)  # list[str], MCQ/MULTI_SELECT only
     correct_answer = Column(JSON, nullable=True)
     rubric = Column(JSON, nullable=True)  # list[str] criteria, SHORT_TEXT only
+    rubric_details = Column(JSON, nullable=True)  # P5 criterion reasoning and source ids
+    rubric_passing_criteria = Column(Integer, nullable=True)  # immutable binary threshold for this question version
+    expected_reasoning = Column(Text, nullable=True)  # P5, released after set submission
     explanation = Column(Text, nullable=True)  # exposed only after fixed-set submission
     content_hash = Column(String(64), nullable=True)
     schema_version = Column(String(32), nullable=True)
@@ -162,6 +166,7 @@ class MasteryEvent(Base):
     question_attempt_id = Column(Uuid, ForeignKey("question_attempts.id"), nullable=True)
 
     correctness = Column(Float, nullable=False)  # o_i in [0, 1]
+    effective_correctness = query_expression()
     evidence_weight_base = Column(Float, nullable=False)  # w_i excluding recency
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -1,6 +1,6 @@
 # NeuroLearn product plan
 
-Status: agreed product direction. P0 repository configuration and P1–P4 learning
+Status: agreed product direction. P0 repository configuration and P1–P5 learning
 contracts are implemented locally; hosted deployment and runtime pass conditions have
 not been demonstrated. Date: 2026-10-08.
 
@@ -15,6 +15,7 @@ not been demonstrated. Date: 2026-10-08.
 | [p2-grounded-preparation-contract.md](p2-grounded-preparation-contract.md) | How are first-activity content and lesson MCQs prepared, validated, and reused? |
 | [p3-results-progress-contract.md](p3-results-progress-contract.md) | How do submitted results, concept evidence, and the next activity connect? |
 | [p4-adaptive-activities-contract.md](p4-adaptive-activities-contract.md) | How do remediation, targeted practice, and challenge use saved recommendations? |
+| [p5-short-answer-review-contract.md](p5-short-answer-review-contract.md) | How are grounded short answers graded, recovered, reported, and corrected? |
 | [implementation-gap.md](implementation-gap.md) | What can we reuse, and what is missing? |
 | [build-plan.md](build-plan.md) | What should we implement first, and how do we demonstrate it? |
 
@@ -106,33 +107,33 @@ Demo both a real prepared course and a fresh upload through the production path.
 | Decision | Must be settled before |
 | --- | --- |
 | Completion criteria and decay policy | P9 completion/retention policy |
-| Short-answer rubric and review policy; calibration of mastery/selection rules | P5 policy acceptance / later calibration |
+| Calibration of mastery/selection rules | Later learner evaluation; existing rules remain unchanged |
 | Reliable cross-course concept matching and evidence reuse | Linked-course integration |
 | Missing-prerequisite detection and supporting evidence for warnings | Prerequisite-warning release |
-| Reviewer access, review operations, retention, and correction propagation | Report-grading-issue release |
 | What ends an activity whose assessment stays unavailable | Full recovery acceptance |
 | Hosted worker capacity, cross-process concurrency, and operational AI limits | Hosted worker acceptance |
 | Provider eligibility, region/network configuration, and storage credentials | Hosted verification |
-| Retention/deletion details for new entities and complete short-answer claim coverage | Safeguard acceptance |
 
 P2 defaults are approved for implementation, but unvalidated. P3 also approves the
 existing uncalibrated mastery-label cutoffs and the versioned evidence-strength display
 boundary; details are in the P3 contract. These do not change mastery formulas, decay,
-or recommendation scoring. P4 approves five MCQs for each remediation, practice, and
-challenge set, with the P2 cap of eight; these named, versioned, configurable defaults
-are unvalidated and recorded in the P4 contract. Other numeric defaults are unvalidated;
+or recommendation scoring. P4 approves five questions for each remediation, practice,
+and challenge set, with the P2 cap of eight. P5 approves one short answer among five
+questions, three equal rubric criteria with a 2-of-3 binary evidence threshold, and up
+to three provider calls per answer. These named, versioned, configurable defaults are
+unvalidated and recorded in the P4/P5 contracts. Other numeric defaults are unvalidated;
 future tunable numbers need named, versioned, configurable policies.
 
 ## Scope and authority
 
 This folder records approved product/architecture decisions and implementation evidence;
 it is not a deployment claim. Operational rules for migrations, contracts, ownership,
-and honest reporting still apply. P1–P4 status/checks are recorded in their contracts
+and honest reporting still apply. P1–P5 status/checks are recorded in their contracts
 and [implementation-gap.md](implementation-gap.md).
 
 Explicit scope revisions: linked-course grounding/evidence, visible factual selection
 reasons, replacement before publication, support checks for all factual claims, and
 authorized grading review. Railway Redis replaces Upstash. These revisions supersede
-earlier product descriptions where they conflict; revise contracts before implementing.
+earlier product descriptions where they conflict and are captured in the P1–P5 contracts.
 Evidence decay/completion interaction remains open. Prerequisite remediation is
 app-selected work, not a publication block for missing source coverage.

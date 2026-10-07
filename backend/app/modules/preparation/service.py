@@ -1,4 +1,4 @@
-"""Durable, owner-scoped preparation of grounded lesson and MCQ artifacts."""
+"""Durable, owner-scoped preparation of grounded lesson and mixed assessment artifacts."""
 import hashlib
 import json
 import logging
@@ -32,6 +32,9 @@ from app.modules.preparation.generation import (
     P4_QUESTION_PROMPT_VERSION,
     P4_QUESTION_SCHEMA_VERSION,
     P4_VALIDATION_POLICY_VERSION,
+    P5_QUESTION_PROMPT_VERSION,
+    P5_QUESTION_SCHEMA_VERSION,
+    P5_VALIDATION_POLICY_VERSION,
     REMEDIATION_CONTENT_PROMPT_VERSION,
     REMEDIATION_CONTENT_SCHEMA_VERSION,
     QUESTION_FRESHNESS_POLICY_VERSION,
@@ -41,9 +44,12 @@ from app.modules.preparation.generation import (
     LessonContentDraft,
     MCQDraft,
     MCQSetDraft,
+    PreparedQuestionSetDraft,
+    P5MCQDraft,
+    ShortAnswerDraft,
     normalize_question_text,
     parse_lesson_content,
-    parse_mcq_set,
+    parse_prepared_question_set,
     question_set_prompt,
     lesson_source_prompt,
     remediation_content_prompt,
@@ -1576,9 +1582,10 @@ class ActivityPreparationService:
         activity_purpose = preparation.activity_purpose
         count = self._question_count_for(activity_purpose, len(concepts))
         p4_activity = activity_purpose in {"PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE"}
-        prompt_version = P4_QUESTION_PROMPT_VERSION if p4_activity else QUESTION_PROMPT_VERSION
-        schema_version = P4_QUESTION_SCHEMA_VERSION if p4_activity else QUESTION_SCHEMA_VERSION
-        freshness_policy = P4_QUESTION_FRESHNESS_POLICY_VERSION if p4_activity else QUESTION_FRESHNESS_POLICY_VERSION
+        short_answer_count = min(settings.P5_SHORT_ANSWER_COUNT_V1, max(count - 1, 0))
+        prompt_version = P5_QUESTION_PROMPT_VERSION
+        schema_version = P5_QUESTION_SCHEMA_VERSION
+        freshness_policy = P5_VALIDATION_POLICY_VERSION
         source_by_id = {chunk.id: chunk for chunk in chunks}
         existing_prompts = {
             normalize_question_text(question.prompt)
@@ -1610,6 +1617,8 @@ class ActivityPreparationService:
                         count,
                         attempt > 0,
                         activity_purpose=activity_purpose,
+                        short_answer_count=short_answer_count,
+                        rubric_criteria_count=settings.P5_RUBRIC_CRITERIA_COUNT_V1,
                     ),
                     system_instruction=(
                         "Author only assessment questions answerable from the supplied course source passages. "
@@ -1620,7 +1629,7 @@ class ActivityPreparationService:
                     max_output_tokens=7000,
                     json_mode=True,
                 )
-                draft = parse_mcq_set(raw)
+                draft = parse_prepared_question_set(raw)
                 accepted = self._validate_question_set(
                     draft,
                     concepts,
@@ -1630,6 +1639,8 @@ class ActivityPreparationService:
                     count,
                     seen_prompts,
                     freshness_policy,
+                    expected_short_answer_count=short_answer_count,
+                    activity_purpose=activity_purpose,
                 )
                 row = _lock_current_lease(self.db, preparation.id, preparation.owner_id, token)
                 current_activity, _course, current_version, current_lesson, current_concepts = (
@@ -1654,24 +1665,43 @@ class ActivityPreparationService:
                 mastery = MasteryService(self.db, gateway)
                 saved_question_ids = []
                 for position, (question_draft, source_ids) in enumerate(accepted):
+                    is_short_answer = isinstance(question_draft, ShortAnswerDraft)
+                    rubric_details = (
+                        [
+                            {
+                                "text": criterion.text,
+                                "expected_reasoning": criterion.expected_reasoning,
+                                "source_chunk_ids": [str(item) for item in criterion.source_chunk_ids],
+                            }
+                            for criterion in question_draft.rubric
+                        ]
+                        if is_short_answer
+                        else None
+                    )
                     question = mastery.create_question(
                         course_id=preparation.course_id,
                         course_version_id=version.id,
                         owner_id=preparation.owner_id,
-                        question_type="MCQ",
+                        question_type="SHORT_TEXT" if is_short_answer else "MCQ",
                         prompt=question_draft.prompt,
                         concept_weights={question_draft.concept_id: 1.0},
-                        options=question_draft.options,
-                        correct_answer=question_draft.correct_answer,
-                        explanation=question_draft.explanation,
+                        options=None if is_short_answer else question_draft.options,
+                        correct_answer=None if is_short_answer else question_draft.correct_answer,
+                        rubric=[criterion.text for criterion in question_draft.rubric] if is_short_answer else None,
+                        rubric_details=rubric_details,
+                        rubric_passing_criteria=(
+                            settings.P5_RUBRIC_PASSING_CRITERIA_V1 if is_short_answer else None
+                        ),
+                        expected_reasoning=question_draft.expected_reasoning if is_short_answer else None,
+                        explanation=(
+                            question_draft.expected_reasoning if is_short_answer else question_draft.explanation
+                        ),
                         difficulty=settings.P2_MCQ_DEFAULT_DIFFICULTY_V1,
                         is_diagnostic=False,
                         prompt_version=prompt_version,
                         content_hash=_sha256(normalize_question_text(question_draft.prompt)),
                         schema_version=schema_version,
-                        validation_policy_version=(
-                            P4_VALIDATION_POLICY_VERSION if p4_activity else VALIDATION_POLICY_VERSION
-                        ),
+                        validation_policy_version=P5_VALIDATION_POLICY_VERSION,
                         decision_id=current_activity.decision_id if current_activity is not None else None,
                         commit=False,
                     )
@@ -1718,17 +1748,28 @@ class ActivityPreparationService:
 
     def _validate_question_set(
         self,
-        draft: MCQSetDraft,
+        draft: PreparedQuestionSetDraft,
         concepts: list[Concept],
         source_by_id: dict[UUID, Chunk],
         chunks_by_concept: dict[UUID, set[UUID]],
         checker,
         expected_count: int,
         seen_prompts: set[str],
-        freshness_policy_version: str = QUESTION_FRESHNESS_POLICY_VERSION,
-    ) -> list[tuple[MCQDraft, list[UUID]]]:
+        freshness_policy_version: str = P5_VALIDATION_POLICY_VERSION,
+        *,
+        expected_short_answer_count: int = 0,
+        activity_purpose: str = "NEW_LESSON",
+    ) -> list[tuple[P5MCQDraft | ShortAnswerDraft, list[UUID]]]:
         if draft.insufficient_evidence or len(draft.questions) != expected_count:
             raise CandidateRejected("QUESTIONS_UNAVAILABLE")
+        if sum(isinstance(item, ShortAnswerDraft) for item in draft.questions) != expected_short_answer_count:
+            raise CandidateRejected("QUESTION_MIX_FAILED")
+        if any(
+            isinstance(item, ShortAnswerDraft)
+            and len(item.rubric) != settings.P5_RUBRIC_CRITERIA_COUNT_V1
+            for item in draft.questions
+        ):
+            raise CandidateRejected("RUBRIC_CRITERIA_COUNT_FAILED")
         concept_ids = {concept.id for concept in concepts}
         concepts_by_id = {concept.id: concept for concept in concepts}
         counts = {concept_id: 0 for concept_id in concept_ids}
@@ -1753,29 +1794,67 @@ class ActivityPreparationService:
             if not allowed_chunks:
                 raise CandidateRejected("QUESTION_SOURCE_DOES_NOT_MATCH_CONCEPT")
             cited_chunks = [source_by_id[chunk_id] for chunk_id in sorted(allowed_chunks, key=str)]
+            cited_text = "\n\n".join(chunk.text for chunk in cited_chunks)
             stem_claim = (
                 "The question can be answered from this passage, and its factual premises are supported: "
                 f"{question.prompt}"
             )
-            answer_claim = f"For the question {question.prompt}, the supported answer is {question.correct_answer}."
-            prompt_supported = any(checker(stem_claim, chunk.text) for chunk in cited_chunks)
-            answer_supported = any(checker(answer_claim, chunk.text) for chunk in cited_chunks)
-            explanation_supported = any(checker(question.explanation, chunk.text) for chunk in cited_chunks)
-            if freshness_policy_version == P4_QUESTION_FRESHNESS_POLICY_VERSION:
+            prompt_supported = checker(stem_claim, cited_text)
+            if activity_purpose in {"PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE"}:
                 concept_name = concepts_by_id[question.concept_id].name
                 isolated_claim = (
                     f"For this item, a learner can determine the answer by applying {concept_name} alone, "
                     f"without needing another selected concept: {question.prompt}"
                 )
-                if not any(checker(isolated_claim, chunk.text) for chunk in cited_chunks):
+                if not checker(isolated_claim, cited_text):
                     raise CandidateRejected("QUESTION_ATTRIBUTION_NOT_ISOLATED")
-            distractors_clear = all(
-                not any(
-                    checker(
-                        f"For the question {question.prompt}, the option {option} is also a supported correct answer.",
-                        chunk.text,
+
+            if isinstance(question, ShortAnswerDraft):
+                answerable = checker(
+                    f"The cited course material contains enough information to write a correct short answer to: "
+                    f"{question.prompt}",
+                    cited_text,
+                )
+                expected_supported = checker(question.expected_reasoning, cited_text)
+                if not (prompt_supported and answerable and expected_supported):
+                    raise CandidateRejected("SHORT_ANSWER_SUPPORT_FAILED")
+
+                provenance = set(allowed_chunks)
+                for criterion in question.rubric:
+                    criterion_ids = set(criterion.source_chunk_ids)
+                    if any(chunk_id not in source_by_id for chunk_id in criterion_ids):
+                        raise CandidateRejected("INVALID_RUBRIC_CITATION")
+                    if not criterion_ids or any(
+                        chunk_id not in chunks_by_concept.get(question.concept_id, set())
+                        for chunk_id in criterion_ids
+                    ):
+                        raise CandidateRejected("RUBRIC_SOURCE_DOES_NOT_MATCH_CONCEPT")
+                    criterion_text = "\n\n".join(
+                        source_by_id[chunk_id].text for chunk_id in sorted(criterion_ids, key=str)
                     )
-                    for chunk in cited_chunks
+                    criterion_claim = (
+                        f"For the question {question.prompt}, a correct response should satisfy this relevant rubric "
+                        f"criterion, and the criterion is supported by the source: {criterion.text}"
+                    )
+                    reasoning_claim = (
+                        f"For the question {question.prompt}, this is supported expected reasoning for the rubric "
+                        f"criterion {criterion.text}: {criterion.expected_reasoning}"
+                    )
+                    if not checker(criterion_claim, criterion_text):
+                        raise CandidateRejected("RUBRIC_CRITERION_SUPPORT_OR_RELEVANCE_FAILED")
+                    if not checker(reasoning_claim, criterion_text):
+                        raise CandidateRejected("RUBRIC_REASONING_SUPPORT_FAILED")
+                    provenance.update(criterion_ids)
+                accepted.append((question, sorted(provenance, key=str)))
+                continue
+
+            answer_claim = f"For the question {question.prompt}, the supported answer is {question.correct_answer}."
+            answer_supported = checker(answer_claim, cited_text)
+            explanation_supported = checker(question.explanation, cited_text)
+            distractors_clear = all(
+                not checker(
+                    f"For the question {question.prompt}, the option {option} is also a supported correct answer.",
+                    cited_text,
                 )
                 for option in question.options
                 if option != question.correct_answer

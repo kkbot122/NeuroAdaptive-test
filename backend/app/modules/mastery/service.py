@@ -10,12 +10,13 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, with_expression
 
 from app.modules.courses.service import CourseNotFound, CourseService
 from app.modules.curriculum.models import Concept, LessonConcept
 from app.modules.curriculum.service import CurriculumService
+from app.modules.learning.models import GradingCorrection
 from app.modules.mastery import diagnostic, engine
 from app.modules.mastery.grading import grade_attempt
 from app.modules.mastery.models import MasteryEvent, Question, QuestionAttempt, QuestionConcept
@@ -63,6 +64,9 @@ class MasteryService:
         options: Optional[List[str]] = None,
         correct_answer=None,
         rubric: Optional[List[str]] = None,
+        rubric_details: Optional[list[dict]] = None,
+        rubric_passing_criteria: Optional[int] = None,
+        expected_reasoning: Optional[str] = None,
         difficulty: float = 0.5,
         is_diagnostic: bool = False,
         prompt_version: str = diagnostic.DIAGNOSTIC_PROMPT_VERSION,
@@ -90,6 +94,9 @@ class MasteryService:
             options=options,
             correct_answer=correct_answer,
             rubric=rubric,
+            rubric_details=rubric_details,
+            rubric_passing_criteria=rubric_passing_criteria,
+            expected_reasoning=expected_reasoning,
             explanation=explanation,
             content_hash=content_hash,
             schema_version=schema_version,
@@ -137,6 +144,11 @@ class MasteryService:
             options=updated_fields.get("options", old.options),
             correct_answer=updated_fields.get("correct_answer", old.correct_answer),
             rubric=updated_fields.get("rubric", old.rubric),
+            rubric_details=updated_fields.get("rubric_details", old.rubric_details),
+            rubric_passing_criteria=updated_fields.get(
+                "rubric_passing_criteria", old.rubric_passing_criteria
+            ),
+            expected_reasoning=updated_fields.get("expected_reasoning", old.expected_reasoning),
             explanation=updated_fields.get("explanation", old.explanation),
             content_hash=updated_fields.get("content_hash"),
             schema_version=updated_fields.get("schema_version", old.schema_version),
@@ -155,6 +167,16 @@ class MasteryService:
         self.db.flush()
         for concept_id, weight in old_weights.items():
             self.db.add(QuestionConcept(question_id=new_question.id, concept_id=concept_id, weight=weight))
+        from app.modules.preparation.models import QuestionSource
+
+        source_ids = [
+            row[0]
+            for row in self.db.query(QuestionSource.chunk_id)
+            .filter(QuestionSource.question_id == old.id)
+            .all()
+        ]
+        for chunk_id in source_ids:
+            self.db.add(QuestionSource(question_id=new_question.id, chunk_id=chunk_id))
         self.db.commit()
         self.db.refresh(new_question)
         return new_question
@@ -325,7 +347,20 @@ class MasteryService:
         """
         from app.modules.learning.models import AssessmentQuestion, AssessmentSession
 
-        query = self.db.query(MasteryEvent)
+        correction_value = (
+            self.db.query(GradingCorrection.effective_correctness)
+            .filter(GradingCorrection.question_attempt_id == MasteryEvent.question_attempt_id)
+            .order_by(GradingCorrection.version.desc())
+            .limit(1)
+            .correlate(MasteryEvent)
+            .scalar_subquery()
+        )
+        query = self.db.query(MasteryEvent).options(
+            with_expression(
+                MasteryEvent.effective_correctness,
+                func.coalesce(correction_value, MasteryEvent.correctness),
+            )
+        )
         if include_session_attribution:
             query = query.add_columns(AssessmentSession.id.label("evidence_session_id"))
         return (
@@ -348,6 +383,15 @@ class MasteryService:
     def get_concept_mastery(self, owner_id: int, concept_id: UUID) -> engine.MasteryState:
         return self._concept_mastery_at(owner_id, concept_id, datetime.now(timezone.utc))
 
+    def get_effective_attempt_correctness(self, attempt: QuestionAttempt) -> float:
+        correction = (
+            self.db.query(GradingCorrection)
+            .filter(GradingCorrection.question_attempt_id == attempt.id)
+            .order_by(GradingCorrection.version.desc())
+            .first()
+        )
+        return correction.effective_correctness if correction is not None else attempt.correctness
+
     @staticmethod
     def _utc(value: datetime) -> datetime:
         # SQLite may drop timezone metadata; app writes these values as UTC.
@@ -361,10 +405,11 @@ class MasteryService:
         rows = self.visible_mastery_events().filter(
             MasteryEvent.owner_id == owner_id,
             MasteryEvent.concept_id == concept_id,
+            MasteryEvent.created_at <= reference_at,
         ).all()
         events = [
             engine.EvidenceEvent(
-                correctness=r.correctness,
+                correctness=r.effective_correctness,
                 evidence_weight_base=r.evidence_weight_base,
                 created_at=self._utc(r.created_at),
             )
@@ -488,7 +533,7 @@ class MasteryService:
             assessment_events = []
             for row in events_by_concept.get(concept_id, []):
                 event = engine.EvidenceEvent(
-                    correctness=row.correctness,
+                    correctness=row.effective_correctness,
                     evidence_weight_base=row.evidence_weight_base,
                     created_at=self._utc(row.created_at),
                 )

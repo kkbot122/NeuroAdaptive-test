@@ -37,3 +37,15 @@ async def get_evaluator_user(user: User = Depends(get_current_user)) -> User:
     if user.email.casefold() not in allowed:
         raise HTTPException(status_code=404, detail="Resource not found")
     return user
+
+
+async def get_grading_reviewer_user(user: User = Depends(get_current_user)) -> User:
+    """P5 review is separately authorized; evaluator membership grants no access."""
+    allowed = {
+        email.strip().casefold()
+        for email in settings.P5_GRADING_REVIEWER_EMAILS.split(",")
+        if email.strip()
+    }
+    if user.email.casefold() not in allowed:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return user

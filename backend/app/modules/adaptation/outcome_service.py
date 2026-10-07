@@ -143,7 +143,8 @@ class AdaptationOutcomeService:
         current_state = self.mastery.get_concept_mastery(owner_id, concept_id)
         mastery_delta = (current_state.mastery - snapshot_mastery) if snapshot_mastery is not None else None
 
-        transfer_success = int(attempt.correctness >= 0.5) if is_transfer_question else None
+        effective_correctness = self.mastery.get_effective_attempt_correctness(attempt)
+        transfer_success = int(effective_correctness >= 0.5) if is_transfer_question else None
 
         hint_usage_delta = None
         time_to_correct_delta = None
@@ -204,6 +205,47 @@ class AdaptationOutcomeService:
                 .order_by(AdaptationOutcome.created_at.asc())
                 .all()
             )
+            outcome_rows = []
+            for outcome in outcomes:
+                mastery_delta = outcome.mastery_delta
+                transfer_success = outcome.transfer_success
+                if self.mastery is not None and outcome.question_attempt_id is not None:
+                    attempt = (
+                        self.db.query(QuestionAttempt)
+                        .filter(
+                            QuestionAttempt.id == outcome.question_attempt_id,
+                            QuestionAttempt.owner_id == owner_id,
+                        )
+                        .first()
+                    )
+                    if attempt is not None:
+                        effective_correctness = self.mastery.get_effective_attempt_correctness(attempt)
+                        if outcome.outcome_type == OutcomeType.TRANSFER_SUCCESS.value:
+                            transfer_success = int(effective_correctness >= 0.5)
+                        if effective_correctness != attempt.correctness and outcome.concept_id is not None:
+                            snapshot = (decision.input_snapshot or {}).get("concept_mastery", {}).get(
+                                str(outcome.concept_id)
+                            )
+                            if snapshot is not None:
+                                state = self.mastery._concept_mastery_at(
+                                    owner_id,
+                                    outcome.concept_id,
+                                    self.mastery._utc(outcome.created_at),
+                                )
+                                mastery_delta = state.mastery - snapshot
+                outcome_rows.append({
+                    "outcome_id": str(outcome.id),
+                    "outcome_type": outcome.outcome_type,
+                    "signal_category": outcome.signal_category,
+                    "concept_id": str(outcome.concept_id) if outcome.concept_id else None,
+                    "mastery_delta": mastery_delta,
+                    "transfer_success": bool(transfer_success) if transfer_success is not None else None,
+                    "hint_usage_delta": outcome.hint_usage_delta,
+                    "time_to_correct_delta": outcome.time_to_correct_delta,
+                    "helpfulness_rating": outcome.helpfulness_rating,
+                    "created_at": outcome.created_at,
+                })
+
             history.append({
                 "decision_id": str(decision.id),
                 "created_at": decision.created_at,
@@ -218,20 +260,6 @@ class AdaptationOutcomeService:
                 "input_snapshot": decision.input_snapshot,
                 "policy_version": decision.policy_version,
                 # 3-7: what happened afterward, per outcome.
-                "outcomes": [
-                    {
-                        "outcome_id": str(o.id),
-                        "outcome_type": o.outcome_type,
-                        "signal_category": o.signal_category,
-                        "concept_id": str(o.concept_id) if o.concept_id else None,
-                        "mastery_delta": o.mastery_delta,
-                        "transfer_success": bool(o.transfer_success) if o.transfer_success is not None else None,
-                        "hint_usage_delta": o.hint_usage_delta,
-                        "time_to_correct_delta": o.time_to_correct_delta,
-                        "helpfulness_rating": o.helpfulness_rating,
-                        "created_at": o.created_at,
-                    }
-                    for o in outcomes
-                ],
+                "outcomes": outcome_rows,
             })
         return history

@@ -1,11 +1,12 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.core.security import get_current_user
+from app.core.config import settings
+from app.core.security import get_current_user, get_grading_reviewer_user
 from app.db.session import get_db
 from app.modules.auth.models import User
 from app.modules.learning.schemas import (
@@ -13,6 +14,12 @@ from app.modules.learning.schemas import (
     ActivityContentResponseOut,
     AnswerIn,
     AssessmentSessionOut,
+    GradingIssueReportIn,
+    GradingIssueReportOut,
+    GradingCorrectionIn,
+    GradingReviewItemOut,
+    GradingReviewPageOut,
+    GradingReviewReasonIn,
     LearningActivityOut,
     LearningStateOut,
     PresentationFormat,
@@ -21,8 +28,11 @@ from app.modules.learning.service import (
     AssessmentUnavailable,
     LearningConflict,
     LearningNotFound,
+    GradingReviewConflict,
+    GradingReviewNotFound,
     LearningService,
 )
+from app.modules.learning.dispatch import GradingDispatcher
 from app.modules.learning.activity_types import PREPARED_ACTIVITY_TYPES
 from app.modules.preparation.dependencies import get_preparation_service as _preparation_service
 from app.modules.preparation.service import (
@@ -35,8 +45,15 @@ from app.services.providers import embedding_gateway, generation_gateway
 router = APIRouter()
 
 
-def _service(db: Session = Depends(get_db)) -> LearningService:
-    return LearningService(db, generation_gateway(), embedding_gateway())
+def _grading_dispatcher() -> GradingDispatcher:
+    return GradingDispatcher()
+
+
+def _service(
+    db: Session = Depends(get_db),
+    dispatcher: GradingDispatcher = Depends(_grading_dispatcher),
+) -> LearningService:
+    return LearningService(db, generation_gateway(), embedding_gateway(), dispatcher)
 
 
 def _raise_learning_error(exc: Exception) -> None:
@@ -256,6 +273,105 @@ def retry_session_grading(
         return service.retry_grading(course_id, session_id, question_id, user.id)
     except (LearningNotFound, LearningConflict) as exc:
         _raise_learning_error(exc)
+
+
+@router.post(
+    "/courses/{course_id}/assessment-sessions/{session_id}/questions/{question_id}/grading-issue",
+    response_model=GradingIssueReportOut,
+    status_code=201,
+)
+def report_session_grading_issue(
+    course_id: UUID,
+    session_id: UUID,
+    question_id: UUID,
+    body: GradingIssueReportIn,
+    user: User = Depends(get_current_user),
+    service: LearningService = Depends(_service),
+):
+    try:
+        return service.report_grading_issue(
+            course_id, session_id, question_id, user.id, body.report_text
+        )
+    except LearningNotFound as exc:
+        _raise_learning_error(exc)
+    except LearningConflict as exc:
+        _raise_learning_error(exc)
+
+
+def _raise_review_error(exc: Exception) -> None:
+    if isinstance(exc, GradingReviewNotFound):
+        raise HTTPException(status_code=404, detail="Review report not found") from exc
+    if isinstance(exc, GradingReviewConflict):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    raise exc
+
+
+@router.get("/grading-reviews", response_model=GradingReviewPageOut)
+def list_grading_reviews(
+    status: str | None = Query(default=None, pattern="^(OPEN|IN_REVIEW|RETAINED|CORRECTED)$"),
+    limit: int = Query(default=settings.P5_REVIEW_PAGE_SIZE_V1, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    _reviewer: User = Depends(get_grading_reviewer_user),
+    service: LearningService = Depends(_service),
+):
+    return service.list_grading_reviews(status, limit, offset)
+
+
+@router.get("/grading-reviews/{report_id}", response_model=GradingReviewItemOut)
+def get_grading_review(
+    report_id: UUID,
+    _reviewer: User = Depends(get_grading_reviewer_user),
+    service: LearningService = Depends(_service),
+):
+    try:
+        return service.get_grading_review(report_id)
+    except GradingReviewNotFound as exc:
+        _raise_review_error(exc)
+
+
+@router.post("/grading-reviews/{report_id}/start", response_model=GradingReviewItemOut)
+def start_grading_review(
+    report_id: UUID,
+    body: GradingReviewReasonIn,
+    reviewer: User = Depends(get_grading_reviewer_user),
+    service: LearningService = Depends(_service),
+):
+    try:
+        return service.start_grading_review(report_id, reviewer.id, body.reason)
+    except (GradingReviewNotFound, GradingReviewConflict) as exc:
+        _raise_review_error(exc)
+
+
+@router.post("/grading-reviews/{report_id}/retain", response_model=GradingReviewItemOut)
+def retain_grading_judgment(
+    report_id: UUID,
+    body: GradingReviewReasonIn,
+    reviewer: User = Depends(get_grading_reviewer_user),
+    service: LearningService = Depends(_service),
+):
+    try:
+        return service.retain_grading_judgment(report_id, reviewer.id, body.reason)
+    except (GradingReviewNotFound, GradingReviewConflict) as exc:
+        _raise_review_error(exc)
+
+
+@router.post("/grading-reviews/{report_id}/correct", response_model=GradingReviewItemOut)
+def correct_grading_judgment(
+    report_id: UUID,
+    body: GradingCorrectionIn,
+    reviewer: User = Depends(get_grading_reviewer_user),
+    service: LearningService = Depends(_service),
+):
+    try:
+        return service.correct_grading_judgment(
+            report_id,
+            reviewer.id,
+            body.criteria_met,
+            body.reason,
+            body.expected_correction_version,
+        )
+    except (GradingReviewNotFound, GradingReviewConflict) as exc:
+        _raise_review_error(exc)
 
 
 @router.post(

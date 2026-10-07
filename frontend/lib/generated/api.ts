@@ -378,6 +378,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/questions/{question_id}/grading-issue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report Session Grading Issue */
+        post: operations["report_session_grading_issue_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__grading_issue_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/questions/{question_id}/retry-grading": {
         parameters: {
             query?: never;
@@ -911,6 +928,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/grading-reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Grading Reviews */
+        get: operations["list_grading_reviews_api_v1_grading_reviews_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/grading-reviews/{report_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Grading Review */
+        get: operations["get_grading_review_api_v1_grading_reviews__report_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/grading-reviews/{report_id}/correct": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Correct Grading Judgment */
+        post: operations["correct_grading_judgment_api_v1_grading_reviews__report_id__correct_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/grading-reviews/{report_id}/retain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retain Grading Judgment */
+        post: operations["retain_grading_judgment_api_v1_grading_reviews__report_id__retain_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/grading-reviews/{report_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Grading Review */
+        post: operations["start_grading_review_api_v1_grading_reviews__report_id__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}": {
         parameters: {
             query?: never;
@@ -1334,6 +1436,13 @@ export interface components {
         AnswerOut: {
             /** Given Answer */
             given_answer: unknown;
+            /** Grading Failure */
+            grading_failure?: ("GRADING_UNAVAILABLE" | "ALLOWANCE_UNAVAILABLE" | "RETRIES_EXHAUSTED") | null;
+            /**
+             * Retry Available
+             * @default false
+             */
+            retry_available: boolean;
             /** Status */
             status: string;
             /**
@@ -1385,6 +1494,7 @@ export interface components {
             answer?: components["schemas"]["AnswerOut"] | null;
             /** Difficulty */
             difficulty: number;
+            grading_issue_report?: components["schemas"]["GradingIssueReportOut"] | null;
             /** Options */
             options: string[] | null;
             /** Position */
@@ -1788,6 +1898,159 @@ export interface components {
             /** Understanding */
             understanding: number;
         };
+        /** GradingCorrectionIn */
+        GradingCorrectionIn: {
+            /** Criteria Met */
+            criteria_met: boolean[];
+            /** Expected Correction Version */
+            expected_correction_version: number;
+            /** Reason */
+            reason: string;
+        };
+        /** GradingCorrectionOut */
+        GradingCorrectionOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Criteria Met */
+            criteria_met: boolean[];
+            /** Effective Correctness */
+            effective_correctness: number;
+            /** Reason */
+            reason: string;
+            /** Rubric Score */
+            rubric_score: number;
+            /** Version */
+            version: number;
+        };
+        /** GradingIssueReportIn */
+        GradingIssueReportIn: {
+            /** Report Text */
+            report_text: string;
+        };
+        /** GradingIssueReportOut */
+        GradingIssueReportOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Received
+             * @default true
+             */
+            received: boolean;
+            /** Status */
+            status: string;
+        };
+        /** GradingReviewEventOut */
+        GradingReviewEventOut: {
+            /** Correction Version */
+            correction_version: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Event Type */
+            event_type: string;
+            /** Reason */
+            reason: string;
+        };
+        /** GradingReviewItemOut */
+        GradingReviewItemOut: {
+            /** Answer */
+            answer: string;
+            /** Corrections */
+            corrections: components["schemas"]["GradingCorrectionOut"][];
+            /**
+             * Course Id
+             * Format: uuid
+             */
+            course_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expected Reasoning */
+            expected_reasoning: string;
+            /** History */
+            history: components["schemas"]["GradingReviewEventOut"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Latest Correction Version */
+            latest_correction_version: number;
+            /** Latest Effective Correctness */
+            latest_effective_correctness: number;
+            /** Latest Effective Criteria Met */
+            latest_effective_criteria_met: boolean[];
+            /** Original Criteria Met */
+            original_criteria_met: boolean[];
+            /** Original Evidence Correctness */
+            original_evidence_correctness: number;
+            /** Original Rubric Score */
+            original_rubric_score: number;
+            /** Prompt */
+            prompt: string;
+            /**
+             * Question Id
+             * Format: uuid
+             */
+            question_id: string;
+            /** Question Version */
+            question_version: number;
+            /** Report Text */
+            report_text: string;
+            /** Rubric */
+            rubric: string[];
+            /** Rubric Passing Criteria */
+            rubric_passing_criteria: number;
+            /** Sources */
+            sources: components["schemas"]["GradingReviewSourceOut"][];
+            /** Status */
+            status: string;
+        };
+        /** GradingReviewPageOut */
+        GradingReviewPageOut: {
+            /** Has More */
+            has_more: boolean;
+            /** Items */
+            items: components["schemas"]["GradingReviewItemOut"][];
+            /** Limit */
+            limit: number;
+            /** Next Offset */
+            next_offset?: number | null;
+            /** Offset */
+            offset: number;
+        };
+        /** GradingReviewReasonIn */
+        GradingReviewReasonIn: {
+            /** Reason */
+            reason: string;
+        };
+        /** GradingReviewSourceOut */
+        GradingReviewSourceOut: {
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            /** Heading Path */
+            heading_path: string | null;
+            /** Text */
+            text: string;
+        };
         /** GraphOut */
         GraphOut: {
             /** Concepts */
@@ -2148,14 +2411,34 @@ export interface components {
         };
         /** QuestionResultOut */
         QuestionResultOut: {
+            /**
+             * Automated Grading
+             * @default false
+             */
+            automated_grading: boolean;
+            /** Correction Reason */
+            correction_reason?: string | null;
             /** Correctness */
             correctness?: number | null;
             /** Expected Answer */
             expected_answer?: unknown;
+            /** Expected Reasoning */
+            expected_reasoning?: string | null;
             /** Explanation */
             explanation?: string | null;
+            /**
+             * Grade Corrected
+             * @default false
+             */
+            grade_corrected: boolean;
             /** Rubric */
             rubric?: string[] | null;
+            /** Rubric Feedback */
+            rubric_feedback?: components["schemas"]["RubricFeedbackOut"][] | null;
+            /** Rubric Passing Criteria */
+            rubric_passing_criteria?: number | null;
+            /** Rubric Score */
+            rubric_score?: number | null;
             /** Source Chunk Ids */
             source_chunk_ids?: string[] | null;
         };
@@ -2243,6 +2526,17 @@ export interface components {
             source: string;
             /** Text */
             text: string;
+        };
+        /** RubricFeedbackOut */
+        RubricFeedbackOut: {
+            /** Criterion */
+            criterion: string;
+            /** Expected Reasoning */
+            expected_reasoning: string;
+            /** Met */
+            met: boolean;
+            /** Source Chunk Ids */
+            source_chunk_ids: string[];
         };
         /** StageOut */
         StageOut: {
@@ -3310,6 +3604,46 @@ export interface operations {
             };
         };
     };
+    report_session_grading_issue_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__grading_issue_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                session_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GradingIssueReportIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GradingIssueReportOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     retry_session_grading_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__retry_grading_post: {
         parameters: {
             query?: never;
@@ -4317,6 +4651,190 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventBatchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_grading_reviews_api_v1_grading_reviews_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GradingReviewPageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_grading_review_api_v1_grading_reviews__report_id__get: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GradingReviewItemOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    correct_grading_judgment_api_v1_grading_reviews__report_id__correct_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GradingCorrectionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GradingReviewItemOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retain_grading_judgment_api_v1_grading_reviews__report_id__retain_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GradingReviewReasonIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GradingReviewItemOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_grading_review_api_v1_grading_reviews__report_id__start_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GradingReviewReasonIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GradingReviewItemOut"];
                 };
             };
             /** @description Validation Error */

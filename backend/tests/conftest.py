@@ -117,6 +117,8 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     from app.modules.tutor.router import _service as tutor_service_dep
     from app.modules.tutor.service import TutorService
 
+    fake_generation.when_prompt_contains('"criteria_met"', '{"criteria_met": [true, true, true]}')
+
     def _override_get_db():
         try:
             yield db_session
@@ -143,11 +145,17 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     app.dependency_overrides[mastery_service_dep] = lambda: MasteryService(
         db_session, fake_generation, fake_embeddings
     )
+    class InlineGradingDispatcher:
+        def enqueue(self, answer_submission_id, owner_id):
+            LearningService(db_session, fake_generation, fake_embeddings).grade_saved_answer(
+                answer_submission_id, owner_id
+            )
+
     app.dependency_overrides[mastery_learning_service_dep] = lambda: LearningService(
         db_session, fake_generation, fake_embeddings
     )
     app.dependency_overrides[learning_service_dep] = lambda: LearningService(
-        db_session, fake_generation, fake_embeddings
+        db_session, fake_generation, fake_embeddings, InlineGradingDispatcher()
     )
     # Existing lifecycle tests exercise the P1 contracts directly. P2 tests
     # opt into a deterministic preparation dispatcher explicitly.

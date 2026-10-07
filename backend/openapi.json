@@ -153,6 +153,27 @@
           "given_answer": {
             "title": "Given Answer"
           },
+          "grading_failure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "GRADING_UNAVAILABLE",
+                  "ALLOWANCE_UNAVAILABLE",
+                  "RETRIES_EXHAUSTED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grading Failure"
+          },
+          "retry_available": {
+            "default": false,
+            "title": "Retry Available",
+            "type": "boolean"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -269,6 +290,16 @@
           "difficulty": {
             "title": "Difficulty",
             "type": "number"
+          },
+          "grading_issue_report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GradingIssueReportOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "options": {
             "anyOf": [
@@ -1289,6 +1320,389 @@
         "title": "FSLSMVectorResponse",
         "type": "object"
       },
+      "GradingCorrectionIn": {
+        "additionalProperties": false,
+        "properties": {
+          "criteria_met": {
+            "items": {
+              "type": "boolean"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Criteria Met",
+            "type": "array"
+          },
+          "expected_correction_version": {
+            "minimum": 0.0,
+            "title": "Expected Correction Version",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "criteria_met",
+          "expected_correction_version"
+        ],
+        "title": "GradingCorrectionIn",
+        "type": "object"
+      },
+      "GradingCorrectionOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "criteria_met": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Criteria Met",
+            "type": "array"
+          },
+          "effective_correctness": {
+            "title": "Effective Correctness",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "rubric_score": {
+            "title": "Rubric Score",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "criteria_met",
+          "rubric_score",
+          "effective_correctness",
+          "reason",
+          "created_at"
+        ],
+        "title": "GradingCorrectionOut",
+        "type": "object"
+      },
+      "GradingIssueReportIn": {
+        "additionalProperties": false,
+        "properties": {
+          "report_text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Report Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_text"
+        ],
+        "title": "GradingIssueReportIn",
+        "type": "object"
+      },
+      "GradingIssueReportOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "received": {
+            "default": true,
+            "title": "Received",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "created_at"
+        ],
+        "title": "GradingIssueReportOut",
+        "type": "object"
+      },
+      "GradingReviewEventOut": {
+        "properties": {
+          "correction_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Version"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_type",
+          "reason",
+          "correction_version",
+          "created_at"
+        ],
+        "title": "GradingReviewEventOut",
+        "type": "object"
+      },
+      "GradingReviewItemOut": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "corrections": {
+            "items": {
+              "$ref": "#/components/schemas/GradingCorrectionOut"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
+          "course_id": {
+            "format": "uuid",
+            "title": "Course Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expected_reasoning": {
+            "title": "Expected Reasoning",
+            "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/GradingReviewEventOut"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_correction_version": {
+            "title": "Latest Correction Version",
+            "type": "integer"
+          },
+          "latest_effective_correctness": {
+            "title": "Latest Effective Correctness",
+            "type": "integer"
+          },
+          "latest_effective_criteria_met": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Latest Effective Criteria Met",
+            "type": "array"
+          },
+          "original_criteria_met": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Original Criteria Met",
+            "type": "array"
+          },
+          "original_evidence_correctness": {
+            "title": "Original Evidence Correctness",
+            "type": "integer"
+          },
+          "original_rubric_score": {
+            "title": "Original Rubric Score",
+            "type": "integer"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "question_id": {
+            "format": "uuid",
+            "title": "Question Id",
+            "type": "string"
+          },
+          "question_version": {
+            "title": "Question Version",
+            "type": "integer"
+          },
+          "report_text": {
+            "title": "Report Text",
+            "type": "string"
+          },
+          "rubric": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rubric",
+            "type": "array"
+          },
+          "rubric_passing_criteria": {
+            "title": "Rubric Passing Criteria",
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/GradingReviewSourceOut"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "course_id",
+          "status",
+          "report_text",
+          "created_at",
+          "answer",
+          "question_id",
+          "question_version",
+          "prompt",
+          "rubric",
+          "rubric_passing_criteria",
+          "expected_reasoning",
+          "original_criteria_met",
+          "original_rubric_score",
+          "original_evidence_correctness",
+          "sources",
+          "corrections",
+          "history",
+          "latest_effective_criteria_met",
+          "latest_effective_correctness",
+          "latest_correction_version"
+        ],
+        "title": "GradingReviewItemOut",
+        "type": "object"
+      },
+      "GradingReviewPageOut": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GradingReviewItemOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "limit",
+          "offset",
+          "has_more"
+        ],
+        "title": "GradingReviewPageOut",
+        "type": "object"
+      },
+      "GradingReviewReasonIn": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "GradingReviewReasonIn",
+        "type": "object"
+      },
+      "GradingReviewSourceOut": {
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "heading_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heading Path"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "heading_path",
+          "text"
+        ],
+        "title": "GradingReviewSourceOut",
+        "type": "object"
+      },
       "GraphOut": {
         "properties": {
           "concepts": {
@@ -2270,6 +2684,22 @@
       },
       "QuestionResultOut": {
         "properties": {
+          "automated_grading": {
+            "default": false,
+            "title": "Automated Grading",
+            "type": "boolean"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
           "correctness": {
             "anyOf": [
               {
@@ -2284,6 +2714,17 @@
           "expected_answer": {
             "title": "Expected Answer"
           },
+          "expected_reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Reasoning"
+          },
           "explanation": {
             "anyOf": [
               {
@@ -2294,6 +2735,11 @@
               }
             ],
             "title": "Explanation"
+          },
+          "grade_corrected": {
+            "default": false,
+            "title": "Grade Corrected",
+            "type": "boolean"
           },
           "rubric": {
             "anyOf": [
@@ -2308,6 +2754,42 @@
               }
             ],
             "title": "Rubric"
+          },
+          "rubric_feedback": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RubricFeedbackOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric Feedback"
+          },
+          "rubric_passing_criteria": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric Passing Criteria"
+          },
+          "rubric_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric Score"
           },
           "source_chunk_ids": {
             "anyOf": [
@@ -2598,6 +3080,38 @@
           "source"
         ],
         "title": "RetrievalOut",
+        "type": "object"
+      },
+      "RubricFeedbackOut": {
+        "properties": {
+          "criterion": {
+            "title": "Criterion",
+            "type": "string"
+          },
+          "expected_reasoning": {
+            "title": "Expected Reasoning",
+            "type": "string"
+          },
+          "met": {
+            "title": "Met",
+            "type": "boolean"
+          },
+          "source_chunk_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Source Chunk Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "criterion",
+          "met",
+          "expected_reasoning",
+          "source_chunk_ids"
+        ],
+        "title": "RubricFeedbackOut",
         "type": "object"
       },
       "StageOut": {
@@ -4763,6 +5277,97 @@
         ]
       }
     },
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/questions/{question_id}/grading-issue": {
+      "post": {
+        "operationId": "report_session_grading_issue_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__grading_issue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GradingIssueReportIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradingIssueReportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Session Grading Issue",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
     "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/questions/{question_id}/retry-grading": {
       "post": {
         "operationId": "retry_session_grading_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__retry_grading_post",
@@ -6734,6 +7339,371 @@
         "summary": "Record Batch",
         "tags": [
           "events"
+        ]
+      }
+    },
+    "/api/v1/grading-reviews": {
+      "get": {
+        "operationId": "list_grading_reviews_api_v1_grading_reviews_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(OPEN|IN_REVIEW|RETAINED|CORRECTED)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradingReviewPageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Grading Reviews",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/grading-reviews/{report_id}": {
+      "get": {
+        "operationId": "get_grading_review_api_v1_grading_reviews__report_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradingReviewItemOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Grading Review",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/grading-reviews/{report_id}/correct": {
+      "post": {
+        "operationId": "correct_grading_judgment_api_v1_grading_reviews__report_id__correct_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GradingCorrectionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradingReviewItemOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Correct Grading Judgment",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/grading-reviews/{report_id}/retain": {
+      "post": {
+        "operationId": "retain_grading_judgment_api_v1_grading_reviews__report_id__retain_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GradingReviewReasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradingReviewItemOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retain Grading Judgment",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/grading-reviews/{report_id}/start": {
+      "post": {
+        "operationId": "start_grading_review_api_v1_grading_reviews__report_id__start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GradingReviewReasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradingReviewItemOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Grading Review",
+        "tags": [
+          "learning"
         ]
       }
     },

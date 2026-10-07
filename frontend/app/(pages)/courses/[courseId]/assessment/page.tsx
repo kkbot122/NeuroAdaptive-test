@@ -24,6 +24,19 @@ function answerText(answer: unknown): string {
   return answer == null ? "" : JSON.stringify(answer);
 }
 
+function gradingFailureMessage(failure: string | null | undefined): string | null {
+  if (failure === "RETRIES_EXHAUSTED") {
+    return "Grading could not finish after the available attempts. Your confirmed answer is saved and remains unresolved; it has not been counted as incorrect. No more grading retries are available.";
+  }
+  if (failure === "ALLOWANCE_UNAVAILABLE") {
+    return "The grading allowance is currently unavailable. Your confirmed answer is saved and remains unresolved; it has not been counted as incorrect. Retry later if the retry button is available.";
+  }
+  if (failure === "GRADING_UNAVAILABLE") {
+    return "Grading could not be completed. Your confirmed answer is saved and remains unresolved; it has not been counted as incorrect.";
+  }
+  return null;
+}
+
 function describeProgressChange(progress: NonNullable<AssessmentSession["concept_progress"]>[number]): string {
   if (progress.before_band !== progress.after_band) {
     return `The evidence label moved from ${progress.before_band} to ${progress.after_band} at this assessment's reference time.`;
@@ -53,6 +66,9 @@ export default function AssessmentPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [reportText, setReportText] = useState<Record<string, string>>({});
+  const [reportError, setReportError] = useState<Record<string, string>>({});
+  const [reportSending, setReportSending] = useState<string | null>(null);
 
   const loadLearningState = useCallback(async () => {
     setCoverageError(null);
@@ -123,6 +139,24 @@ export default function AssessmentPage() {
   const isLocked = Boolean(currentQuestion?.answer);
   const isLastStep = Boolean(session && currentStep === session.questions.length - 1);
   const allGraded = session?.grading_state === "COMPLETE";
+  const isGradingActive = session?.grading_state === "AWAITING_GRADING";
+
+  const submittedSessionId = session?.id;
+  useEffect(() => {
+    if (!isSubmitted || !isGradingActive || !submittedSessionId) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(
+          `/api/v1/courses/${courseId}/assessment-sessions/${submittedSessionId}`,
+          { cache: "no-store" },
+        );
+        if (response.ok) setSession(await response.json());
+      } catch {
+        // Keep the saved pending state visible; the learner can refresh later.
+      }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [courseId, isGradingActive, isSubmitted, submittedSessionId]);
 
   const confirmAnswer = async () => {
     if (!session || !currentQuestion || isLocked) return;
@@ -191,6 +225,37 @@ export default function AssessmentPage() {
     }
   };
 
+  const reportGradingIssue = async (questionId: string) => {
+    if (!session) return;
+    setReportSending(questionId);
+    setReportError((current) => ({ ...current, [questionId]: "" }));
+    try {
+      const response = await fetch(
+        `/api/v1/courses/${courseId}/assessment-sessions/${session.id}/questions/${questionId}/grading-issue`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ report_text: reportText[questionId] || "" }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.detail || "Your report could not be saved.");
+      setSession((current) => current ? {
+        ...current,
+        questions: current.questions.map((question) => question.question_id === questionId
+          ? { ...question, grading_issue_report: data }
+          : question),
+      } : current);
+    } catch (error) {
+      setReportError((current) => ({
+        ...current,
+        [questionId]: error instanceof Error ? error.message : "Your report could not be saved.",
+      }));
+    } finally {
+      setReportSending(null);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#F4F1EA] flex flex-col items-center justify-center font-[family-name:var(--font-kodchasan)]">
@@ -223,6 +288,12 @@ export default function AssessmentPage() {
           <h1 className="text-3xl font-black mb-2 uppercase tracking-tight">Assessment submitted</h1>
           {allGraded ? (
             <p className="text-lg font-bold text-gray-600 mb-6">{session.graded_answer_count} of {session.questions.length} answers are graded. This result contributes evidence only to concepts linked to these questions; it does not mark the course complete.</p>
+          ) : isGradingActive ? (
+            <p className="text-lg font-bold text-gray-600 mb-6">{session.graded_answer_count} of {session.questions.length} answers are graded; {session.unresolved_answer_count} remain unresolved while grading is in progress. Pending answers are not treated as incorrect.</p>
+          ) : session.grading_state === "EXHAUSTED" ? (
+            <p className="text-lg font-bold text-gray-600 mb-6">Grading could not finish within the available attempts. Your saved answers remain unresolved and have not been counted as incorrect. No more grading retries are available.</p>
+          ) : session.grading_state === "RETRY_REQUIRED" ? (
+            <p className="text-lg font-bold text-gray-600 mb-6">Grading stopped for some answers. Use the retry actions below where available. Unresolved answers are not treated as incorrect.</p>
           ) : (
             <p className="text-lg font-bold text-gray-600 mb-6">{session.graded_answer_count} of {session.questions.length} answers are graded; {session.unresolved_answer_count} remain unresolved. Pending answers are not treated as incorrect.</p>
           )}
@@ -232,9 +303,35 @@ export default function AssessmentPage() {
                 <p className="font-black">{question.position + 1}. {question.prompt}</p>
                 <p className="mt-2 text-gray-700">Your answer: {answerText(question.answer?.given_answer)}</p>
                 {typeof question.result?.correctness === "number" ? (
-                  <p className="mt-2 font-bold">{question.result.correctness >= 1 ? "Correct" : question.result.correctness <= 0 ? "Incorrect" : "Partly met"}</p>
+                  <p className="mt-2 font-bold">{question.result.correctness >= 0.5 ? "Correct" : "Incorrect"}</p>
                 ) : (
-                  <p className="mt-2 font-bold text-orange-700">Grading pending</p>
+                  <p className="mt-2 font-bold text-orange-700">{gradingFailureMessage(question.answer?.grading_failure) ?? "Grading is unresolved. This answer is not counted as incorrect and contributes no evidence yet."}</p>
+                )}
+                {question.result?.automated_grading && (
+                  <p className="mt-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                    Short-answer grading is automated and can be wrong. Rubric feedback is separate from the correct/incorrect evidence label.
+                  </p>
+                )}
+                {question.result?.expected_reasoning && (
+                  <p className="mt-2 text-gray-700">Supported reasoning: {question.result.expected_reasoning}</p>
+                )}
+                {question.result?.rubric_feedback && (
+                  <div className="mt-3 space-y-3">
+                    <p className="font-bold">Rubric feedback: {question.result.rubric_score} of {question.result.rubric_feedback.length} criteria met. At least {question.result.rubric_passing_criteria} met criteria counts as correct evidence. Evidence label: {typeof question.result.correctness === "number" && question.result.correctness >= 0.5 ? "Correct" : "Incorrect"}.</p>
+                    {question.result.rubric_feedback.map((criterion, index) => (
+                      <article key={`${question.question_id}-${index}`} className="rounded-lg border border-gray-300 p-3">
+                        <p className="font-bold">{criterion.met ? "Met" : "Not met"}: {criterion.criterion}</p>
+                        <p className="mt-1 text-sm text-gray-700">Supported reasoning: {criterion.expected_reasoning}</p>
+                        <div className="mt-2 flex flex-wrap gap-x-3 text-sm font-bold text-blue-700">
+                          {criterion.source_chunk_ids.map((chunkId, sourceIndex) => (
+                            <Link key={chunkId} href={`/courses/${courseId}/sources/${chunkId}`} className="hover:underline">
+                              Criterion source {sourceIndex + 1}
+                            </Link>
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
                 )}
                 {question.result?.expected_answer !== undefined && (
                   <p className="mt-1 text-gray-700">Expected answer: {answerText(question.result.expected_answer)}</p>
@@ -252,7 +349,7 @@ export default function AssessmentPage() {
                   </div>
                 )}
                 {question.result?.rubric && <p className="mt-1 text-gray-700">Rubric: {question.result.rubric.join("; ")}</p>}
-                {question.answer?.status !== "GRADED" && (
+                {question.answer?.retry_available && (
                   <button
                     onClick={() => void retryGrading(question.question_id)}
                     disabled={isSubmitting}
@@ -260,6 +357,40 @@ export default function AssessmentPage() {
                   >
                     Retry grading
                   </button>
+                )}
+                {question.result?.grade_corrected && (
+                  <p className="mt-3 text-sm text-gray-700">
+                    A reviewer approved a correction. Later progress views use the corrected evidence; saved recommendations remain as recorded.
+                    {question.result.correction_reason ? ` Reason: ${question.result.correction_reason}` : ""}
+                  </p>
+                )}
+                {question.result?.automated_grading && question.result && (
+                  question.grading_issue_report ? (
+                    <p className="mt-4 rounded-lg bg-green-50 p-3 font-bold text-green-900" role="status">
+                      Your report was received. This acknowledgment does not promise immediate review.
+                    </p>
+                  ) : (
+                    <div className="mt-4 border-t border-gray-300 pt-4">
+                      <label className="block font-bold" htmlFor={`grading-report-${question.question_id}`}>Disagree with this judgment?</label>
+                      <textarea
+                        id={`grading-report-${question.question_id}`}
+                        value={reportText[question.question_id] || ""}
+                        onChange={(event) => setReportText((current) => ({ ...current, [question.question_id]: event.target.value }))}
+                        maxLength={2000}
+                        rows={3}
+                        className="mt-2 w-full rounded-lg border-2 border-black p-3"
+                        placeholder="Tell us which part of the judgment you believe is wrong."
+                      />
+                      {reportError[question.question_id] && <p className="mt-2 text-red-700 font-bold" role="status">{reportError[question.question_id]}</p>}
+                      <button
+                        onClick={() => void reportGradingIssue(question.question_id)}
+                        disabled={!reportText[question.question_id]?.trim() || reportSending === question.question_id}
+                        className="mt-2 rounded-lg border-2 border-black px-4 py-2 font-bold disabled:opacity-50"
+                      >
+                        {reportSending === question.question_id ? "SENDING…" : "REPORT THIS JUDGMENT"}
+                      </button>
+                    </div>
+                  )
                 )}
               </section>
             ))}

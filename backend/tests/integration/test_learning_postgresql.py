@@ -45,6 +45,7 @@ from app.modules.learning.models import (
     AssessmentType,
     LearningActivity,
 )
+from app.modules.learning import service as learning_service_module
 from app.modules.learning.service import LearningService
 from app.modules.mastery.models import MasteryEvent, Question, QuestionAttempt, QuestionConcept
 from app.core.problem_details import ProblemDetailException
@@ -127,7 +128,7 @@ def test_learning_migration_upgrades_and_downgrades_a_postgresql_schema(postgres
         }
 
 
-def test_postgresql_submit_and_final_grading_interleave_completes_activity(postgres_schema_engine):
+def test_postgresql_submit_and_final_grading_interleave_completes_activity(postgres_schema_engine, monkeypatch):
     Base.metadata.create_all(postgres_schema_engine)
     session_factory = sessionmaker(bind=postgres_schema_engine, expire_on_commit=False)
     seed = session_factory()
@@ -161,11 +162,10 @@ def test_postgresql_submit_and_final_grading_interleave_completes_activity(postg
         course_id=course.id,
         course_version_id=version.id,
         owner_id=user.id,
-        question_type="SHORT_TEXT",
+        question_type="MCQ",
         prompt="Explain the concurrency fixture.",
-        options=None,
-        correct_answer=None,
-        rubric=["mentions the fixture"],
+        options=["A deterministic concurrency fixture.", "An unrelated option", "Another distractor", "A final distractor"],
+        correct_answer="A deterministic concurrency fixture.",
         difficulty=0.5,
         is_diagnostic=1,
         version=1,
@@ -203,37 +203,36 @@ def test_postgresql_submit_and_final_grading_interleave_completes_activity(postg
     seed.flush()
     answer = AnswerSubmission(
         assessment_question_id=assessment_question.id,
-        given_answer="It mentions the fixture.",
+        given_answer="A deterministic concurrency fixture.",
         status=AnswerStatus.AWAITING_GRADING.value,
     )
     seed.add(answer)
     seed.commit()
-    ids = (course.id, assessment.id, question.id, user.id)
+    ids = (course.id, assessment.id, question.id, answer.id, user.id)
     seed.close()
 
     grading_started = threading.Event()
     allow_grading_to_finish = threading.Event()
+    original_grade_attempt = learning_service_module.grade_attempt
 
-    class BlockingGeneration(FakeGenerationGateway):
-        def generate(self, *args, **kwargs):
-            grading_started.set()
-            if not allow_grading_to_finish.wait(timeout=10):
-                raise TimeoutError("test did not release grading")
-            return '{"criteria_met": [true]}'
+    def blocking_grade_attempt(*args, **kwargs):
+        grading_started.set()
+        if not allow_grading_to_finish.wait(timeout=10):
+            raise TimeoutError("test did not release grading")
+        return original_grade_attempt(*args, **kwargs)
 
-    generation = BlockingGeneration()
+    monkeypatch.setattr(learning_service_module, "grade_attempt", blocking_grade_attempt)
+    generation = FakeGenerationGateway()
     embeddings = FakeEmbeddingGateway()
-    course_id, assessment_id, question_id, owner_id = ids
+    course_id, assessment_id, question_id, answer_id, owner_id = ids
 
-    def retry_grading():
+    def grade_saved_answer():
         with session_factory() as db:
-            return LearningService(db, generation, embeddings).retry_grading(
-                course_id, assessment_id, question_id, owner_id
-            )
+            return LearningService(db, generation, embeddings).grade_saved_answer(answer_id, owner_id)
 
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
-            grading = pool.submit(retry_grading)
+            grading = pool.submit(grade_saved_answer)
             try:
                 assert grading_started.wait(timeout=10), "grading did not reach the deterministic pause"
                 with session_factory() as db:
@@ -245,7 +244,11 @@ def test_postgresql_submit_and_final_grading_interleave_completes_activity(postg
                     assert activity_state == ActivityStatus.AWAITING_GRADING.value
             finally:
                 allow_grading_to_finish.set()
-            graded = grading.result(timeout=10)
+            grading.result(timeout=10)
+            with session_factory() as db:
+                graded = LearningService(db, FakeGenerationGateway(), embeddings).get_assessment(
+                    course_id, assessment_id, owner_id
+                )
             assert graded["grading_state"] == "COMPLETE"
             assert graded["graded_answer_count"] == 1
             assert graded["unresolved_answer_count"] == 0
@@ -264,6 +267,198 @@ def test_postgresql_submit_and_final_grading_interleave_completes_activity(postg
         assert db.query(LearningActivity.status).filter(LearningActivity.id == activity.id).scalar() == ActivityStatus.COMPLETED.value
         assert db.query(AnswerSubmission).count() == 1
         assert db.query(QuestionAttempt).filter(QuestionAttempt.assessment_question_id.isnot(None)).count() == 1
+        assert db.query(MasteryEvent).filter(MasteryEvent.question_attempt_id.isnot(None)).count() == 1
+
+
+def test_postgresql_concurrent_retries_preserve_worker_lease_and_grade_once(postgres_schema_engine, monkeypatch):
+    Base.metadata.create_all(postgres_schema_engine)
+    session_factory = sessionmaker(bind=postgres_schema_engine, expire_on_commit=False)
+    seed = session_factory()
+    user = User(email=f"p5-{uuid.uuid4().hex}@example.test", full_name="P5 learner", is_active=True)
+    seed.add(user)
+    seed.flush()
+    course = Course(owner_id=user.id, title="P5 retry fixture", status=CourseStatus.PUBLISHED.value)
+    seed.add(course)
+    seed.flush()
+    version = CourseVersion(
+        course_id=course.id,
+        owner_id=user.id,
+        version_number=1,
+        status=CourseVersionStatus.READY.value,
+    )
+    seed.add(version)
+    seed.flush()
+    course.active_version_id = version.id
+    concept = Concept(
+        course_id=course.id,
+        course_version_id=version.id,
+        owner_id=user.id,
+        canonical_key=f"p5-{uuid.uuid4().hex}",
+        name="Retry concurrency concept",
+        definition="A deterministic retry fixture.",
+        importance=0.8,
+    )
+    seed.add(concept)
+    seed.flush()
+    question = Question(
+        course_id=course.id,
+        course_version_id=version.id,
+        owner_id=user.id,
+        question_type="MCQ",
+        prompt="Select the supported retry answer.",
+        options=["Supported answer", "Other A", "Other B", "Other C"],
+        correct_answer="Supported answer",
+        difficulty=0.5,
+        is_diagnostic=1,
+        version=1,
+        model_id="deterministic-test",
+        prompt_version="p5-test-v1",
+    )
+    seed.add(question)
+    seed.flush()
+    seed.add(QuestionConcept(question_id=question.id, concept_id=concept.id, weight=1.0))
+    activity = LearningActivity(
+        owner_id=user.id,
+        course_id=course.id,
+        course_version_id=version.id,
+        activity_type="DIAGNOSTIC",
+        target_concept_ids=[str(concept.id)],
+        status=ActivityStatus.AWAITING_GRADING.value,
+    )
+    seed.add(activity)
+    seed.flush()
+    assessment = AssessmentSession(
+        activity_id=activity.id,
+        course_version_id=version.id,
+        assessment_type=AssessmentType.DIAGNOSTIC.value,
+        status=AssessmentStatus.SUBMITTED.value,
+    )
+    seed.add(assessment)
+    seed.flush()
+    assessment_question = AssessmentQuestion(
+        session_id=assessment.id,
+        question_id=question.id,
+        question_version=question.version,
+        position=0,
+    )
+    seed.add(assessment_question)
+    seed.flush()
+    answer = AnswerSubmission(
+        assessment_question_id=assessment_question.id,
+        given_answer="Supported answer",
+        status=AnswerStatus.GRADING_FAILED.value,
+        failure_code="grading_unavailable",
+        grading_attempt_count=1,
+        grading_call_limit=3,
+    )
+    seed.add(answer)
+    seed.commit()
+    course_id, assessment_id, question_id, answer_id, owner_id = (
+        course.id,
+        assessment.id,
+        question.id,
+        answer.id,
+        user.id,
+    )
+    seed.close()
+
+    retries_started = threading.Barrier(2)
+    failed_answer_reads = threading.Barrier(2)
+    grading_started = threading.Event()
+    allow_grading_to_finish = threading.Event()
+    grading_finished = threading.Event()
+    worker_errors = []
+    unlocked_retry_reads = []
+    unlocked_retry_reads_lock = threading.Lock()
+    original_grade_attempt = learning_service_module.grade_attempt
+
+    def blocking_grade_attempt(*args, **kwargs):
+        grading_started.set()
+        if not allow_grading_to_finish.wait(timeout=10):
+            raise TimeoutError("test did not release grading")
+        return original_grade_attempt(*args, **kwargs)
+
+    monkeypatch.setattr(learning_service_module, "grade_attempt", blocking_grade_attempt)
+    generation = FakeGenerationGateway()
+    embeddings = FakeEmbeddingGateway()
+    worker_thread = None
+
+    def grade_saved_answer():
+        try:
+            with session_factory() as db:
+                LearningService(db, generation, embeddings).grade_saved_answer(answer_id, owner_id)
+        except Exception as exc:  # surfaced in the test thread after the worker is released
+            worker_errors.append(exc)
+        finally:
+            grading_finished.set()
+
+    class BlockingDispatcher:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.started = False
+
+        def enqueue(self, _answer_submission_id, _owner_id):
+            nonlocal worker_thread
+            with self.lock:
+                if not self.started:
+                    self.started = True
+                    worker_thread = threading.Thread(target=grade_saved_answer)
+                    worker_thread.start()
+            assert grading_started.wait(timeout=10), "worker did not acquire its grading lease"
+            with session_factory() as db:
+                active = db.query(AnswerSubmission).filter_by(id=answer_id).one()
+                assert active.grading_lease_token is not None
+            allow_grading_to_finish.set()
+            assert grading_finished.wait(timeout=10), "worker did not finish before the competing retry"
+
+    dispatcher = BlockingDispatcher()
+
+    def synchronize_unlocked_retry_reads(_connection, _cursor, statement, _parameters, _context, _executemany):
+        normalized = statement.upper()
+        if (
+            "FROM ANSWER_SUBMISSIONS" in normalized
+            and "ASSESSMENT_QUESTION_ID =" in normalized
+            and "FOR UPDATE" not in normalized
+        ):
+            with unlocked_retry_reads_lock:
+                unlocked_retry_reads.append(True)
+            slot = failed_answer_reads.wait(timeout=10)
+            if slot == 1:
+                assert grading_finished.wait(timeout=10), "first retry did not finish grading"
+
+    event.listen(postgres_schema_engine, "after_cursor_execute", synchronize_unlocked_retry_reads)
+    def retry_saved_answer():
+        retries_started.wait(timeout=10)
+        with session_factory() as db:
+            return LearningService(db, generation, embeddings, dispatcher).retry_grading(
+                course_id, assessment_id, question_id, owner_id
+            )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            retry_futures = [pool.submit(retry_saved_answer) for _ in range(2)]
+            for future in retry_futures:
+                future.result(timeout=15)
+        # The old unlocked query forces two stale reads; the fixed row-locked
+        # query serializes them and emits no matching SELECT.
+        assert len(unlocked_retry_reads) in {0, 2}
+        with session_factory() as db:
+            completed = db.query(AnswerSubmission).filter_by(id=answer_id).one()
+            assert completed.status == AnswerStatus.GRADED.value
+            assert completed.grading_lease_token is None
+            assert completed.grading_lease_expires_at is None
+    finally:
+        allow_grading_to_finish.set()
+        if worker_thread is not None:
+            worker_thread.join(timeout=15)
+        event.remove(postgres_schema_engine, "after_cursor_execute", synchronize_unlocked_retry_reads)
+
+    assert worker_thread is not None and not worker_thread.is_alive()
+    assert worker_errors == []
+    with session_factory() as db:
+        completed = db.query(AnswerSubmission).filter_by(id=answer_id).one()
+        assert completed.status == AnswerStatus.GRADED.value
+        assert db.query(QuestionAttempt).filter_by(assessment_question_id=assessment_question.id).count() == 1
         assert db.query(MasteryEvent).filter(MasteryEvent.question_attempt_id.isnot(None)).count() == 1
 
 
@@ -524,8 +719,35 @@ def test_postgresql_concurrent_preparation_requests_and_workers_deduplicate_arti
     }
     questions = []
     for index in range(5):
+        if index == 4:
+            questions.append({
+                "question_type": "SHORT_TEXT",
+                "concept_id": str(concept_id),
+                "prompt": "Explain the source supported idea and its defining feature.",
+                "expected_reasoning": "A supported response identifies the idea and explains a feature from the passage.",
+                "source_chunk_ids": [str(chunk_id)],
+                "rubric": [
+                    {
+                        "text": "Identifies the source supported idea.",
+                        "expected_reasoning": "The response names the idea in the passage.",
+                        "source_chunk_ids": [str(chunk_id)],
+                    },
+                    {
+                        "text": "Explains one defining feature.",
+                        "expected_reasoning": "The response explains a feature described in the passage.",
+                        "source_chunk_ids": [str(chunk_id)],
+                    },
+                    {
+                        "text": "Connects the idea to its source.",
+                        "expected_reasoning": "The response ties the idea to the supplied passage.",
+                        "source_chunk_ids": [str(chunk_id)],
+                    },
+                ],
+            })
+            continue
         answer = f"Supported option {index}"
         questions.append({
+            "question_type": "MCQ",
             "concept_id": str(concept_id),
             "prompt": f"Which source supported idea is tested in question number {index}?",
             "options": [answer, f"Distractor {index} B", f"Distractor {index} C", f"Distractor {index} D"],

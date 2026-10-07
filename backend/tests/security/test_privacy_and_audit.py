@@ -14,8 +14,18 @@ from app.modules.courses.models import Course
 from app.modules.curriculum.models import Concept, CourseVersion, CourseVersionStatus, Lesson, Module
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
-from app.modules.learning.models import ActivityStatus, LearningActivity
-from app.modules.mastery.models import MasteryEvent, Question, QuestionConcept
+from app.modules.learning.models import (
+    ActivityStatus,
+    AnswerSubmission,
+    AssessmentQuestion,
+    AssessmentSession,
+    GradingCorrection,
+    GradingIssueReport,
+    GradingJudgment,
+    GradingReviewEvent,
+    LearningActivity,
+)
+from app.modules.mastery.models import MasteryEvent, Question, QuestionAttempt, QuestionConcept
 from app.modules.preparation.models import (
     ActivityPreparation,
     LessonContentArtifact,
@@ -136,6 +146,291 @@ def owner_with_full_footprint(db_session, owner):
 
 
 class TestAccountDeletion:
+    def test_deleting_reviewer_account_anonymizes_audit_actor_and_keeps_effective_correction(
+        self, client, owner, db_session
+    ):
+        from app.modules.auth.models import User
+
+        reviewer = User(email="reviewer-to-delete@example.com", full_name="Reviewer", is_active=True)
+        db_session.add(reviewer)
+        db_session.flush()
+        reviewer_id = reviewer.id
+        course = Course(owner_id=owner.id, title="Reviewer retention course")
+        db_session.add(course)
+        db_session.flush()
+        version = CourseVersion(
+            course_id=course.id,
+            owner_id=owner.id,
+            version_number=1,
+            status=CourseVersionStatus.READY.value,
+        )
+        db_session.add(version)
+        db_session.flush()
+        concept = Concept(
+            course_id=course.id,
+            course_version_id=version.id,
+            owner_id=owner.id,
+            canonical_key="reviewer-retention",
+            name="Reviewer retention",
+            definition="A reviewer account deletion test concept.",
+            importance=0.5,
+        )
+        db_session.add(concept)
+        activity = LearningActivity(
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            activity_type="TARGETED_PRACTICE",
+            target_concept_ids=[str(concept.id)],
+            status=ActivityStatus.COMPLETED.value,
+            presentation_format="concise",
+        )
+        db_session.add(activity)
+        db_session.flush()
+        question = Question(
+            course_id=course.id,
+            course_version_id=version.id,
+            owner_id=owner.id,
+            question_type="SHORT_TEXT",
+            prompt="Explain the supported idea.",
+            options=None,
+            correct_answer=None,
+            rubric=["Names the idea", "Explains its feature", "Connects it to the source"],
+            rubric_passing_criteria=2,
+            difficulty=0.5,
+            is_diagnostic=0,
+            version=1,
+            model_id="fixture",
+            prompt_version="p5-reviewer-deletion-v1",
+        )
+        db_session.add(question)
+        db_session.flush()
+        session = AssessmentSession(
+            activity_id=activity.id,
+            course_version_id=version.id,
+            assessment_type="ACTIVITY",
+            status="SUBMITTED",
+        )
+        db_session.add(session)
+        db_session.flush()
+        assessment_question = AssessmentQuestion(
+            session_id=session.id,
+            question_id=question.id,
+            question_version=question.version,
+            position=0,
+        )
+        db_session.add(assessment_question)
+        db_session.flush()
+        answer = AnswerSubmission(assessment_question_id=assessment_question.id, given_answer="Saved answer", status="GRADED")
+        db_session.add(answer)
+        db_session.flush()
+        attempt = QuestionAttempt(
+            assessment_question_id=assessment_question.id,
+            question_id=question.id,
+            question_version=question.version,
+            owner_id=owner.id,
+            course_id=course.id,
+            given_answer=answer.given_answer,
+            correctness=0.0,
+        )
+        db_session.add(attempt)
+        db_session.flush()
+        db_session.add(MasteryEvent(
+            owner_id=owner.id,
+            concept_id=concept.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            question_attempt_id=attempt.id,
+            correctness=0.0,
+            evidence_weight_base=1.0,
+        ))
+        report = GradingIssueReport(
+            answer_submission_id=answer.id,
+            owner_id=owner.id,
+            course_id=course.id,
+            report_text="Please review this judgment.",
+            status="CORRECTED",
+        )
+        db_session.add(report)
+        db_session.flush()
+        db_session.add_all([
+            GradingReviewEvent(
+                report_id=report.id,
+                reviewer_id=reviewer.id,
+                event_type="CORRECTED",
+                reason="Approved correction.",
+                correction_version=1,
+            ),
+            GradingCorrection(
+                report_id=report.id,
+                question_attempt_id=attempt.id,
+                reviewer_id=reviewer.id,
+                version=1,
+                criteria_met=[True, True, False],
+                rubric_score=2,
+                effective_correctness=1,
+                reason="Approved correction.",
+            ),
+        ])
+        db_session.commit()
+        report_id = report.id
+        attempt_id = attempt.id
+
+        response = client.delete("/api/v1/me", headers=auth_headers(reviewer.email))
+        assert response.status_code == 202
+        assert db_session.get(User, reviewer_id) is None
+        assert db_session.query(GradingIssueReport).filter_by(id=report_id).count() == 1
+        assert db_session.query(GradingReviewEvent).filter_by(report_id=report_id).one().reviewer_id is None
+        correction = db_session.query(GradingCorrection).filter_by(report_id=report_id).one()
+        assert correction.reviewer_id is None
+        assert correction.effective_correctness == 1
+        assert db_session.query(QuestionAttempt).filter_by(id=attempt_id).one().correctness == 0.0
+
+    def test_account_deletion_removes_short_answer_review_and_correction_history(
+        self, client, owner, db_session
+    ):
+        course = Course(owner_id=owner.id, title="Review retention course")
+        db_session.add(course)
+        db_session.flush()
+        version = CourseVersion(
+            course_id=course.id,
+            owner_id=owner.id,
+            version_number=1,
+            status=CourseVersionStatus.READY.value,
+        )
+        db_session.add(version)
+        db_session.flush()
+        concept = Concept(
+            course_id=course.id,
+            course_version_id=version.id,
+            owner_id=owner.id,
+            canonical_key="review-retention",
+            name="Review retention",
+            definition="A deletion test concept.",
+            importance=0.5,
+        )
+        db_session.add(concept)
+        activity = LearningActivity(
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            activity_type="TARGETED_PRACTICE",
+            target_concept_ids=[],
+            status=ActivityStatus.COMPLETED.value,
+            presentation_format="concise",
+        )
+        db_session.add(activity)
+        db_session.flush()
+        question = Question(
+            course_id=course.id,
+            course_version_id=version.id,
+            owner_id=owner.id,
+            question_type="SHORT_TEXT",
+            prompt="Explain the concept.",
+            options=None,
+            correct_answer=None,
+            rubric=["Explains the supported idea."],
+            difficulty=0.5,
+            is_diagnostic=0,
+            version=1,
+            model_id="fixture",
+            prompt_version="p5-retention-test-v1",
+        )
+        db_session.add(question)
+        db_session.flush()
+        session = AssessmentSession(
+            activity_id=activity.id,
+            course_version_id=version.id,
+            assessment_type="ACTIVITY",
+            status="SUBMITTED",
+        )
+        db_session.add(session)
+        db_session.flush()
+        item = AssessmentQuestion(
+            session_id=session.id,
+            question_id=question.id,
+            question_version=question.version,
+            position=0,
+        )
+        db_session.add(item)
+        db_session.flush()
+        answer = AnswerSubmission(
+            assessment_question_id=item.id,
+            given_answer="A saved learner answer.",
+            status="GRADED",
+        )
+        db_session.add(answer)
+        db_session.flush()
+        attempt = QuestionAttempt(
+            assessment_question_id=item.id,
+            question_id=question.id,
+            question_version=question.version,
+            owner_id=owner.id,
+            course_id=course.id,
+            given_answer=answer.given_answer,
+            correctness=1.0,
+        )
+        db_session.add(attempt)
+        db_session.flush()
+        db_session.add(MasteryEvent(
+            owner_id=owner.id,
+            concept_id=concept.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            question_attempt_id=attempt.id,
+            correctness=1.0,
+            evidence_weight_base=1.0,
+        ))
+        report = GradingIssueReport(
+            answer_submission_id=answer.id,
+            owner_id=owner.id,
+            course_id=course.id,
+            report_text="Please review this answer.",
+            status="CORRECTED",
+        )
+        db_session.add_all([
+            report,
+            GradingJudgment(
+                answer_submission_id=answer.id,
+                criteria_met=[True],
+                rubric_score=1,
+                evidence_correctness=1,
+                policy_version="p5-rubric-binary-evidence-v1",
+                model_id="fixture",
+            ),
+        ])
+        db_session.flush()
+        db_session.add_all([
+            GradingReviewEvent(
+                report_id=report.id,
+                reviewer_id=owner.id,
+                event_type="CORRECTED",
+                reason="Saved correction for retention test.",
+                correction_version=1,
+            ),
+            GradingCorrection(
+                report_id=report.id,
+                question_attempt_id=attempt.id,
+                reviewer_id=owner.id,
+                version=1,
+                criteria_met=[False],
+                rubric_score=0,
+                effective_correctness=0,
+                reason="Saved correction for retention test.",
+            ),
+        ])
+        db_session.commit()
+
+        response = client.delete("/api/v1/me", headers=auth_headers(owner.email))
+        assert response.status_code == 202
+        assert db_session.query(GradingReviewEvent).count() == 0
+        assert db_session.query(GradingCorrection).count() == 0
+        assert db_session.query(GradingJudgment).count() == 0
+        assert db_session.query(GradingIssueReport).count() == 0
+        assert db_session.query(AnswerSubmission).count() == 0
+        assert db_session.query(QuestionAttempt).count() == 0
+        assert db_session.query(MasteryEvent).count() == 0
+
     def test_deletion_removes_p2_preparation_content_and_question_provenance(
         self, client, owner, db_session, owner_with_full_footprint
     ):

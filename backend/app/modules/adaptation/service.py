@@ -182,7 +182,7 @@ class AdaptationService:
         )
         if len(recent) < STRUGGLING_RECENT_EVENTS:
             return False
-        return (sum(e.correctness for e in recent) / len(recent)) < STRUGGLING_CORRECTNESS_THRESHOLD
+        return (sum(e.effective_correctness for e in recent) / len(recent)) < STRUGGLING_CORRECTNESS_THRESHOLD
 
     def _affinity_states(self, owner_id: int) -> Dict[str, AffinityState]:
         rows = self.db.query(PresentationAffinity).filter(PresentationAffinity.owner_id == owner_id).all()

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from app.modules.mastery.schemas import MasteryReportRow
 
@@ -82,14 +82,108 @@ class AnswerOut(BaseModel):
     given_answer: Any
     status: str
     submitted_at: datetime
+    grading_failure: Optional[Literal["GRADING_UNAVAILABLE", "ALLOWANCE_UNAVAILABLE", "RETRIES_EXHAUSTED"]] = None
+    retry_available: bool = False
+
+
+class RubricFeedbackOut(BaseModel):
+    criterion: str
+    met: bool
+    expected_reasoning: str
+    source_chunk_ids: list[UUID]
 
 
 class QuestionResultOut(BaseModel):
     correctness: Optional[float] = None
     expected_answer: Any = None
     rubric: Optional[list[str]] = None
+    rubric_passing_criteria: Optional[int] = None
     explanation: Optional[str] = None
     source_chunk_ids: Optional[list[UUID]] = None
+    expected_reasoning: Optional[str] = None
+    rubric_score: Optional[int] = None
+    rubric_feedback: Optional[list[RubricFeedbackOut]] = None
+    automated_grading: bool = False
+    grade_corrected: bool = False
+    correction_reason: Optional[str] = None
+
+
+class GradingIssueReportOut(BaseModel):
+    id: UUID
+    status: str
+    received: bool = True
+    created_at: datetime
+
+
+class GradingIssueReportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    report_text: str = Field(min_length=1, max_length=2000)
+
+
+class GradingReviewReasonIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class GradingCorrectionIn(GradingReviewReasonIn):
+    criteria_met: list[StrictBool] = Field(min_length=1, max_length=5)
+    expected_correction_version: int = Field(ge=0)
+
+
+class GradingReviewSourceOut(BaseModel):
+    chunk_id: UUID
+    heading_path: Optional[str]
+    text: str
+
+
+class GradingCorrectionOut(BaseModel):
+    version: int
+    criteria_met: list[bool]
+    rubric_score: int
+    effective_correctness: int
+    reason: str
+    created_at: datetime
+
+
+class GradingReviewEventOut(BaseModel):
+    event_type: str
+    reason: str
+    correction_version: Optional[int]
+    created_at: datetime
+
+
+class GradingReviewItemOut(BaseModel):
+    id: UUID
+    course_id: UUID
+    status: str
+    report_text: str
+    created_at: datetime
+    answer: str
+    question_id: UUID
+    question_version: int
+    prompt: str
+    rubric: list[str]
+    rubric_passing_criteria: int
+    expected_reasoning: str
+    original_criteria_met: list[bool]
+    original_rubric_score: int
+    original_evidence_correctness: int
+    sources: list[GradingReviewSourceOut]
+    corrections: list[GradingCorrectionOut]
+    history: list[GradingReviewEventOut]
+    latest_effective_criteria_met: list[bool]
+    latest_effective_correctness: int
+    latest_correction_version: int
+
+
+class GradingReviewPageOut(BaseModel):
+    items: list[GradingReviewItemOut]
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    has_more: bool
+    next_offset: Optional[int] = Field(default=None, ge=0)
 
 
 class AssessmentQuestionOut(BaseModel):
@@ -102,6 +196,7 @@ class AssessmentQuestionOut(BaseModel):
     difficulty: float
     answer: Optional[AnswerOut] = None
     result: Optional[QuestionResultOut] = None
+    grading_issue_report: Optional[GradingIssueReportOut] = None
 
 
 class AssessmentConceptProgressOut(BaseModel):

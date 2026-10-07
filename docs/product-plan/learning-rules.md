@@ -3,8 +3,8 @@
 Agreed product and safeguard behavior. Remaining open numeric policies are listed in
 [README.md](README.md); P3 progress-display defaults are recorded below.
 
-P1–P4 implemented behavior is in the corresponding lifecycle, preparation, results,
-and [P4 contract](p4-adaptive-activities-contract.md). The
+P1–P5 implemented behavior is in the corresponding lifecycle, preparation, results,
+adaptive activity, and [P5 contract](p5-short-answer-review-contract.md). The
 rules below identify implemented behavior and pieces that await later work.
 
 ## Activities
@@ -46,6 +46,9 @@ limitation. The general exit policy for an assessment that stays unavailable rem
   (`P4_REMEDIATION_QUESTION_COUNT_V1`, `P4_TARGETED_PRACTICE_QUESTION_COUNT_V1`,
   `P4_CHALLENGE_QUESTION_COUNT_V1`); these are named, versioned, configurable, and
   unvalidated defaults. The P2 hard cap remains eight.
+- New prepared lesson, remediation, targeted-practice, and challenge assessments replace
+  one MCQ with one grounded short answer by default (`P5_SHORT_ANSWER_COUNT_V1=1`);
+  diagnostics and existing cached/fixed MCQ sets stay unchanged.
 - Persist a fixed set per assessment; one confirmed answer per question. No hints or
   same-question retries. Transport/grading retries reuse the saved answer.
 - P2 MCQ correctness is binary with difficulty 0.5 (`P2_MCQ_DEFAULT_DIFFICULTY_V1`);
@@ -56,16 +59,26 @@ limitation. The general exit policy for an assessment that stays unavailable rem
   never assigns diagnostic questions to a lesson assessment.
 - Correctness and explanations appear after all questions are submitted. MCQ comparison
   is server-side; short answer uses an automated rubric judgment that can be wrong.
+- The P5 default rubric has three equally weighted, source-backed criteria. Results show
+  0–3 criteria met separately from the existing binary evidence score: at least two met
+  is correct; fewer than two is incorrect (`P5_RUBRIC_*_V1`). This does not create a
+  fractional mastery score or alter mastery formulas.
 - Grading failure stores Awaiting grading, not incorrect. Evidence enters mastery once
   per successfully graded attempt; retries must not duplicate it.
+- A saved answer gets at most three same-provider grading calls in the default policy
+  (`P5_GRADING_MAX_PROVIDER_CALLS_V1`); no automatic provider fallback is used. Queue
+  redelivery and expired-lease recovery grade the saved answer against its fixed rubric.
 - Results explain rubric points, concept changes, source support, and the next step.
 - P3 results expose saved answers, grade or unresolved status, P2-supported expected
   answers/explanations, and source links only after the complete set is submitted.
   Graded and unresolved counts are explicit; pending answers never count as incorrect.
-- Reporting preserves original evidence; no automatic score change or immediate-resolution
-  promise. An authorized reviewer can correct the judgment. Keep the original judgment
-  and correction history; recompute affected mastery/attributed outcomes without another
-  attempt. Preserve historical decision traces. Access and correction propagation need contracts.
+- One report is allowed per saved judgment; duplicate requests return that original report.
+  It remains open until a separately allowlisted reviewer moves it to In review, Retained,
+  or Corrected. The acknowledgment does not promise immediate resolution. Raw evidence and
+  the automated judgment stay immutable. Each approved correction appends a version; the
+  latest version determines effective evidence in mastery, recommendations, results, and
+  attributed outcomes without another attempt. Historical recommendation decisions stay
+  fixed. Reports and audit history are deleted with the account or course learning data.
 
 ## Mastery and presentation
 

@@ -30,6 +30,7 @@ from app.modules.learning.models import (
     AnswerSubmission,
     AssessmentQuestion,
     AssessmentSession,
+    GradingJudgment,
     LearningActivity,
 )
 from app.modules.learning.router import _service as learning_service_dependency
@@ -669,8 +670,16 @@ class TestActivityCoverageAndOwnership:
             def generate(self, *args, **kwargs):
                 raise GenerationError("fixture grading outage")
 
+        failing_generation = FailingGeneration()
+
+        class FailingDispatcher:
+            def enqueue(self, answer_submission_id, owner_id):
+                LearningService(db_session, failing_generation, fake_embeddings).grade_saved_answer(
+                    answer_submission_id, owner_id
+                )
+
         def failing_service():
-            return LearningService(db_session, FailingGeneration(), fake_embeddings)
+            return LearningService(db_session, failing_generation, fake_embeddings, FailingDispatcher())
 
         monkeypatch.setitem(app.dependency_overrides, learning_service_dependency, failing_service)
         headers = auth_headers(owner.email)
@@ -683,6 +692,8 @@ class TestActivityCoverageAndOwnership:
         submitted_answer = client.post(answer_url, json={"given_answer": "A supported response"}, headers=headers)
         assert submitted_answer.status_code == 200
         assert submitted_answer.json()["questions"][0]["answer"]["status"] == "GRADING_FAILED"
+        assert submitted_answer.json()["questions"][0]["answer"]["grading_failure"] == "RETRIES_EXHAUSTED"
+        assert submitted_answer.json()["questions"][0]["answer"]["retry_available"] is False
         assert "result" not in submitted_answer.json()["questions"][0]
         assert db_session.query(AnswerSubmission).count() == 1
         assert db_session.query(QuestionAttempt).filter(QuestionAttempt.assessment_question_id.isnot(None)).count() == 0
@@ -693,10 +704,8 @@ class TestActivityCoverageAndOwnership:
             headers=headers,
         )
         assert completed_set.status_code == 200
-        result = completed_set.json()["questions"][0]["result"]
-        assert "correctness" not in result
-        assert result["rubric"] == ["identifies the concept"]
-        assert completed_set.json()["grading_state"] == "RETRY_REQUIRED"
+        assert "result" not in completed_set.json()["questions"][0]
+        assert completed_set.json()["grading_state"] == "EXHAUSTED"
         assert completed_set.json()["graded_answer_count"] == 0
         assert completed_set.json()["unresolved_answer_count"] == 1
         pending_progress = completed_set.json()["concept_progress"][0]
@@ -711,29 +720,232 @@ class TestActivityCoverageAndOwnership:
         assert active_on_continue.json()["assessment_session_id"] == session["id"]
         assert db_session.query(AdaptationDecision).count() == 0
 
-        def recovered_service():
-            generation = FakeGenerationGateway().set_default('{"criteria_met": [true]}')
-            return LearningService(db_session, generation, fake_embeddings)
-
-        monkeypatch.setitem(app.dependency_overrides, learning_service_dependency, recovered_service)
         retry_url = (
             f"/api/v1/courses/{course.id}/assessment-sessions/{session['id']}"
             f"/questions/{question_id}/retry-grading"
         )
-        recovered = client.post(retry_url, headers=headers)
-        retried_again = client.post(retry_url, headers=headers)
-        assert recovered.status_code == retried_again.status_code == 200
-        assert recovered.json()["grading_state"] == "COMPLETE"
-        assert recovered.json()["questions"][0]["result"]["correctness"] == 1.0
-        assert recovered.json()["graded_answer_count"] == 1
-        assert recovered.json()["unresolved_answer_count"] == 0
-        assert recovered.json()["concept_progress"][0]["after_band"] == "Developing"
-        assert recovered.json()["concept_progress"][0]["after_evidence_strength"] == "Limited evidence"
+        exhausted_retry = client.post(retry_url, headers=headers)
+        assert exhausted_retry.status_code == 409
         assert db_session.query(AnswerSubmission).one().given_answer == "A supported response"
-        assert db_session.query(QuestionAttempt).filter(QuestionAttempt.assessment_question_id.isnot(None)).count() == 1
-        assert db_session.query(MasteryEvent).count() == 1
+        assert db_session.query(QuestionAttempt).filter(QuestionAttempt.assessment_question_id.isnot(None)).count() == 0
+        assert db_session.query(MasteryEvent).count() == 0
         db_session.refresh(activity)
-        assert activity.status == "COMPLETED"
+        assert activity.status == "AWAITING_GRADING"
+
+
+def test_saved_short_answer_recovers_after_worker_interruption_without_duplicate_evidence(
+    owner, db_session, fake_embeddings, published_course_with_lessons
+):
+    course, version, concept_a, _, _lesson = published_course_with_lessons
+    activity = LearningActivity(
+        owner_id=owner.id,
+        course_id=course.id,
+        course_version_id=version.id,
+        activity_type="TARGETED_PRACTICE",
+        target_concept_ids=[str(concept_a.id)],
+        status="READY",
+        presentation_format="concise",
+    )
+    db_session.add(activity)
+    db_session.flush()
+    criteria = [
+        {"text": f"Criterion {index} is satisfied.", "expected_reasoning": f"Reasoning for criterion {index}.", "source_chunk_ids": []}
+        for index in range(1, 4)
+    ]
+    question = Question(
+        course_id=course.id,
+        course_version_id=version.id,
+        owner_id=owner.id,
+        question_type="SHORT_TEXT",
+        prompt="Explain the source-supported concept.",
+        options=None,
+        correct_answer=None,
+        rubric=[item["text"] for item in criteria],
+        rubric_details=criteria,
+        expected_reasoning="A correct explanation connects the idea to its defining feature.",
+        explanation="A correct explanation connects the idea to its defining feature.",
+        difficulty=0.5,
+        is_diagnostic=0,
+        version=1,
+        model_id="fixture",
+        prompt_version="p5-test-v1",
+    )
+    db_session.add(question)
+    db_session.flush()
+    db_session.add(QuestionConcept(question_id=question.id, concept_id=concept_a.id, weight=1.0))
+    session = AssessmentSession(
+        activity_id=activity.id,
+        course_version_id=version.id,
+        assessment_type="ACTIVITY",
+        status="OPEN",
+    )
+    db_session.add(session)
+    db_session.flush()
+    item = AssessmentQuestion(
+        session_id=session.id,
+        question_id=question.id,
+        question_version=question.version,
+        position=0,
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    learner_answer = "This answer names the idea and explains its defining feature."
+    unqueued = LearningService(db_session, FakeGenerationGateway(), fake_embeddings)
+    locked = unqueued.submit_answer(course.id, session.id, question.id, owner.id, learner_answer)
+    assert locked["questions"][0]["answer"]["given_answer"] == learner_answer
+    assert locked["questions"][0]["result"] is None
+    answer = db_session.query(AnswerSubmission).one()
+
+    class InterruptedGeneration(FakeGenerationGateway):
+        def generate(self, *args, **kwargs):
+            raise KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        LearningService(db_session, InterruptedGeneration(), fake_embeddings).grade_saved_answer(
+            answer.id, owner.id
+        )
+    db_session.refresh(answer)
+    assert answer.status == "AWAITING_GRADING"
+    assert answer.grading_attempt_count == 1
+    assert answer.given_answer == learner_answer
+    answer.grading_lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    db_session.commit()
+
+    recovered_generation = FakeGenerationGateway().set_default(
+        '{"criteria_met": [true, false, true]}'
+    )
+
+    class InlineDispatcher:
+        def enqueue(self, answer_submission_id, owner_id):
+            LearningService(db_session, recovered_generation, fake_embeddings).grade_saved_answer(
+                answer_submission_id, owner_id
+            )
+
+    recovered = LearningService(
+        db_session, recovered_generation, fake_embeddings, InlineDispatcher()
+    ).submit_assessment(course.id, session.id, owner.id)
+    assert recovered["grading_state"] == "COMPLETE"
+    assert recovered["questions"][0]["result"]["rubric_score"] == 2
+    assert recovered["questions"][0]["result"]["correctness"] == 1.0
+    assert recovered["questions"][0]["answer"]["given_answer"] == learner_answer
+    assert db_session.query(AnswerSubmission).one().grading_attempt_count == 2
+    assert db_session.query(QuestionAttempt).filter_by(assessment_question_id=item.id).count() == 1
+    assert db_session.query(MasteryEvent).filter_by(course_id=course.id).count() == 1
+    assert db_session.query(GradingJudgment).count() == 1
+
+    LearningService(db_session, recovered_generation, fake_embeddings).grade_saved_answer(
+        answer.id, owner.id
+    )
+    assert db_session.query(QuestionAttempt).filter_by(assessment_question_id=item.id).count() == 1
+    assert db_session.query(MasteryEvent).filter_by(course_id=course.id).count() == 1
+    assert db_session.query(GradingJudgment).count() == 1
+
+
+def test_confirmed_answer_queues_and_stays_pending_until_worker_finishes(
+    client, owner, db_session, fake_embeddings, published_course_with_lessons, monkeypatch
+):
+    from app.core.config import settings
+
+    course, version, concept_a, _, _lesson = published_course_with_lessons
+    activity = LearningActivity(
+        owner_id=owner.id,
+        course_id=course.id,
+        course_version_id=version.id,
+        activity_type="TARGETED_PRACTICE",
+        target_concept_ids=[str(concept_a.id)],
+        status="READY",
+        presentation_format="concise",
+    )
+    db_session.add(activity)
+    db_session.flush()
+    rubric_details = [
+        {"text": f"Criterion {index} is supported.", "expected_reasoning": f"Reason {index}.", "source_chunk_ids": []}
+        for index in range(1, 4)
+    ]
+    question = Question(
+        course_id=course.id,
+        course_version_id=version.id,
+        owner_id=owner.id,
+        question_type="SHORT_TEXT",
+        prompt="Explain the concept and its defining feature.",
+        options=None,
+        correct_answer=None,
+        rubric=[row["text"] for row in rubric_details],
+        rubric_details=rubric_details,
+        rubric_passing_criteria=2,
+        expected_reasoning="Connect the concept to its defining feature.",
+        difficulty=0.5,
+        is_diagnostic=0,
+        version=1,
+        model_id="fixture",
+        prompt_version="p5-test-v1",
+    )
+    db_session.add(question)
+    db_session.flush()
+    db_session.add(QuestionConcept(question_id=question.id, concept_id=concept_a.id, weight=1.0))
+    session = AssessmentSession(activity_id=activity.id, course_version_id=version.id, assessment_type="ACTIVITY", status="OPEN")
+    db_session.add(session)
+    db_session.flush()
+    question_in_session = AssessmentQuestion(
+        session_id=session.id, question_id=question.id, question_version=question.version, position=0
+    )
+    db_session.add(question_in_session)
+    db_session.commit()
+
+    class DeferredDispatcher:
+        def __init__(self):
+            self.jobs = []
+
+        def enqueue(self, answer_submission_id, owner_id):
+            self.jobs.append((answer_submission_id, owner_id))
+
+    dispatcher = DeferredDispatcher()
+    generation = FakeGenerationGateway().set_default('{"criteria_met": [true, false, true]}')
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        learning_service_dependency,
+        lambda: LearningService(db_session, generation, fake_embeddings, dispatcher),
+    )
+    headers = auth_headers(owner.email)
+    session_url = f"/api/v1/courses/{course.id}/assessment-sessions/{session.id}"
+    question_url = f"{session_url}/questions/{question.id}"
+    saved = client.post(
+        f"{question_url}/answer",
+        json={"given_answer": "The answer explains the concept's defining feature."},
+        headers=headers,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["questions"][0]["answer"]["status"] == "AWAITING_GRADING"
+    assert saved.json()["questions"][0].get("result") is None
+    answer = db_session.query(AnswerSubmission).one()
+    assert answer.given_answer == "The answer explains the concept's defining feature."
+    assert answer.grading_call_limit == 3
+    assert dispatcher.jobs == [(answer.id, owner.id)]
+    assert db_session.query(QuestionAttempt).filter_by(assessment_question_id=question_in_session.id).count() == 0
+    assert db_session.query(MasteryEvent).filter_by(course_id=course.id).count() == 0
+
+    submitted = client.post(f"{session_url}/submit", headers=headers)
+    assert submitted.status_code == 200
+    assert submitted.json()["grading_state"] == "AWAITING_GRADING"
+    assert submitted.json()["questions"][0].get("result") is None
+    assert submitted.json()["unresolved_answer_count"] == 1
+
+    # Runtime tuning changes apply to answers saved later; this answer keeps its
+    # persisted call allowance and the immutable threshold on its question version.
+    monkeypatch.setattr(settings, "P5_GRADING_MAX_PROVIDER_CALLS_V1", 1)
+    LearningService(db_session, generation, fake_embeddings).grade_saved_answer(answer.id, owner.id)
+    refreshed = client.get(session_url, headers=headers)
+    assert refreshed.status_code == 200
+    completed = refreshed.json()
+    assert completed["grading_state"] == "COMPLETE"
+    assert completed["questions"][0]["result"]["rubric_score"] == 2
+    assert completed["questions"][0]["result"]["correctness"] == 1.0
+    assert db_session.query(AnswerSubmission).one().grading_attempt_count == 1
+    assert db_session.query(QuestionAttempt).filter_by(assessment_question_id=question_in_session.id).count() == 1
+    assert db_session.query(MasteryEvent).filter_by(course_id=course.id).count() == 1
+    db_session.refresh(activity)
+    assert activity.status == "COMPLETED"
 
 
 class TestAssessmentProgressAttribution:
@@ -1009,7 +1221,17 @@ class TestConcurrentActivitySelection:
                 return super().submit_answer(course_id, session_id, question_id, owner_id, given_answer)
 
         def override_learning_service(db=Depends(get_db)):
-            return RacingLearningService(db, FakeGenerationGateway(), FakeEmbeddingGateway())
+            generation = FakeGenerationGateway()
+
+            class InlineDispatcher:
+                def enqueue(self, answer_submission_id, owner_id):
+                    LearningService(db, generation, FakeEmbeddingGateway()).grade_saved_answer(
+                        answer_submission_id, owner_id
+                    )
+
+            return RacingLearningService(
+                db, generation, FakeEmbeddingGateway(), InlineDispatcher()
+            )
 
         monkeypatch.setitem(app.dependency_overrides, get_db, override_db)
         monkeypatch.setitem(app.dependency_overrides, learning_service_dependency, override_learning_service)

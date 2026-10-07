@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+from app.modules.adaptation.outcome_service import AdaptationOutcomeService
 from app.modules.courses.models import Course, CourseStatus
 from app.modules.curriculum.models import (
     Concept,
@@ -16,7 +17,7 @@ from app.modules.curriculum.models import (
 )
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
-from app.modules.learning.models import ActivityStatus, LearningActivity
+from app.modules.learning.models import ActivityStatus, AssessmentQuestion, AssessmentSession, LearningActivity
 from app.modules.learning.router import _preparation_service as preparation_dependency
 from app.modules.mastery.models import MasteryEvent, Question, QuestionAttempt, QuestionConcept
 from app.modules.mastery.service import MasteryService
@@ -34,6 +35,7 @@ from app.modules.preparation.generation import (
     P4_QUESTION_FRESHNESS_POLICY_VERSION,
     VALIDATION_POLICY_VERSION,
     parse_mcq_set,
+    parse_prepared_question_set,
 )
 from app.services.generation.fake import FakeGenerationGateway
 from app.services.generation.gateway import GenerationError
@@ -73,6 +75,8 @@ def _p4_gateway(
             prompt_offset=prompt_offset,
             duplicate_prompt=duplicate_prompt,
         ),
+    ).when_prompt_contains(
+        '"criteria_met"', '{"criteria_met": [true, true, true]}'
     ).when_prompt_contains(
         "is also a supported correct answer.", '{"supported": false}'
     )
@@ -116,14 +120,43 @@ def _lesson_draft(concept_ids, chunk_ids, *, unsupported=False, content_variant=
     )
 
 
-def _question_draft(concept_ids, chunk_ids, *, duplicate_prompt=False, prompt_offset=0):
+def _question_draft(concept_ids, chunk_ids, *, duplicate_prompt=False, prompt_offset=0, include_short=True):
     questions = []
     for index in range(5):
         concept_index = index % len(concept_ids)
         prompt_index = 0 if duplicate_prompt else index + prompt_offset
+        if include_short and index == 4:
+            questions.append(
+                {
+                    "question_type": "SHORT_TEXT",
+                    "concept_id": str(concept_ids[concept_index]),
+                    "prompt": f"Explain the source-supported idea {prompt_index} in your own words.",
+                    "expected_reasoning": f"A supported response explains idea {prompt_index} from this source.",
+                    "source_chunk_ids": [str(chunk_ids[concept_index])],
+                    "rubric": [
+                        {
+                            "text": f"Identifies the supported idea {prompt_index}.",
+                            "expected_reasoning": f"The response names idea {prompt_index}.",
+                            "source_chunk_ids": [str(chunk_ids[concept_index])],
+                        },
+                        {
+                            "text": f"Explains one source-supported feature {prompt_index}.",
+                            "expected_reasoning": f"The response explains a feature of idea {prompt_index}.",
+                            "source_chunk_ids": [str(chunk_ids[concept_index])],
+                        },
+                        {
+                            "text": f"Connects the explanation to its source {prompt_index}.",
+                            "expected_reasoning": f"The response connects the explanation to the passage for idea {prompt_index}.",
+                            "source_chunk_ids": [str(chunk_ids[concept_index])],
+                        },
+                    ],
+                }
+            )
+            continue
         correct = f"Supported answer {index}"
         questions.append(
             {
+                "question_type": "MCQ",
                 "concept_id": str(concept_ids[concept_index]),
                 "prompt": f"From the course source, which choice describes idea {prompt_index}?",
                 "options": [correct, f"Distractor {index} B", f"Distractor {index} C", f"Distractor {index} D"],
@@ -133,6 +166,12 @@ def _question_draft(concept_ids, chunk_ids, *, duplicate_prompt=False, prompt_of
             }
         )
     return json.dumps({"insufficient_evidence": False, "questions": questions})
+
+
+def _answer_value(question, option_index=0):
+    if question["question_type"] == "SHORT_TEXT":
+        return "The response identifies the supported idea, explains its feature, and connects it to the passage."
+    return question["options"][option_index]
 
 
 def _configure_generation(
@@ -146,6 +185,8 @@ def _configure_generation(
         _question_draft(
             concept_ids, chunk_ids, duplicate_prompt=duplicate_prompt, prompt_offset=prompt_offset
         ),
+    ).when_prompt_contains(
+        '"criteria_met"', '{"criteria_met": [true, true, true]}'
     ).when_prompt_contains(
         "is also a supported correct answer.", '{"supported": false}'
     ).set_default('{"supported": true}')
@@ -329,8 +370,15 @@ def test_uploaded_outline_publish_saved_lesson_and_fixed_mcq_assessment(
     assert len(prepared) == 5
     questions = [db_session.query(Question).filter_by(id=row.question_id).one() for row in prepared]
     assert [row.position for row in prepared] == list(range(5))
-    assert all(question.question_type == "MCQ" and question.is_diagnostic == 0 for question in questions)
-    assert all(len(question.options) == 4 and question.correct_answer in question.options for question in questions)
+    assert [question.question_type for question in questions].count("SHORT_TEXT") == 1
+    assert all(question.is_diagnostic == 0 for question in questions)
+    assert all(
+        len(question.options) == 4 and question.correct_answer in question.options
+        for question in questions
+        if question.question_type == "MCQ"
+    )
+    short_question = next(question for question in questions if question.question_type == "SHORT_TEXT")
+    assert len(short_question.rubric) == 3 and len(short_question.rubric_details) == 3
     assert all(question.explanation and question.difficulty == 0.5 for question in questions)
 
     mastery_before_reading = db_session.query(MasteryEvent).count()
@@ -350,7 +398,7 @@ def test_uploaded_outline_publish_saved_lesson_and_fixed_mcq_assessment(
     for question in session["questions"]:
         confirmed = client.post(
             f"{session_url}/questions/{question['question_id']}/answer",
-            json={"given_answer": question["options"][0]},
+            json={"given_answer": _answer_value(question)},
             headers=headers,
         )
         assert confirmed.status_code == 200
@@ -681,7 +729,7 @@ def test_submitted_lesson_results_select_next_activity_and_resume_reused_prepara
     for question in session["questions"]:
         saved_answer = client.post(
             f"{session_url}/questions/{question['question_id']}/answer",
-            json={"given_answer": question["options"][0]},
+            json={"given_answer": _answer_value(question)},
             headers=headers,
         )
         assert saved_answer.status_code == 200
@@ -1233,7 +1281,7 @@ def test_targeted_practice_prepares_questions_and_uses_p3_results_without_readin
     for question in session["questions"]:
         confirmed = client.post(
             f"{session_url}/questions/{question['question_id']}/answer",
-            json={"given_answer": question["options"][0]},
+            json={"given_answer": _answer_value(question)},
             headers=headers,
         )
         assert confirmed.status_code == 200
@@ -1293,7 +1341,7 @@ def test_challenge_has_single_concept_attribution_per_question_and_no_reading_ga
     for question in session["questions"]:
         saved = client.post(
             f"{session_url}/questions/{question['question_id']}/answer",
-            json={"given_answer": question["options"][1]},
+            json={"given_answer": _answer_value(question, 1)},
             headers=headers,
         )
         assert saved.status_code == 200
@@ -1354,6 +1402,243 @@ def test_remediation_prepares_focused_teaching_then_requires_reading_before_asse
         len(db_session.query(QuestionConcept).filter_by(question_id=UUID(question["question_id"])).all()) == 1
         for question in assessment.json()["questions"]
     )
+
+
+def test_short_answer_report_and_authorized_correction_update_effective_evidence(
+    client, owner, db_session, fake_generation, fake_embeddings, monkeypatch
+):
+    from app.core.config import settings
+    from app.modules.adaptation.models import AdaptationDecision
+    from app.modules.adaptation.service import AdaptationService
+    from app.modules.auth.models import User
+    from app.modules.learning.models import (
+        AnswerSubmission,
+        GradingCorrection,
+        GradingIssueReport,
+        GradingJudgment,
+        GradingReviewEvent,
+    )
+
+    course, version, concepts, chunks, _lesson, _first_activity = seed_published_activity(db_session, owner)
+    activity = _seed_p4_activity(db_session, owner, course, version, concepts[:1], "TARGETED_PRACTICE")
+    preparation_service = ActivityPreparationService(
+        db_session,
+        _p4_gateway([concepts[0].id], [chunks[0].id]),
+        RecordingDispatcher(),
+    )
+    from app.main import app
+
+    monkeypatch.setitem(app.dependency_overrides, preparation_dependency, lambda: preparation_service)
+    headers = auth_headers(owner.email)
+    activity_url = f"/api/v1/courses/{course.id}/activities/{activity.id}"
+    assert client.get(activity_url, headers=headers).status_code == 200
+    preparation = db_session.query(ActivityPreparation).filter_by(activity_id=activity.id).one()
+    assert preparation_service.run(preparation.id, owner.id).status == PreparationStatus.READY
+
+    prepared_short = next(
+        question
+        for question in db_session.query(Question)
+        .join(PreparedActivityQuestion, PreparedActivityQuestion.question_id == Question.id)
+        .filter(PreparedActivityQuestion.preparation_id == preparation.id)
+        .all()
+        if question.question_type == "SHORT_TEXT"
+    )
+    from app.modules.preparation.models import QuestionSource
+
+    original_sources = {
+        row[0]
+        for row in db_session.query(QuestionSource.chunk_id)
+        .filter(QuestionSource.question_id == prepared_short.id)
+        .all()
+    }
+    revised_question = MasteryService(db_session, fake_generation, fake_embeddings).supersede_question(
+        prepared_short.id, owner.id, prompt="A revised short-answer question version?"
+    )
+    assert revised_question.version == prepared_short.version + 1
+    assert prepared_short.rubric_passing_criteria == revised_question.rubric_passing_criteria == 2
+    assert {
+        row[0]
+        for row in db_session.query(QuestionSource.chunk_id)
+        .filter(QuestionSource.question_id == revised_question.id)
+        .all()
+    } == original_sources
+
+    session = client.post(f"{activity_url}/assessment", headers=headers).json()
+    session_url = f"/api/v1/courses/{course.id}/assessment-sessions/{session['id']}"
+    short_item = next(question for question in session["questions"] if question["question_type"] == "SHORT_TEXT")
+    for question in session["questions"]:
+        confirmed = client.post(
+            f"{session_url}/questions/{question['question_id']}/answer",
+            json={"given_answer": _answer_value(question)},
+            headers=headers,
+        )
+        assert confirmed.status_code == 200
+        assert all("result" not in row for row in confirmed.json()["questions"])
+
+    submitted = client.post(f"{session_url}/submit", headers=headers)
+    assert submitted.status_code == 200
+    short_result = next(
+        question["result"]
+        for question in submitted.json()["questions"]
+        if question["question_id"] == short_item["question_id"]
+    )
+    assert short_result["automated_grading"] is True
+    assert short_result["rubric_score"] == 3
+    assert short_result["rubric_passing_criteria"] == 2
+    assert short_result["correctness"] == 1.0
+    assert all(item["met"] and item["source_chunk_ids"] for item in short_result["rubric_feedback"])
+    short_answer = (
+        db_session.query(AnswerSubmission)
+        .join(AssessmentQuestion, AssessmentQuestion.id == AnswerSubmission.assessment_question_id)
+        .filter(AssessmentQuestion.question_id == UUID(short_item["question_id"]))
+        .one()
+    )
+    assert short_answer.grading_call_limit == 3
+
+    report_url = f"{session_url}/questions/{short_item['question_id']}/grading-issue"
+    first_report = client.post(report_url, json={"report_text": "Criterion two was misread."}, headers=headers)
+    repeated_report = client.post(report_url, json={"report_text": "A duplicate statement."}, headers=headers)
+    assert first_report.status_code == 201
+    assert repeated_report.status_code == 201
+    assert first_report.json()["id"] == repeated_report.json()["id"]
+    assert first_report.json()["status"] == "OPEN"
+    report = db_session.query(GradingIssueReport).one()
+    assert report.report_text == "Criterion two was misread."
+    assert db_session.query(GradingJudgment).count() == 1
+
+    unrelated = User(email="unrelated@example.com", full_name="Unrelated learner", is_active=True)
+    reviewer = User(email="reviewer@example.com", full_name="Authorized reviewer", is_active=True)
+    db_session.add_all([unrelated, reviewer])
+    db_session.commit()
+    monkeypatch.setattr(settings, "EVALUATOR_EMAILS", owner.email)
+    monkeypatch.setattr(settings, "P5_GRADING_REVIEWER_EMAILS", reviewer.email)
+    reviewer_headers = auth_headers(reviewer.email)
+
+    assert client.get("/api/v1/grading-reviews", headers=auth_headers(owner.email)).status_code == 404
+    assert client.get(
+        f"/api/v1/grading-reviews/{report.id}", headers=auth_headers(unrelated.email)
+    ).status_code == 404
+    queue = client.get("/api/v1/grading-reviews", headers=reviewer_headers)
+    assert queue.status_code == 200
+    assert [item["id"] for item in queue.json()["items"]] == [str(report.id)]
+    assert queue.json()["has_more"] is False
+    review_url = f"/api/v1/grading-reviews/{report.id}"
+    started = client.post(
+        f"{review_url}/start", json={"reason": "Checking the saved response against its rubric."}, headers=reviewer_headers
+    )
+    assert started.status_code == 200
+    assert started.json()["status"] == "IN_REVIEW"
+    assert started.json()["question_version"] == short_item["question_version"]
+    assert started.json()["answer"] == "The response identifies the supported idea, explains its feature, and connects it to the passage."
+    assert started.json()["sources"]
+    assert started.json()["original_evidence_correctness"] == 1
+    assert started.json()["rubric_passing_criteria"] == 2
+
+    activity_count_before_correction = db_session.query(LearningActivity).filter_by(course_id=course.id).count()
+    mastery = MasteryService(db_session, fake_generation, fake_embeddings)
+    before_correction = mastery.get_concept_mastery(owner.id, concepts[0].id).mastery
+    decision = AdaptationDecision(
+        owner_id=owner.id,
+        course_id=course.id,
+        selected_activity_type="TARGETED_PRACTICE",
+        selected_concept_id=concepts[0].id,
+        reason_text="Saved before the correction.",
+        candidates_considered=[],
+        policy_version="test-p4-v1",
+        input_snapshot={"concept_mastery": {str(concepts[0].id): before_correction}},
+    )
+    raw_attempt = db_session.query(QuestionAttempt).filter_by(question_id=UUID(short_item["question_id"])).one()
+    decision.created_at = raw_attempt.submitted_at.replace(microsecond=0)
+    db_session.add(decision)
+    db_session.commit()
+    attributed_outcome = AdaptationOutcomeService(db_session, mastery).record_assessment_outcome(
+        decision.id,
+        owner.id,
+        raw_attempt.id,
+        is_transfer_question=True,
+        course_id=course.id,
+    )
+    assert attributed_outcome.transfer_success == 1
+    historical_snapshot = dict(decision.input_snapshot)
+
+    # The saved question's threshold controls corrections even if runtime
+    # configuration is tuned for newly prepared questions.
+    monkeypatch.setattr(settings, "P5_RUBRIC_PASSING_CRITERIA_V1", 1)
+    corrected = client.post(
+        f"{review_url}/correct",
+        json={
+            "reason": "The answer satisfies only the first rubric criterion.",
+            "criteria_met": [True, False, False],
+            "expected_correction_version": 0,
+        },
+        headers=reviewer_headers,
+    )
+    assert corrected.status_code == 200
+    assert corrected.json()["status"] == "CORRECTED"
+    assert corrected.json()["latest_correction_version"] == 1
+    assert corrected.json()["latest_effective_correctness"] == 0
+    assert corrected.json()["original_evidence_correctness"] == 1
+    assert len(corrected.json()["history"]) == 2
+    stale_correction = client.post(
+        f"{review_url}/correct",
+        json={
+            "reason": "Stale review form.",
+            "criteria_met": [True, True, True],
+            "expected_correction_version": 0,
+        },
+        headers=reviewer_headers,
+    )
+    assert stale_correction.status_code == 409
+
+    db_session.refresh(decision)
+    assert decision.input_snapshot == historical_snapshot
+    assert db_session.query(GradingCorrection).count() == 1
+    assert db_session.query(GradingReviewEvent).count() == 2
+    assert db_session.query(QuestionAttempt).filter_by(course_id=course.id).count() == 5
+    assert db_session.query(MasteryEvent).filter_by(course_id=course.id).count() == 5
+    assert db_session.query(LearningActivity).filter_by(course_id=course.id).count() == activity_count_before_correction
+    raw_event = db_session.query(MasteryEvent).filter_by(question_attempt_id=raw_attempt.id).one()
+    assert raw_attempt.correctness == raw_event.correctness == 1.0
+    assert mastery.get_effective_attempt_correctness(raw_attempt) == 0
+    after_correction = mastery.get_concept_mastery(owner.id, concepts[0].id).mastery
+    assert after_correction < before_correction
+
+    refreshed = client.get(session_url, headers=headers)
+    assert refreshed.status_code == 200
+    updated_result = next(
+        row["result"] for row in refreshed.json()["questions"]
+        if row["question_id"] == short_item["question_id"]
+    )
+    assert updated_result["correctness"] == 0.0
+    assert updated_result["grade_corrected"] is True
+    assert "only the first rubric criterion" in updated_result["correction_reason"]
+    expected_progress = mastery.get_assessment_concept_progress(
+        course.id,
+        owner.id,
+        UUID(session["id"]),
+        db_session.query(AssessmentSession).filter_by(id=UUID(session["id"])).one().submitted_at,
+    )
+    progress_by_id = {row["concept_id"]: row for row in refreshed.json()["concept_progress"]}
+    assert progress_by_id[str(concepts[0].id)]["after_band"] == next(
+        row["after_band"] for row in expected_progress if row["concept_id"] == concepts[0].id
+    )
+    recommendation_states, _ = AdaptationService(db_session, fake_generation, fake_embeddings)._build_concept_states(
+        concepts[:1], [], owner.id
+    )
+    assert abs(recommendation_states[concepts[0].id].mastery - after_correction) < 1e-6
+    adapted_history = AdaptationOutcomeService(db_session, mastery).get_adaptation_history(course.id, owner.id)
+    effective_outcome = next(
+        outcome for row in adapted_history for outcome in row["outcomes"]
+        if outcome["outcome_id"] == str(attributed_outcome.id)
+    )
+    assert effective_outcome["transfer_success"] is False
+
+    deleted = client.delete(f"/api/v1/courses/{course.id}", headers=headers)
+    assert deleted.status_code == 204
+    assert db_session.query(GradingIssueReport).count() == 0
+    assert db_session.query(GradingJudgment).count() == 0
+    assert db_session.query(GradingCorrection).count() == 0
+    assert db_session.query(GradingReviewEvent).count() == 0
 
 
 def test_repeated_remediation_uses_a_fresh_supported_explanation_and_question_set(db_session, owner):
@@ -1476,7 +1761,7 @@ def test_p4_question_validation_rejects_non_isolatable_concept_attribution(db_se
 
     try:
         service._validate_question_set(
-            parse_mcq_set(_question_draft([concepts[0].id], [chunks[0].id])),
+            parse_mcq_set(_question_draft([concepts[0].id], [chunks[0].id], include_short=False)),
             concepts[:1],
             source_by_id,
             chunks_by_concept,
@@ -1484,11 +1769,48 @@ def test_p4_question_validation_rejects_non_isolatable_concept_attribution(db_se
             5,
             set(),
             P4_QUESTION_FRESHNESS_POLICY_VERSION,
+            activity_purpose="CHALLENGE",
         )
     except CandidateRejected as exc:
         assert exc.category == "QUESTION_ATTRIBUTION_NOT_ISOLATED"
     else:
         raise AssertionError("P4 must reject a question that cannot isolate its attributed concept")
+
+
+def test_short_answer_prompt_and_each_rubric_claim_require_source_support(db_session, owner):
+    _course, _version, concepts, chunks, _lesson, _activity = seed_published_activity(db_session, owner)
+    service = ActivityPreparationService(db_session, FakeGenerationGateway(), RecordingDispatcher())
+    draft = parse_prepared_question_set(
+        _question_draft([item.id for item in concepts], [item.id for item in chunks])
+    )
+    source_by_id = {chunk.id: chunk for chunk in chunks}
+    chunks_by_concept = {concept.id: {chunks[index].id} for index, concept in enumerate(concepts)}
+    rejected_claims = [
+        ("The cited course material contains enough information", "SHORT_ANSWER_SUPPORT_FAILED"),
+        ("relevant rubric criterion", "RUBRIC_CRITERION_SUPPORT_OR_RELEVANCE_FAILED"),
+        ("supported expected reasoning for the rubric criterion", "RUBRIC_REASONING_SUPPORT_FAILED"),
+    ]
+    for unsupported_text, expected_category in rejected_claims:
+        def checker(claim, _source, marker=unsupported_text):
+            if "also a supported correct answer" in claim:
+                return False
+            return marker not in claim
+
+        try:
+            service._validate_question_set(
+                draft,
+                concepts,
+                source_by_id,
+                chunks_by_concept,
+                checker,
+                expected_count=5,
+                seen_prompts=set(),
+                expected_short_answer_count=1,
+            )
+        except CandidateRejected as exc:
+            assert exc.category == expected_category
+        else:
+            raise AssertionError(f"Unsupported short-answer claim should be rejected: {expected_category}")
 
 
 def test_activity_purpose_and_target_sets_do_not_share_preparation_or_artifact_keys(db_session, owner):
@@ -1542,7 +1864,7 @@ def test_lesson_weak_result_remediation_reassessment_and_continue_cycle(
     for question in first_session["questions"]:
         answered = client.post(
             f"{first_session_url}/questions/{question['question_id']}/answer",
-            json={"given_answer": question["options"][1]},
+            json={"given_answer": _answer_value(question, 1)},
             headers=headers,
         )
         assert answered.status_code == 200
@@ -1587,7 +1909,7 @@ def test_lesson_weak_result_remediation_reassessment_and_continue_cycle(
     for question in remediation_session["questions"]:
         answered = client.post(
             f"{remediation_session_url}/questions/{question['question_id']}/answer",
-            json={"given_answer": question["options"][0]},
+            json={"given_answer": _answer_value(question)},
             headers=headers,
         )
         assert answered.status_code == 200

@@ -24,16 +24,16 @@ numeric and operational details remain open.
 | P2 | Async first-activity preparation, grounded MCQ assessment, reliable submission | P1; approved P2 defaults | **Implemented locally.** Deterministic upload → outline publish → prepared lesson/MCQs path; saved artifacts reused; feedback withheld until set submission. See [P2 contract](p2-grounded-preparation-contract.md). Not deployed. |
 | P3 | Results, evidence, progress, and next-activity integration | P0, P2; approved display policy | **Implemented locally.** Submitted results expose supported feedback and reproducible concept changes; reading affects coverage only; Continue resumes or persists one selected activity and requests P2 preparation when supported. See [P3 contract](p3-results-progress-contract.md). Hosted behavior is not verified. |
 | P4 | Remediation, targeted practice, and challenge experiences | P3; eligibility policy | **Implemented locally.** Evidence-based concept remediation, lesson-free practice/challenge MCQs, per-question challenge attribution, distinct screens, and saved result/Continue lifecycle; see [P4 contract](p4-adaptive-activities-contract.md). Hosted behavior is not verified. |
-| P5 | Short-answer grading and authorized review | P2–P3; rubric/access/retention policy | Rubric feedback has sources; failed grading remains pending; retries don't duplicate evidence; reviewer correction preserves original judgment and updates evidence once |
+| P5 | Short-answer grading and authorized review | P2–P3; approved rubric/access/retention policy | **Implemented and verified locally.** Grounded mixed assessments, durable bounded grading recovery, source-backed rubric feedback, idempotent reports, paged separately authorized review, and correction-aware evidence; see [P5 contract](p5-short-answer-review-contract.md). Not deployed. |
 | P6 | Course overview and workspace integration | P3–P5 | Outline inspection cannot launch alternatives; tutor/sources open alongside teaching/results; tutor unavailable during assessment; format and position preserved |
 | P7 | Setup/review/recovery and account UX | P1; replacement/retention contracts | Renames persist; diagnostic skip/retry; replacement rebuilds dependencies; minimal tracking preserves learning; deletion covers new records/files |
 | P8 | Subjects and explicitly linked earlier courses | P3; cross-course/matching policy | Unit 2 can use supported Unit 1 evidence/source links; uncertain match offers optional check; standalone path works; foreign courses inaccessible |
 | P9 | Completion, full polish, and acceptance evidence | P4–P8; completion policy | Coverage differs from mastery; sufficient evidence leads to summary and optional guided practice; no unfinished advertised action |
 
-Build MCQ end-to-end first, then add short answers and the full agreed scope. P1 and P2 are
-repository checkpoints; later checkpoints remain outstanding. Finalize layout/styling
-across screens after the state contracts are stable; include responsive, empty, loading,
-and recovery states.
+The P1–P5 assessment, results, and review contracts are local repository checkpoints.
+P6 adds the full course overview and side-panel integration; later checkpoints remain
+outstanding. Finalize full layout/styling after the state contracts are stable; include
+responsive, empty, loading, and recovery states.
 
 ## First milestone: P0–P3 together
 

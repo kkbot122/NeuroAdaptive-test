@@ -122,6 +122,11 @@ class AnswerSubmission(Base):
     given_answer = Column(JSON, nullable=False)
     status = Column(String(24), nullable=False, default=AnswerStatus.AWAITING_GRADING.value)
     failure_code = Column(String(32), nullable=True)
+    grading_attempt_count = Column(Integer, nullable=False, default=0, server_default="0")
+    grading_call_limit = Column(Integer, nullable=False, server_default="3")
+    grading_lease_token = Column(Uuid, nullable=True)
+    grading_lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    grading_last_dispatched_at = Column(DateTime(timezone=True), nullable=True)
     submitted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -134,3 +139,71 @@ class AnswerSubmission(Base):
 
 
 Index("ix_answer_submissions_status", AnswerSubmission.status)
+
+
+class GradingJudgment(Base):
+    """Original automated rubric judgment for one fixed answer; immutable after save."""
+
+    __tablename__ = "grading_judgments"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    answer_submission_id = Column(Uuid, ForeignKey("answer_submissions.id"), nullable=False, index=True)
+    criteria_met = Column(JSON, nullable=False)
+    rubric_score = Column(Integer, nullable=False)  # met criterion count, not mastery evidence
+    evidence_correctness = Column(Integer, nullable=False)  # approved binary 0/1 policy
+    policy_version = Column(String(32), nullable=False)
+    model_id = Column(String(128), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("answer_submission_id", name="uq_grading_judgments_answer_submission"),)
+
+
+class GradingIssueReport(Base):
+    """One owner report per saved judgment; status changes are recorded as events."""
+
+    __tablename__ = "grading_issue_reports"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    answer_submission_id = Column(Uuid, ForeignKey("answer_submissions.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    course_id = Column(Uuid, ForeignKey("courses.id"), nullable=False, index=True)
+    report_text = Column(Text, nullable=False)
+    status = Column(String(16), nullable=False, default="OPEN", server_default="OPEN", index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("answer_submission_id", name="uq_grading_issue_reports_answer_submission"),)
+
+
+class GradingReviewEvent(Base):
+    """Append-only review history, including retained decisions and corrections."""
+
+    __tablename__ = "grading_review_events"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    report_id = Column(Uuid, ForeignKey("grading_issue_reports.id"), nullable=False, index=True)
+    reviewer_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    event_type = Column(String(16), nullable=False)
+    reason = Column(Text, nullable=False)
+    correction_version = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class GradingCorrection(Base):
+    """Versioned effective judgment; raw QuestionAttempt/MasteryEvent rows stay unchanged."""
+
+    __tablename__ = "grading_corrections"
+    __table_args__ = (
+        UniqueConstraint("report_id", "version", name="uq_grading_corrections_report_version"),
+    )
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    report_id = Column(Uuid, ForeignKey("grading_issue_reports.id"), nullable=False, index=True)
+    question_attempt_id = Column(Uuid, ForeignKey("question_attempts.id"), nullable=False, index=True)
+    reviewer_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    version = Column(Integer, nullable=False)
+    criteria_met = Column(JSON, nullable=False)
+    rubric_score = Column(Integer, nullable=False)
+    effective_correctness = Column(Integer, nullable=False)
+    reason = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

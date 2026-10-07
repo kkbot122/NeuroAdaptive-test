@@ -140,9 +140,12 @@ class CourseService:
         return course
 
     def delete(self, course_id: UUID, owner_id: int) -> None:
-        course = self.get_owned(course_id, owner_id)
-        self.db.delete(course)
-        self.db.commit()
+        self.get_owned(course_id, owner_id)
+        # Course removal uses the same ordered retention cleanup as account
+        # deletion, including saved answers and grading review history.
+        from app.modules.privacy.service import PrivacyService
+
+        PrivacyService(self.db).delete_owned_course(course_id, owner_id)
 
     def finalize_sources(self, course_id: UUID, owner_id: int) -> Course:
         """

@@ -17,25 +17,25 @@ Paths below are relative to repository root.
 | Subjects/links | Inspected `courses/models.py` has no subject/link fields | New ownership-scoped relationships and matching/evidence policy |
 | Curriculum | `curriculum/service.py` extracts concepts, builds/validates versions, creates blueprints | Reuse; blueprints are not generated lesson assessments |
 | Diagnostic | P1 persists/resumes fixed question ID/version/order sets and distinguishes saved answers from grading; small graphs may yield fewer questions than the PDF's stated minimum | Later define skip/retry policy; do not restore historical minimum counts as guarantees |
-| Lesson assessment | P1 activity sessions reuse existing questions for the saved course version and target concepts | **P2 implemented locally:** grounded MCQs are generated for the prepared activity, versioned, and attached to its fixed P1 session; see [P2 contract](p2-grounded-preparation-contract.md) |
-| Grading/evidence | P1 persists answers independently, gates feedback until set submission, retries failed grading, and deduplicates existing attempt/evidence writes | Later add durable grading workers and authorized corrections preserving original judgments |
+| Lesson assessment | P1 activity sessions reuse existing questions for the saved course version and target concepts | **P2/P5 implemented locally:** prepared lesson and P4 activity sets retain immutable mixed MCQ/short-answer IDs, versions, order, and attribution; diagnostics and existing MCQ sets remain compatible |
+| Grading/evidence | P1 persists answers independently, gates feedback until set submission, retries failed grading, and deduplicates existing attempt/evidence writes | **P5 implemented locally:** Celery grading, bounded same-provider recovery, source-backed rubric feedback, separate reviewer access, and correction-aware effective evidence; see [P5 contract](p5-short-answer-review-contract.md) |
 | Mastery | `mastery/engine.py` computes weighted prior/uncertainty/decay | **P3 exposes approved uncalibrated bands and separate evidence strength;** no second mastery store or calibration claim |
 | Selection | P1 persists the selected recommendation trace with one unfinished activity per owner/course and resumes it before selecting again | **P3/P4 Continue uses this path and preserves the decision/activity trace;** P4 adjusts eligibility/targets only and retains existing ranking weights and ordering |
 | Activity navigation | P1 learn/study/assessment consumers save position/format, resume fixed sessions, and provide a dashboard exit | **P3 adds results/progress; P4 adds distinct remediation, targeted-practice, and challenge states.** Full course overview and side-panel integration remain P6 |
 | Teaching/tutor | `tutor/service.py`; study/tutor/source pages | Consistent teaching structure; contextual side panels; assessment restriction |
 | Presentation | Study page sends learner-button success before assessment | Replace learning-effectiveness signal with attributed graded outcomes |
 | Progress/resume | P1 persists reading position, fixed assessment questions/answers, activity/session states, and lesson coverage; P3 derives concept comparisons at the saved submission time | P9 still needs agreed course-completion/retention criteria; no second progress store |
-| Account controls | `identity/router.py`, `privacy/service.py`; existing profile UI | Wire product settings; review deletion/retention for every new entity |
+| Account controls | `identity/router.py`, `privacy/service.py`; existing profile UI | P5 report/judgment/correction records follow approved account/course deletion; broader account settings remain P7 |
 | Legacy experience | `chat/router.py`, `content/router.py`, profile use learning-style data | Decide navigation placement; don't present it as the new course adaptation |
 
 Additional deployment gaps:
 
 | Area | Inspected evidence | Required change |
 | --- | --- | --- |
-| Workers | `backend/app/core/celery_app.py`; jobs and preparation tasks use PostgreSQL stages/leases and Celery priority | **P2 implemented locally:** prioritized first-activity preparation, one content-only lookahead, deduplication, retry/reuse; grading-worker recovery remains later |
+| Workers | `backend/app/core/celery_app.py`; jobs and preparation tasks use PostgreSQL stages/leases and Celery priority | **P2/P5 implemented locally:** prioritized preparation plus saved-answer grading with attempt accounting, lease fencing, duplicate-delivery protection, and learner-triggered bounded retry; hosted capacity and interruption behavior remain unverified |
 | Grounding | `tutor/validation.py`; P2 typed lesson/MCQ schemas and per-claim validation | **P2 checks every displayed lesson statement and generated MCQ against current-course owned chunks.** Explicit linked-course retrieval remains P8. |
 | Hosting/storage | P0 repository config now includes production API/worker commands and private Supabase S3 uploads; no hosted behavior verified | Configure provider projects, run the controlled migration, then verify networking, credentials, storage, worker recovery, and persistence |
-| AI accounting | `abuse/service.py` counts controlled requests; some limits are process-local | Include worker/validation/retry provider work; enforce deployed cross-process budgets/concurrency |
+| AI accounting | `abuse/service.py` counts controlled requests; some limits are process-local | P5 grading and validation use the existing atomic daily call allowance; deployed cross-process capacity and actual provider accounting remain unverified |
 
 Module paths without full prefixes above refer to `backend/app/modules/`.
 
@@ -53,12 +53,10 @@ Module paths without full prefixes above refer to `backend/app/modules/`.
 
 ## Contract/dependency warning
 
-Activity lifecycle, assessment sets, subjects/links, rubric feedback, and grading reports
-may need schema/API changes. Design contracts and migrations before consumers; regenerate
-OpenAPI-derived frontend types. Existing safeguards must be reviewed for new paths,
-especially linked retrieval, reviewer access, replacement, pending grading, and worker
-limits. Targets are selected in [README.md](README.md); hosted compatibility/configuration
-remain unverified. This is an inspection snapshot, not a new exhaustive audit.
+P1–P5 assessment, result, rubric, report, and review contracts now have local additive
+migrations and generated OpenAPI types. Linked-course retrieval remains P8; source
+replacement remains a later setup/recovery task. Hosted compatibility/configuration remain
+unverified. This is an inspection snapshot, not a new exhaustive audit.
 
 ## P0 foundation status — 2026-10-07
 
@@ -157,3 +155,15 @@ scoped keys; the additive migration is `d3f4a8c1e620`. P1 fixed assessments and 
 results/Continue remain authoritative. Numeric defaults, migration, API, verification,
 and limits are recorded in [P4 contract](p4-adaptive-activities-contract.md). Hosted
 behavior is not verified.
+
+## P5 implementation update — 2026-10-08
+
+P5 adds one grounded short answer to new prepared lesson/remediation/practice/challenge
+sets; diagnostics and fixed/cached MCQ sessions remain compatible. Saved answers use
+Celery grading with snapshotted call limits, lease recovery, and binary rubric evidence.
+Learner reports use a separate reviewer allowlist and paginated review API; versioned
+corrections flow through mastery, recommendations, results, and attributed outcomes
+without changing raw evidence or saved decisions. Additive migration
+`f5a1c9d2e7b4_grounded_short_answer_review`, routes, and executed local checks are in
+[P5 contract](p5-short-answer-review-contract.md). Hosted worker/provider behavior is
+unverified; P6 can rely on the fixed question/result/report contracts and dashboard exit.

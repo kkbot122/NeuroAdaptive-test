@@ -176,7 +176,7 @@ export default function AdaptiveActivityPage() {
         <section className="border-2 border-black bg-white p-6">
           <h2 className="text-xl font-black">Why this was selected</h2>
           <p className="mt-2 leading-relaxed">{activity.reason}</p>
-          <p className="mt-3 font-bold">{activity.question_count} fresh multiple-choice questions</p>
+          <p className="mt-3 font-bold">{activity.question_count} fresh assessment questions</p>
           {isQuestionOnly && <p className="mt-2 text-gray-700">Questions are ready without a lesson or reading step.</p>}
         </section>
 

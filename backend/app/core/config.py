@@ -83,6 +83,19 @@ class Settings(BaseSettings):
     P4_REMEDIATION_QUESTION_COUNT_V1: int = Field(default=5, ge=1, le=8)
     P4_TARGETED_PRACTICE_QUESTION_COUNT_V1: int = Field(default=5, ge=1, le=8)
     P4_CHALLENGE_QUESTION_COUNT_V1: int = Field(default=5, ge=2, le=8)
+    # P5 prepared sets retain their current size and replace one MCQ by one
+    # grounded short answer by default. These are named, versioned, unvalidated
+    # product/operational defaults, not calibrated learning rules.
+    P5_SHORT_ANSWER_COUNT_V1: int = Field(default=1, ge=0, le=3)
+    P5_RUBRIC_CRITERIA_COUNT_V1: int = Field(default=3, ge=1, le=5)
+    P5_RUBRIC_PASSING_CRITERIA_V1: int = Field(default=2, ge=1, le=5)
+    P5_GRADING_MAX_PROVIDER_CALLS_V1: int = Field(default=3, ge=1, le=5)
+    P5_GRADING_DISPATCH_COOLDOWN_SECONDS_V1: int = Field(default=30, ge=5, le=300)
+    P5_SHORT_ANSWER_MAX_CHARS_V1: int = Field(default=3000, ge=200, le=10000)
+    P5_REPORT_MAX_CHARS_V1: int = Field(default=2000, ge=100, le=10000)
+    P5_REVIEW_PAGE_SIZE_V1: int = Field(default=50, ge=1, le=100)
+    # Separate from EVALUATOR_EMAILS by design. Empty means review is closed.
+    P5_GRADING_REVIEWER_EMAILS: str = ""
     P2_PREPARATION_MAX_CANDIDATES_V1: int = Field(default=3, ge=1, le=5)
     P2_PREPARATION_MAX_LOOKAHEAD_V1: int = Field(default=1, ge=0, le=1)
     P2_PREPARATION_MAX_SOURCE_CHUNKS_V1: int = Field(default=12, ge=1, le=24)
@@ -131,6 +144,10 @@ class Settings(BaseSettings):
             self.P4_CHALLENGE_QUESTION_COUNT_V1,
         ) > self.P2_ASSESSMENT_MAX_QUESTION_COUNT_V1:
             raise ValueError("P4 activity question counts must not exceed the P2 assessment maximum")
+        if self.P5_SHORT_ANSWER_COUNT_V1 >= self.P2_ASSESSMENT_MAX_QUESTION_COUNT_V1:
+            raise ValueError("P5 short-answer count must leave at least one MCQ in the assessment set")
+        if self.P5_RUBRIC_PASSING_CRITERIA_V1 > self.P5_RUBRIC_CRITERIA_COUNT_V1:
+            raise ValueError("P5 rubric passing threshold must not exceed its criterion count")
         return self
 
     model_config = ConfigDict(

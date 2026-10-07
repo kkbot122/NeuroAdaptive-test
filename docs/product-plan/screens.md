@@ -15,14 +15,16 @@ Proposed screens; route names and visual styling are not prescribed.
 | Concept remediation | One selected concept and evidence-based reason; source-linked explanation, worked example, recap, and question readiness | Study the focused concept; mark reading complete with Ready for questions; retry preparation |
 | Targeted practice | One concept, factual evidence reason, and question count | Start fresh questions directly; no lesson or reading completion |
 | Challenge | Selected taught concepts, factual reason, and question count; single-concept fallback is labeled plainly | Start fresh application questions directly; no lesson or reading completion |
-| Assessment | One MCQ/short-answer question; count/progress; submission/pending states | Submit answer; Next question; Back to course |
-| Results | Saved answers; correctness or unresolved grading; supported expected reasoning and sources; before/after concept labels and evidence strength; separate lesson coverage | Continue when grading is complete; Retry grading; Return to dashboard |
+| Assessment | One MCQ or grounded short-answer question; count/progress; answer confirmation before lock; active, retry-required, or exhausted grading state | Confirm answer; Next question; Retry grading when available; Back to course |
+| Results | Saved answers; criterion-level rubric feedback and supported reasoning/sources; separate rubric count and binary result; automated-grading notice; before/after concept labels/evidence strength; separate lesson coverage | Report a judgment; Continue when grading is complete; Retry grading; Return to dashboard |
 | Completion | Coverage and demonstrated understanding; limits of the estimate | Return to dashboard; Optional practice |
 | Account settings | Tracking preference; independent presentation reset; account controls | Save; Reset preferences; Sign out; Delete account |
 
-Reviewer screen (restricted): question, answer, rubric, original judgment, report,
-correction history. Actions: retain judgment or record a correction with a reason.
-Explicit reviewer authorization is required; this is not a general learner screen.
+Reviewer screen (restricted): report queue/status, fixed question and rubric version,
+saved answer, original judgment, minimum necessary source context, and append-only review
+history. Actions: start review, retain judgment with a reason, or correct criteria with a
+reason. Access uses the separate reviewer allowlist. A learner report does not change the
+grade or create another attempt.
 
 ## Workspace
 
@@ -50,6 +52,10 @@ Explicit reviewer authorization is required; this is not a general learner scree
   are separate states, not one Complete Lesson button.
 - Reports promise no immediate correction. Results distinguish original/corrected
   judgments; pending grading never appears as incorrect.
+- Owners can submit one report per graded short-answer judgment after feedback appears.
+  Duplicate submission returns the saved report. Corrected results explain that later
+  progress views use the latest approved correction; they do not reset an activity already
+  in progress.
 - Results refresh reads the saved session and evidence only. Continue resumes existing
   work or persists one next recommendation; unsupported preparation is named and
   recoverable. Supported P4 selections open their distinct activity screens. Dashboard
