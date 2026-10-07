@@ -127,7 +127,7 @@ class AdaptationService:
 
     def _is_struggling(self, course_id: UUID, owner_id: int) -> bool:
         recent = (
-            self.db.query(MasteryEvent)
+            self.mastery.visible_mastery_events()
             .filter(MasteryEvent.course_id == course_id, MasteryEvent.owner_id == owner_id)
             .order_by(MasteryEvent.created_at.desc())
             .limit(STRUGGLING_RECENT_EVENTS)
@@ -256,7 +256,7 @@ class AdaptationService:
             if selected_entry:
                 concept_ids = [UUID(cid) for cid in selected_entry["concept_ids"]]
                 has_new_evidence = (
-                    self.db.query(MasteryEvent)
+                    self.mastery.visible_mastery_events()
                     .filter(
                         MasteryEvent.course_id == course_id, MasteryEvent.owner_id == owner_id,
                         MasteryEvent.concept_id.in_(concept_ids),
@@ -287,7 +287,7 @@ class AdaptationService:
 
     # -- the main entry point ------------------------------------------------
 
-    def recommend_next(self, course_id: UUID, owner_id: int) -> Recommendation:
+    def recommend_next(self, course_id: UUID, owner_id: int, *, persist: bool = True) -> Recommendation:
         self._get_owned_course(course_id, owner_id)
         graph = self.curriculum.get_graph(course_id, owner_id)
         if not graph.concepts:
@@ -350,12 +350,17 @@ class AdaptationService:
             },
         )
         self.db.add(decision)
-        try:
-            self.db.commit()
-        except Exception as exc:
-            self.db.rollback()
-            raise AdaptationPersistenceError(str(exc)) from exc
-        self.db.refresh(decision)
+        if persist:
+            try:
+                self.db.commit()
+            except Exception as exc:
+                self.db.rollback()
+                raise AdaptationPersistenceError(str(exc)) from exc
+            self.db.refresh(decision)
+        else:
+            # LearningActivityService writes this decision in the same
+            # transaction as the durable activity it selected.
+            self.db.flush()
 
         def render(sc, include_format=False):
             out = {

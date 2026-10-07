@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { components } from "@/lib/generated/api";
@@ -8,11 +8,18 @@ import { StateWrapper } from "@/components/StateWrapper";
 import { MarkdownMessage } from "@/components/MarkdownMessage";
 import { Brain, ArrowLeft, Settings, CheckCircle, Loader2 } from "lucide-react";
 
-// Matches app/modules/adaptation/models.py's PresentationFormat exactly --
-// the same vocabulary the study page's format-switch/outcome calls already
-// send to /presentation-affinity/*, so a switch here actually updates the
-// affinity row it claims to.
-const FORMATS = ["concise", "detailed", "worked_example", "analogy"] as const;
+// Keep the persisted activity format and content endpoint in sync with the
+// server's PresentationFormat vocabulary, including formats this screen did
+// not previously expose as controls.
+const FORMATS = [
+  "concise",
+  "detailed",
+  "worked_example",
+  "analogy",
+  "diagram",
+  "source_view",
+  "quiz_first",
+] as const;
 type Format = (typeof FORMATS)[number];
 
 type Citation = components["schemas"]["CitationOut"];
@@ -24,6 +31,7 @@ export default function StudyLessonPage() {
 
   const courseId = params.courseId as string;
   const lessonId = params.lessonId as string;
+  const activityId = searchParams.get("activityId");
 
   const initialFormat = (searchParams.get("format") as Format) || "detailed";
 
@@ -37,18 +45,24 @@ export default function StudyLessonPage() {
   const [format, setFormat] = useState<Format>(FORMATS.includes(initialFormat) ? initialFormat : "detailed");
 
   const [contentMarkdown, setContentMarkdown] = useState<string | null>(null);
+  const [contentFormat, setContentFormat] = useState<Format | null>(null);
   const [citations, setCitations] = useState<Citation[]>([]);
   const [groundingMode, setGroundingMode] = useState<string | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
+  const [readingPosition, setReadingPosition] = useState(0);
+  const [progressError, setProgressError] = useState<string | null>(null);
+  const saveTimer = useRef<number | null>(null);
+  const formatRef = useRef(format);
 
   const fetchLessonData = useCallback(async () => {
     setIsLoading(true);
     setIsError(false);
     try {
-      const [courseRes, structureRes, graphRes] = await Promise.all([
+      const [courseRes, structureRes, graphRes, activityRes] = await Promise.all([
         fetch(`/api/v1/courses/${courseId}`),
         fetch(`/api/v1/courses/${courseId}/structure`),
         fetch(`/api/v1/courses/${courseId}/graph`),
+        activityId ? fetch(`/api/v1/courses/${courseId}/activities/${activityId}`) : Promise.resolve(null),
       ]);
       if (!courseRes.ok) throw new Error("Failed to load course");
       setCourse(await courseRes.json());
@@ -67,6 +81,14 @@ export default function StudyLessonPage() {
       if (!foundLesson) throw new Error("Lesson not found in course structure");
       setLesson(foundLesson);
 
+      if (activityRes?.ok) {
+        const activity: components["schemas"]["LearningActivityOut"] = await activityRes.json();
+        setReadingPosition(activity.reading_position);
+        if (FORMATS.includes(activity.presentation_format as Format)) {
+          setFormat(activity.presentation_format as Format);
+        }
+      }
+
       // Lessons carry concept_id, not a name (curriculum/router.py's
       // _version_out) -- names come from the graph.
       if (graphRes.ok) {
@@ -82,7 +104,7 @@ export default function StudyLessonPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [courseId, lessonId, setIsLoading, setIsError, setErrorMsg, setCourse, setLesson, setConceptNames]);
+  }, [courseId, lessonId, activityId, setIsLoading, setIsError, setErrorMsg, setCourse, setLesson, setConceptNames]);
 
   const fetchContent = useCallback(async (fmt: Format) => {
     setIsContentLoading(true);
@@ -91,6 +113,7 @@ export default function StudyLessonPage() {
       if (res.ok) {
         const data: components["schemas"]["LessonContentOut"] = await res.json();
         setContentMarkdown(data.content_markdown);
+        setContentFormat(fmt);
         setCitations(data.citations || []);
         setGroundingMode(data.grounding_mode);
       } else {
@@ -118,8 +141,71 @@ export default function StudyLessonPage() {
     return () => window.clearTimeout(timer);
   }, [courseId, lessonId, format, fetchContent]);
 
+  useEffect(() => {
+    formatRef.current = format;
+  }, [format]);
+
+  useEffect(() => {
+    if (
+      readingPosition > 0 &&
+      !isLoading &&
+      !isContentLoading &&
+      contentMarkdown !== null &&
+      contentFormat === format
+    ) {
+      window.scrollTo(0, readingPosition);
+    }
+  }, [readingPosition, isLoading, isContentLoading, contentMarkdown, contentFormat, format]);
+
+  const saveProgress = useCallback(async (position: number, selectedFormat: Format, keepalive = false) => {
+    if (!activityId) return;
+    const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reading_position: position, presentation_format: selectedFormat }),
+      keepalive,
+    });
+    if (!response.ok) throw new Error("Could not save lesson progress");
+    if (!keepalive) setProgressError(null);
+  }, [activityId, courseId]);
+
+  useEffect(() => {
+    if (!activityId) return;
+    const handleScroll = () => {
+      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+      saveTimer.current = window.setTimeout(() => {
+        void saveProgress(Math.max(0, Math.round(window.scrollY)), formatRef.current).catch(() => {
+          setProgressError("Progress could not be saved. Your last confirmed position is still available.");
+        });
+      }, 500);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+      void saveProgress(
+        Math.max(0, Math.round(window.scrollY)),
+        formatRef.current,
+        true,
+      ).catch(() => undefined);
+    };
+  }, [activityId, saveProgress]);
+
   const handleFormatSwitch = async (newFormat: Format) => {
     if (newFormat === format) return;
+    const previousFormat = formatRef.current;
+    formatRef.current = newFormat;
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    try {
+      await saveProgress(Math.max(0, Math.round(window.scrollY)), newFormat);
+    } catch {
+      formatRef.current = previousFormat;
+      setProgressError("The presentation format could not be saved.");
+      return;
+    }
     try {
       await fetch("/api/v1/presentation-affinity/switch", {
         method: "POST",
@@ -132,17 +218,18 @@ export default function StudyLessonPage() {
     setFormat(newFormat);
   };
 
-  const handleComplete = async (success: boolean) => {
+  const handleComplete = async () => {
+    if (!activityId) return;
     try {
-      await fetch("/api/v1/presentation-affinity/outcome", {
+      await saveProgress(Math.max(0, Math.round(window.scrollY)), format);
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/reading-complete`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ format, success }),
       });
-    } catch (err) {
-      console.error("Failed to record outcome", err);
+      if (!response.ok) throw new Error("Could not save reading completion");
+      router.push(`/courses/${courseId}/assessment?type=activity&activityId=${activityId}`);
+    } catch {
+      setProgressError("Reading completion could not be saved. Try again.");
     }
-    router.push(`/courses/${courseId}/assessment?lessonId=${lessonId}`);
   };
 
   return (
@@ -268,18 +355,14 @@ export default function StudyLessonPage() {
 
               {/* Completion Actions */}
               <div className="flex flex-col sm:flex-row justify-end gap-4 mt-8">
+                {progressError && <p role="status" className="text-red-700 font-bold">{progressError}</p>}
                 <button
-                  onClick={() => handleComplete(false)}
-                  className="bg-gray-200 hover:bg-gray-300 border-2 border-black px-6 py-3 rounded-lg font-bold transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-1 active:translate-y-1 active:shadow-none"
-                >
-                  I struggled with this
-                </button>
-                <button
-                  onClick={() => handleComplete(true)}
+                  onClick={() => void handleComplete()}
+                  disabled={!activityId}
                   className="flex items-center justify-center gap-2 bg-[#FF9F1C] hover:bg-[#ff8c00] border-2 border-black px-8 py-3 rounded-lg font-bold transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-1 active:translate-y-1 active:shadow-none"
                 >
                   <CheckCircle className="w-5 h-5" />
-                  Complete Lesson
+                  Ready for questions
                 </button>
               </div>
             </div>

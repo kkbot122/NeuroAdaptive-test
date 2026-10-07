@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.modules.courses.service import CourseNotFound, CourseService
@@ -66,6 +67,7 @@ class MasteryService:
         is_diagnostic: bool = False,
         prompt_version: str = diagnostic.DIAGNOSTIC_PROMPT_VERSION,
         decision_id: Optional[UUID] = None,
+        commit: bool = True,
     ) -> Question:
         if not concept_weights:
             raise InvalidQuestionWeights("A question must map to at least one concept.")
@@ -97,8 +99,9 @@ class MasteryService:
         self.db.flush()
         for concept_id, weight in concept_weights.items():
             self.db.add(QuestionConcept(question_id=question.id, concept_id=concept_id, weight=weight))
-        self.db.commit()
-        self.db.refresh(question)
+        if commit:
+            self.db.commit()
+            self.db.refresh(question)
         return question
 
     def supersede_question(self, question_id: UUID, owner_id: int, **updated_fields) -> Question:
@@ -147,7 +150,7 @@ class MasteryService:
     # -- diagnostic ------------------------------------------------------------
 
     def generate_diagnostic(
-        self, course_id: UUID, owner_id: int, max_questions: Optional[int] = None
+        self, course_id: UUID, owner_id: int, max_questions: Optional[int] = None, *, commit: bool = True
     ) -> List[Question]:
         self._get_owned_course(course_id, owner_id)
         graph = self.curriculum.get_graph(course_id, owner_id)
@@ -171,11 +174,84 @@ class MasteryService:
                 correct_answer=draft.correct_answer,
                 difficulty=draft.difficulty,
                 is_diagnostic=True,
+                commit=commit,
             )
             questions.append(question)
         return questions
 
     # -- attempts ---------------------------------------------------------------
+
+    def record_graded_attempt(
+        self,
+        question: Question,
+        owner_id: int,
+        given_answer,
+        correctness: float,
+        *,
+        assessment_question_id: Optional[UUID] = None,
+        question_version: Optional[int] = None,
+        course_version_id: Optional[UUID] = None,
+        hints_used: int = 0,
+        retry_index: int = 0,
+        time_taken_seconds: Optional[float] = None,
+        confidence: Optional[float] = None,
+        commit: bool = True,
+    ) -> QuestionAttempt:
+        """Persist one trusted grade and its concept evidence together.
+
+        Both standalone attempts and fixed-session answers use this path so
+        mastery evidence remains consistent. The unique assessment-question
+        key makes grading retries idempotent at the evidence boundary.
+        """
+        if assessment_question_id is not None:
+            existing = (
+                self.db.query(QuestionAttempt)
+                .filter(QuestionAttempt.assessment_question_id == assessment_question_id)
+                .first()
+            )
+            if existing is not None:
+                return existing
+
+        attempt = QuestionAttempt(
+            assessment_question_id=assessment_question_id,
+            question_id=question.id,
+            question_version=question_version if question_version is not None else question.version,
+            owner_id=owner_id,
+            course_id=question.course_id,
+            given_answer=given_answer,
+            correctness=correctness,
+            time_taken_seconds=time_taken_seconds,
+            hints_used=hints_used,
+            retry_index=retry_index,
+            self_reported_confidence=confidence,
+        )
+        self.db.add(attempt)
+        self.db.flush()
+
+        concept_links = self.db.query(QuestionConcept).filter(QuestionConcept.question_id == question.id).all()
+        for link in concept_links:
+            weight = engine.evidence_weight_base(
+                concept_weight=link.weight,
+                difficulty=question.difficulty,
+                hints_used=hints_used,
+                retry_index=retry_index,
+            )
+            self.db.add(
+                MasteryEvent(
+                    owner_id=owner_id,
+                    concept_id=link.concept_id,
+                    course_id=question.course_id,
+                    course_version_id=course_version_id or question.course_version_id,
+                    question_attempt_id=attempt.id,
+                    correctness=correctness,
+                    evidence_weight_base=weight,
+                )
+            )
+
+        if commit:
+            self.db.commit()
+            self.db.refresh(attempt)
+        return attempt
 
     def submit_attempt(
         self,
@@ -195,59 +271,68 @@ class MasteryService:
         if question is None:
             raise MasteryNotFound(str(question_id))
 
+        # Fixed-set questions can only be answered through their owning
+        # session. This keeps the legacy endpoint from bypassing set-level
+        # feedback withholding or the one-answer constraint.
+        from app.modules.learning.models import AssessmentQuestion
+
+        if (
+            self.db.query(AssessmentQuestion.id)
+            .filter(AssessmentQuestion.question_id == question.id)
+            .first()
+            is not None
+        ):
+            raise MasteryNotFound(str(question_id))
+
         correctness = grade_attempt(question, given_answer, self.generation)
 
-        attempt = QuestionAttempt(
-            question_id=question.id,
-            question_version=question.version,
-            owner_id=owner_id,
-            course_id=question.course_id,
-            given_answer=given_answer,
-            correctness=correctness,
-            time_taken_seconds=time_taken_seconds,
+        return self.record_graded_attempt(
+            question,
+            owner_id,
+            given_answer,
+            correctness,
             hints_used=hints_used,
             retry_index=retry_index,
-            self_reported_confidence=confidence,
+            time_taken_seconds=time_taken_seconds,
+            confidence=confidence,
         )
-        self.db.add(attempt)
-        self.db.flush()
-
-        concept_links = (
-            self.db.query(QuestionConcept).filter(QuestionConcept.question_id == question.id).all()
-        )
-        for link in concept_links:
-            weight = engine.evidence_weight_base(
-                concept_weight=link.weight,
-                difficulty=question.difficulty,
-                hints_used=hints_used,
-                retry_index=retry_index,
-            )
-            self.db.add(
-                MasteryEvent(
-                    owner_id=owner_id,
-                    concept_id=link.concept_id,
-                    course_id=question.course_id,
-                    course_version_id=question.course_version_id,
-                    question_attempt_id=attempt.id,
-                    correctness=correctness,
-                    evidence_weight_base=weight,
-                )
-            )
-
-        self.db.commit()
-        self.db.refresh(attempt)
-        return attempt
 
     # -- reporting ----------------------------------------------------------------
+
+    def visible_mastery_events(self):
+        """Return evidence visible to reports and selection.
+
+        A fixed assessment may grade answers as they are saved, but its
+        evidence stays out of learner-facing mastery and adaptation inputs
+        until the complete question set is submitted. Existing standalone
+        attempts and evidence from submitted sessions remain visible.
+        """
+        from app.modules.learning.models import AssessmentQuestion, AssessmentSession
+
+        return (
+            self.db.query(MasteryEvent)
+            .outerjoin(QuestionAttempt, MasteryEvent.question_attempt_id == QuestionAttempt.id)
+            .outerjoin(
+                AssessmentQuestion,
+                QuestionAttempt.assessment_question_id == AssessmentQuestion.id,
+            )
+            .outerjoin(AssessmentSession, AssessmentQuestion.session_id == AssessmentSession.id)
+            .filter(
+                or_(
+                    MasteryEvent.question_attempt_id.is_(None),
+                    QuestionAttempt.assessment_question_id.is_(None),
+                    AssessmentSession.status == "SUBMITTED",
+                )
+            )
+        )
 
     def get_concept_mastery(self, owner_id: int, concept_id: UUID) -> engine.MasteryState:
         """Independent per (owner_id, concept_id) -- reads only this
         concept's evidence, never another concept's."""
-        rows = (
-            self.db.query(MasteryEvent)
-            .filter(MasteryEvent.owner_id == owner_id, MasteryEvent.concept_id == concept_id)
-            .all()
-        )
+        rows = self.visible_mastery_events().filter(
+            MasteryEvent.owner_id == owner_id,
+            MasteryEvent.concept_id == concept_id,
+        ).all()
         events = [
             engine.EvidenceEvent(
                 correctness=r.correctness,

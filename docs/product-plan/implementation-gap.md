@@ -16,12 +16,12 @@ Paths below are relative to repository root.
 | Review/publish | `curriculum/router.py` supports lesson renames and publication | Add module rename; optional grounded prerequisite warnings |
 | Subjects/links | Inspected `courses/models.py` has no subject/link fields | New ownership-scoped relationships and matching/evidence policy |
 | Curriculum | `curriculum/service.py` extracts concepts, builds/validates versions, creates blueprints | Reuse; blueprints are not generated lesson assessments |
-| Diagnostic | `mastery/service.py`, `diagnostic.py`; assessment page | Persist resumable sets; support skip/retry; small graphs may yield fewer questions than the PDF's stated minimum |
-| Lesson assessment | Assessment page explicitly rejects standard lesson mode | Add activity-scoped generation, question sets, feedback, resume |
-| Grading/evidence | `mastery/grading.py`, `models.py`, `service.py` support grading and evidence | Durable pending grading; attempt deduplication; delayed-feedback contract; rubric results; authorized corrections preserving original judgments |
+| Diagnostic | P1 persists/resumes fixed question ID/version/order sets and distinguishes saved answers from grading; small graphs may yield fewer questions than the PDF's stated minimum | Later define skip/retry policy; do not restore historical minimum counts as guarantees |
+| Lesson assessment | P1 activity sessions reuse existing questions for the saved course version and target concepts | P2 generates and persists activity-scoped questions before using the P1 session contract |
+| Grading/evidence | P1 persists answers independently, gates feedback until set submission, retries failed grading, and deduplicates existing attempt/evidence writes | Later add durable grading workers and authorized corrections preserving original judgments |
 | Mastery | `mastery/engine.py` computes weighted prior/uncertainty/decay | Agree policies; expose honest bands/evidence strength; no calibration claim |
-| Selection | `adaptation/service.py`, `scoring.py`, `policy.py` rank and persist decisions | Durable unfinished-activity priority; unknown/weak distinction; eligibility rules |
-| Activity navigation | `frontend/lib/learning-route.ts` resolves all activity types to lesson links | Distinct experiences; preserve decision ID and selected format |
+| Selection | P1 persists the selected recommendation trace with one unfinished activity per owner/course and resumes it before selecting again | Later policy work may refine eligibility/scoring; do not change existing mastery thresholds in P1 |
+| Activity navigation | P1 learn/study/assessment consumers save position/format, resume fixed sessions, and provide a dashboard exit | Full distinct lesson, practice, challenge, and course overview experiences remain later UI work |
 | Teaching/tutor | `tutor/service.py`; study/tutor/source pages | Consistent teaching structure; contextual side panels; assessment restriction |
 | Presentation | Study page sends learner-button success before assessment | Replace learning-effectiveness signal with attributed graded outcomes |
 | Progress/resume | Evidence/decision records exist; inspected models lack explicit assessment-set/activity progress lifecycle | Durable reading position, fixed questions, coverage, completion |
@@ -100,3 +100,20 @@ verify browser PUTs from the deployed web origin (Supabase's S3 API does not imp
 `PutBucketCors`); register the exact Google callback; run migrations on an inspected
 database; exercise OAuth, pgvector, private storage, queue processing, worker interruption,
 and persistence across restarts. No production URLs are known or claimed.
+
+## P1 implementation update — 2026-10-07
+
+**Implemented locally:** durable owner/course/version-scoped activities; recommendation
+decision trace persistence; saved reading position and format; fixed diagnostic/activity
+assessment question ID/version/order snapshots; immutable confirmed answers; delayed
+feedback; grading retry state; one attempt/evidence write per fixed question; lesson
+coverage separate from concept-understanding responses; explicit account-deletion
+cleanup; additive migration `a61c9e7d4b20`; generated OpenAPI/TypeScript contracts; and
+minimal learn/study/assessment consumer updates. Details and precise routes are in
+[p1-lifecycle-contract.md](p1-lifecycle-contract.md).
+
+**Still open for later milestones:** activity-scoped lesson question generation and
+asynchronous preparation, durable worker grading/recovery, new scoring policy, calibrated
+mastery/completion criteria, short-answer AI grading, and the full learning-screen design.
+Activity assessment currently uses existing persisted questions matching the activity's
+course version and target concepts. These gaps do not change the verified P1 contract.

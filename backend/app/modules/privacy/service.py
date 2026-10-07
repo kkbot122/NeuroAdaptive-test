@@ -49,6 +49,12 @@ from app.modules.documents.models import Document
 from app.modules.events.models import LearningEvent
 from app.modules.jobs.models import ProcessingJob, ProcessingStage
 from app.modules.mastery.models import MasteryEvent, Question, QuestionAttempt, QuestionConcept
+from app.modules.learning.models import (
+    AnswerSubmission,
+    AssessmentQuestion,
+    AssessmentSession,
+    LearningActivity,
+)
 from app.modules.profiling.models import UserProfile
 from app.modules.tutor.models import TutorMessage
 
@@ -72,6 +78,40 @@ class PrivacyService:
         if course_ids:
             db.query(MasteryEvent).filter(MasteryEvent.course_id.in_(course_ids)).delete(synchronize_session=False)
             db.query(QuestionAttempt).filter(QuestionAttempt.course_id.in_(course_ids)).delete(synchronize_session=False)
+
+            activity_ids = [
+                row[0]
+                for row in db.query(LearningActivity.id)
+                .filter(LearningActivity.owner_id == user_id, LearningActivity.course_id.in_(course_ids))
+                .all()
+            ]
+            session_ids = [
+                row[0]
+                for row in db.query(AssessmentSession.id)
+                .filter(AssessmentSession.activity_id.in_(activity_ids))
+                .all()
+            ] if activity_ids else []
+            assessment_question_ids = [
+                row[0]
+                for row in db.query(AssessmentQuestion.id)
+                .filter(AssessmentQuestion.session_id.in_(session_ids))
+                .all()
+            ] if session_ids else []
+            if assessment_question_ids:
+                db.query(AnswerSubmission).filter(
+                    AnswerSubmission.assessment_question_id.in_(assessment_question_ids)
+                ).delete(synchronize_session=False)
+                db.query(AssessmentQuestion).filter(
+                    AssessmentQuestion.id.in_(assessment_question_ids)
+                ).delete(synchronize_session=False)
+            if session_ids:
+                db.query(AssessmentSession).filter(AssessmentSession.id.in_(session_ids)).delete(
+                    synchronize_session=False
+                )
+            if activity_ids:
+                db.query(LearningActivity).filter(LearningActivity.id.in_(activity_ids)).delete(
+                    synchronize_session=False
+                )
 
             question_ids = [row[0] for row in db.query(Question.id).filter(Question.course_id.in_(course_ids)).all()]
             if question_ids:

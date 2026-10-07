@@ -24,6 +24,7 @@ from app.modules.mastery.router import router as mastery_router
 from app.modules.adaptation.router import router as adaptation_router
 from app.modules.tutor.router import router as tutor_router
 from app.modules.evaluation.router import router as evaluation_router
+from app.modules.learning.router import router as learning_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -71,6 +72,7 @@ app.include_router(mastery_router, prefix=settings.API_V1_STR, tags=["mastery"])
 app.include_router(adaptation_router, prefix=settings.API_V1_STR, tags=["adaptation"])
 app.include_router(tutor_router, prefix=settings.API_V1_STR, tags=["tutor"])
 app.include_router(evaluation_router, prefix=settings.API_V1_STR, tags=["evaluation"])
+app.include_router(learning_router, prefix=settings.API_V1_STR, tags=["learning"])
 
 # --- Health checks (liveness + database readiness) ---
 app.include_router(health_router, tags=["health"])

@@ -26,6 +26,13 @@ from app.modules.mastery.schemas import (
     QuestionOut,
 )
 from app.modules.mastery.service import MasteryNotFound, MasteryService
+from app.modules.learning.schemas import AssessmentSessionOut
+from app.modules.learning.service import (
+    AssessmentUnavailable,
+    LearningConflict,
+    LearningNotFound,
+    LearningService,
+)
 from app.services.embedding.gemini import GeminiEmbeddingGateway
 from app.services.generation.gemini import GeminiGenerationGateway
 
@@ -40,12 +47,20 @@ def _service(db: Session = Depends(get_db)) -> MasteryService:
     return MasteryService(db, generation_gateway(), embedding_gateway())
 
 
-@router.post("/courses/{course_id}/diagnostic", response_model=List[QuestionOut])
+def _learning_service(db: Session = Depends(get_db)) -> LearningService:
+    return LearningService(db, generation_gateway(), embedding_gateway())
+
+
+@router.post(
+    "/courses/{course_id}/diagnostic",
+    response_model=AssessmentSessionOut,
+    response_model_exclude_none=True,
+)
 def generate_diagnostic(
     course_id: UUID,
     body: DiagnosticRequest = DiagnosticRequest(),
     user: User = Depends(get_current_user),
-    service: MasteryService = Depends(_service),
+    service: LearningService = Depends(_learning_service),
     db: Session = Depends(get_db),
 ):
     """
@@ -54,20 +69,17 @@ def generate_diagnostic(
     every concept at the honest "Not assessed" prior (engine.py) -- there is
     no fabricated baseline to opt out of.
     """
-    AbuseControlService(db).enforce_generation_request_controls(user.id)
     try:
+        resumed = service.resume_diagnostic(course_id, user.id)
+        if resumed is not None:
+            return resumed
+        AbuseControlService(db).enforce_generation_request_controls(user.id)
         with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER):
-            questions = service.generate_diagnostic(course_id, user.id, body.max_questions)
-    except MasteryNotFound:
+            return service.start_diagnostic(course_id, user.id, body.max_questions)
+    except (LearningNotFound, MasteryNotFound):
         raise HTTPException(status_code=404, detail="Course not found")
-
-    return [
-        QuestionOut(
-            id=str(q.id), question_type=q.question_type, prompt=q.prompt,
-            options=q.options, difficulty=q.difficulty,
-        )
-        for q in questions
-    ]
+    except (LearningConflict, AssessmentUnavailable) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/questions/{question_id}/attempts", response_model=AttemptOut, status_code=201)

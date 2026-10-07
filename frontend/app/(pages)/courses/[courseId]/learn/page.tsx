@@ -44,7 +44,7 @@ export default async function LearnPage({ params }: { params: Promise<{ courseId
   let structureResponse: Response;
   try {
     [activityResponse, structureResponse] = await Promise.all([
-      fetch(`${courseUrl}/next-activity`, { headers, cache: "no-store" }),
+      fetch(`${courseUrl}/activities/next`, { method: "POST", headers, cache: "no-store" }),
       fetch(`${courseUrl}/structure`, { headers, cache: "no-store" }),
     ]);
   } catch {
@@ -52,9 +52,19 @@ export default async function LearnPage({ params }: { params: Promise<{ courseId
   }
   if (!activityResponse.ok || !structureResponse.ok) return <Unavailable courseId={courseId} />;
 
-  const activity: components["schemas"]["RecommendationOut"] = await activityResponse.json();
+  const activity: components["schemas"]["LearningActivityOut"] = await activityResponse.json();
   const structure: components["schemas"]["StructureOut"] = await structureResponse.json();
-  const studyHref = studyHrefForRecommendation(courseId, activity.recommended, structure);
+  if (activity.assessment_session_id) {
+    redirect(`/courses/${courseId}/assessment?type=activity&sessionId=${activity.assessment_session_id}`);
+  }
+  if (!activity.lesson_id) {
+    redirect(`/courses/${courseId}/assessment?type=activity&activityId=${activity.id}`);
+  }
+  const studyHref = studyHrefForRecommendation(
+    courseId,
+    { lesson_id: activity.lesson_id, concept_ids: activity.target_concept_ids },
+    structure,
+  );
   if (!studyHref) return <Unavailable courseId={courseId} />;
-  redirect(studyHref);
+  redirect(`${studyHref}?activityId=${activity.id}&format=${encodeURIComponent(activity.presentation_format)}`);
 }

@@ -32,6 +32,7 @@ from sqlalchemy import (
     String,
     Text,
     Uuid,
+    UniqueConstraint,
 )
 from sqlalchemy.sql import func
 
@@ -117,6 +118,9 @@ class QuestionAttempt(Base):
     __tablename__ = "question_attempts"
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    # Set for P1's fixed, server-assigned assessment sets. The unique key
+    # makes grading retries unable to create a second attempt for one item.
+    assessment_question_id = Column(Uuid, ForeignKey("assessment_questions.id"), nullable=True)
     question_id = Column(Uuid, ForeignKey("questions.id"), nullable=False, index=True)
     question_version = Column(Integer, nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
@@ -131,6 +135,10 @@ class QuestionAttempt(Base):
     self_reported_confidence = Column(Float, nullable=True)  # [0, 1]
 
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("assessment_question_id", name="uq_question_attempts_assessment_question"),
+    )
 
 
 class MasteryEvent(Base):

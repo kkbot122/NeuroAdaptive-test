@@ -20,7 +20,7 @@ numeric and operational details remain open.
 | ID | Work package | Depends on | Demonstrated pass condition |
 | --- | --- | --- | --- |
 | P0 | Hosted foundation and worker/storage verification | Deployment/configuration | **Repository configuration implemented; hosted pass conditions remain unverified.** Vercel reaches Railway API; worker consumes Railway Redis tasks; API/worker access private Supabase originals; deployed identity/DB/migrations work; restart recovery demonstrated |
-| P1 | Activity/assessment lifecycle and saved progress contracts | Policy review | States distinguish reading, submission, pending grading, graded assessment, mastery; reload returns same unfinished work |
+| P1 | Activity/assessment lifecycle and saved progress contracts | Policy review | **Implemented locally.** Durable resume, fixed question sets, safe answer/grading states, and coverage/mastery separation; see [P1 contract](p1-lifecycle-contract.md) for checks and limits. Not deployed. |
 | P2 | Async first-activity preparation, grounded MCQ assessment, reliable submission | P1; question/citation policy | Unseen upload prioritizes validated lesson/question set; saved artifacts reused; submissions lock once; restart resumes same questions; feedback withheld until set submitted |
 | P3 | Results, evidence, progress, and next-activity integration | P0, P2; mastery policy | Deployed graded answers update relevant concepts once; reading does not; results show changes; Continue uses recorded selection/progress; bounded next-activity preparation starts |
 | P4 | Remediation, targeted practice, and challenge experiences | P3; eligibility policy | Weak/mixed/strong evidence reaches the appropriate distinct activity; fresh questions; no unsupported prerequisite teaching |
@@ -30,9 +30,10 @@ numeric and operational details remain open.
 | P8 | Subjects and explicitly linked earlier courses | P3; cross-course/matching policy | Unit 2 can use supported Unit 1 evidence/source links; uncertain match offers optional check; standalone path works; foreign courses inaccessible |
 | P9 | Completion, full polish, and acceptance evidence | P4–P8; completion policy | Coverage differs from mastery; sufficient evidence leads to summary and optional guided practice; no unfinished advertised action |
 
-Build MCQ end-to-end first, then add short answers and the full agreed scope. Intermediate
-checkpoints are not product completion. Finalize layout/styling across screens after the
-state contracts are stable; include responsive, empty, loading, and recovery states.
+Build MCQ end-to-end first, then add short answers and the full agreed scope. P1 is a
+repository checkpoint; later checkpoints remain outstanding. Finalize layout/styling
+across screens after the state contracts are stable; include responsive, empty, loading,
+and recovery states.
 
 ## First milestone: P0–P3 together
 

@@ -15,6 +15,7 @@ from app.modules.jobs import models as jobs_models
 from app.modules.curriculum import models as curriculum_models
 from app.modules.mastery import models as mastery_models
 from app.modules.adaptation import models as adaptation_models
+from app.modules.learning import models as learning_models
 from app.modules.tutor import models as tutor_models
 from app.modules.abuse import models as abuse_models
 from app.modules.audit import models as audit_models

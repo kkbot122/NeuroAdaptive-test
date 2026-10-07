@@ -57,6 +57,81 @@
         "title": "ActivityOut",
         "type": "object"
       },
+      "ActivityProgressIn": {
+        "additionalProperties": false,
+        "properties": {
+          "presentation_format": {
+            "anyOf": [
+              {
+                "enum": [
+                  "concise",
+                  "detailed",
+                  "worked_example",
+                  "analogy",
+                  "diagram",
+                  "source_view",
+                  "quiz_first"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presentation Format"
+          },
+          "reading_position": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reading Position"
+          }
+        },
+        "title": "ActivityProgressIn",
+        "type": "object"
+      },
+      "AnswerIn": {
+        "additionalProperties": false,
+        "properties": {
+          "given_answer": {
+            "title": "Given Answer"
+          }
+        },
+        "required": [
+          "given_answer"
+        ],
+        "title": "AnswerIn",
+        "type": "object"
+      },
+      "AnswerOut": {
+        "properties": {
+          "given_answer": {
+            "title": "Given Answer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "given_answer",
+          "status",
+          "submitted_at"
+        ],
+        "title": "AnswerOut",
+        "type": "object"
+      },
       "ArchetypeOverrideRequest": {
         "properties": {
           "primary_archetype": {
@@ -99,6 +174,136 @@
           "question_attempt_id"
         ],
         "title": "AssessmentOutcomeIn",
+        "type": "object"
+      },
+      "AssessmentQuestionOut": {
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnswerOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "difficulty": {
+            "title": "Difficulty",
+            "type": "number"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "question_id": {
+            "format": "uuid",
+            "title": "Question Id",
+            "type": "string"
+          },
+          "question_type": {
+            "title": "Question Type",
+            "type": "string"
+          },
+          "question_version": {
+            "title": "Question Version",
+            "type": "integer"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionResultOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "question_id",
+          "question_version",
+          "position",
+          "question_type",
+          "prompt",
+          "options",
+          "difficulty"
+        ],
+        "title": "AssessmentQuestionOut",
+        "type": "object"
+      },
+      "AssessmentSessionOut": {
+        "properties": {
+          "activity_id": {
+            "format": "uuid",
+            "title": "Activity Id",
+            "type": "string"
+          },
+          "assessment_type": {
+            "title": "Assessment Type",
+            "type": "string"
+          },
+          "grading_state": {
+            "title": "Grading State",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/AssessmentQuestionOut"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "submission_state": {
+            "title": "Submission State",
+            "type": "string"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          }
+        },
+        "required": [
+          "id",
+          "activity_id",
+          "assessment_type",
+          "submission_state",
+          "grading_state",
+          "submitted_at",
+          "questions"
+        ],
+        "title": "AssessmentSessionOut",
         "type": "object"
       },
       "AssignIn": {
@@ -654,11 +859,13 @@
         "type": "object"
       },
       "DiagnosticRequest": {
+        "additionalProperties": false,
         "properties": {
           "max_questions": {
             "anyOf": [
               {
                 "exclusiveMinimum": 0.0,
+                "maximum": 50.0,
                 "type": "integer"
               },
               {
@@ -1142,6 +1349,118 @@
         "title": "JobSummary",
         "type": "object"
       },
+      "LearningActivityOut": {
+        "properties": {
+          "activity_type": {
+            "title": "Activity Type",
+            "type": "string"
+          },
+          "assessment_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assessment Session Id"
+          },
+          "course_version_id": {
+            "format": "uuid",
+            "title": "Course Version Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
+          "presentation_format": {
+            "title": "Presentation Format",
+            "type": "string"
+          },
+          "reading_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reading Completed At"
+          },
+          "reading_position": {
+            "title": "Reading Position",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target_concept_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Target Concept Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "course_version_id",
+          "decision_id",
+          "activity_type",
+          "target_concept_ids",
+          "lesson_id",
+          "reason",
+          "status",
+          "presentation_format",
+          "reading_position",
+          "reading_completed_at"
+        ],
+        "title": "LearningActivityOut",
+        "type": "object"
+      },
       "LearningEventIn": {
         "properties": {
           "dimension": {
@@ -1191,6 +1510,37 @@
           "event_type"
         ],
         "title": "LearningEventIn",
+        "type": "object"
+      },
+      "LearningStateOut": {
+        "properties": {
+          "active_activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LearningActivityOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "concept_understanding": {
+            "items": {
+              "$ref": "#/components/schemas/MasteryReportRow"
+            },
+            "title": "Concept Understanding",
+            "type": "array"
+          },
+          "lesson_coverage": {
+            "$ref": "#/components/schemas/LessonCoverageOut"
+          }
+        },
+        "required": [
+          "active_activity",
+          "lesson_coverage",
+          "concept_understanding"
+        ],
+        "title": "LearningStateOut",
         "type": "object"
       },
       "LessonConceptOut": {
@@ -1249,6 +1599,39 @@
           "retrieved_chunk_ids"
         ],
         "title": "LessonContentOut",
+        "type": "object"
+      },
+      "LessonCoverageOut": {
+        "properties": {
+          "course_version_id": {
+            "format": "uuid",
+            "title": "Course Version Id",
+            "type": "string"
+          },
+          "covered_lesson_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Covered Lesson Ids",
+            "type": "array"
+          },
+          "lessons_covered": {
+            "title": "Lessons Covered",
+            "type": "integer"
+          },
+          "lessons_total": {
+            "title": "Lessons Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "course_version_id",
+          "lessons_total",
+          "lessons_covered",
+          "covered_lesson_ids"
+        ],
+        "title": "LessonCoverageOut",
         "type": "object"
       },
       "LessonOut": {
@@ -1531,18 +1914,23 @@
         "title": "PublishedStructureOut",
         "type": "object"
       },
-      "QuestionOut": {
-        "description": "Learner-facing question shape. Deliberately excludes correct_answer\nand rubric -- those never leave the server before grading.",
+      "QuestionResultOut": {
         "properties": {
-          "difficulty": {
-            "title": "Difficulty",
-            "type": "number"
+          "correctness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correctness"
           },
-          "id": {
-            "title": "Id",
-            "type": "string"
+          "expected_answer": {
+            "title": "Expected Answer"
           },
-          "options": {
+          "rubric": {
             "anyOf": [
               {
                 "items": {
@@ -1554,24 +1942,10 @@
                 "type": "null"
               }
             ],
-            "title": "Options"
-          },
-          "prompt": {
-            "title": "Prompt",
-            "type": "string"
-          },
-          "question_type": {
-            "title": "Question Type",
-            "type": "string"
+            "title": "Rubric"
           }
         },
-        "required": [
-          "id",
-          "question_type",
-          "prompt",
-          "difficulty"
-        ],
-        "title": "QuestionOut",
+        "title": "QuestionResultOut",
         "type": "object"
       },
       "QuizAttemptIn": {
@@ -2998,6 +3372,359 @@
         ]
       }
     },
+    "/api/v1/courses/{course_id}/activities/next": {
+      "post": {
+        "operationId": "select_or_resume_activity_api_v1_courses__course_id__activities_next_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningActivityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Select Or Resume Activity",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/activities/{activity_id}": {
+      "get": {
+        "operationId": "get_activity_api_v1_courses__course_id__activities__activity_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "activity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Activity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningActivityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Activity",
+        "tags": [
+          "learning"
+        ]
+      },
+      "patch": {
+        "operationId": "save_activity_progress_api_v1_courses__course_id__activities__activity_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "activity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Activity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivityProgressIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningActivityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Activity Progress",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/activities/{activity_id}/assessment": {
+      "post": {
+        "operationId": "start_activity_assessment_api_v1_courses__course_id__activities__activity_id__assessment_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "activity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Activity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Activity Assessment",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/activities/{activity_id}/reading-complete": {
+      "post": {
+        "operationId": "complete_reading_api_v1_courses__course_id__activities__activity_id__reading_complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "activity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Activity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningActivityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Reading",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
     "/api/v1/courses/{course_id}/adaptation-decisions/{decision_id}/outcomes/assessment": {
       "post": {
         "description": "The pedagogical-effect path: mastery_delta is computed server-side\n(current mastery minus the value already frozen in the decision's own\ninput_snapshot), never taken from the client. Set is_transfer_question\nwhen the attempt is on a *different* question testing the same concept\nin a new context, not a repeat of the original question.",
@@ -3298,6 +4025,320 @@
         ]
       }
     },
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}": {
+      "get": {
+        "operationId": "resume_assessment_api_v1_courses__course_id__assessment_sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Assessment",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/questions/{question_id}/answer": {
+      "post": {
+        "operationId": "submit_session_answer_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__answer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Session Answer",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/questions/{question_id}/retry-grading": {
+      "post": {
+        "operationId": "retry_session_grading_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__retry_grading_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Session Grading",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/submit": {
+      "post": {
+        "operationId": "submit_assessment_api_v1_courses__course_id__assessment_sessions__session_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Assessment",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
     "/api/v1/courses/{course_id}/chunks/{chunk_id}": {
       "get": {
         "description": "The source-viewer's read: open one cited chunk by id.",
@@ -3419,11 +4460,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/QuestionOut"
-                  },
-                  "title": "Response Generate Diagnostic Api V1 Courses  Course Id  Diagnostic Post",
-                  "type": "array"
+                  "$ref": "#/components/schemas/AssessmentSessionOut"
                 }
               }
             },
@@ -4020,6 +5057,67 @@
         "summary": "Get Latest Job",
         "tags": [
           "jobs"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/learning-state": {
+      "get": {
+        "operationId": "get_learning_state_api_v1_courses__course_id__learning_state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningStateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Learning State",
+        "tags": [
+          "learning"
         ]
       }
     },

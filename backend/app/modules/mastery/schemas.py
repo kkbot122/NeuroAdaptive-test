@@ -1,10 +1,12 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DiagnosticRequest(BaseModel):
-    max_questions: Optional[int] = Field(default=None, gt=0)
+    model_config = ConfigDict(extra="forbid")
+
+    max_questions: Optional[int] = Field(default=None, gt=0, le=50)
 
 
 class QuestionOut(BaseModel):

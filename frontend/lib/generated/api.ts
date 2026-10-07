@@ -150,6 +150,75 @@ export interface paths {
         patch: operations["update_course_api_v1_courses__course_id__patch"];
         trace?: never;
     };
+    "/api/v1/courses/{course_id}/activities/next": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Select Or Resume Activity */
+        post: operations["select_or_resume_activity_api_v1_courses__course_id__activities_next_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/activities/{activity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Activity */
+        get: operations["get_activity_api_v1_courses__course_id__activities__activity_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Save Activity Progress */
+        patch: operations["save_activity_progress_api_v1_courses__course_id__activities__activity_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/activities/{activity_id}/assessment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Activity Assessment */
+        post: operations["start_activity_assessment_api_v1_courses__course_id__activities__activity_id__assessment_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/activities/{activity_id}/reading-complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Reading */
+        post: operations["complete_reading_api_v1_courses__course_id__activities__activity_id__reading_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/courses/{course_id}/adaptation-decisions/{decision_id}/outcomes/assessment": {
         parameters: {
             query?: never;
@@ -235,6 +304,74 @@ export interface paths {
         get: operations["get_adaptation_history_api_v1_courses__course_id__adaptation_history_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resume Assessment */
+        get: operations["resume_assessment_api_v1_courses__course_id__assessment_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/questions/{question_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Session Answer */
+        post: operations["submit_session_answer_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__answer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/questions/{question_id}/retry-grading": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Session Grading */
+        post: operations["retry_session_grading_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__retry_grading_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/assessment-sessions/{session_id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Assessment */
+        post: operations["submit_assessment_api_v1_courses__course_id__assessment_sessions__session_id__submit_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -409,6 +546,23 @@ export interface paths {
          *     an ordinary state, not an error.
          */
         get: operations["get_latest_job_api_v1_courses__course_id__jobs_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/learning-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Learning State */
+        get: operations["get_learning_state_api_v1_courses__course_id__learning_state_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1120,6 +1274,30 @@ export interface components {
             /** Score */
             score: number;
         };
+        /** ActivityProgressIn */
+        ActivityProgressIn: {
+            /** Presentation Format */
+            presentation_format?: ("concise" | "detailed" | "worked_example" | "analogy" | "diagram" | "source_view" | "quiz_first") | null;
+            /** Reading Position */
+            reading_position?: number | null;
+        };
+        /** AnswerIn */
+        AnswerIn: {
+            /** Given Answer */
+            given_answer: unknown;
+        };
+        /** AnswerOut */
+        AnswerOut: {
+            /** Given Answer */
+            given_answer: unknown;
+            /** Status */
+            status: string;
+            /**
+             * Submitted At
+             * Format: date-time
+             */
+            submitted_at: string;
+        };
         /** ArchetypeOverrideRequest */
         ArchetypeOverrideRequest: {
             /** Primary Archetype */
@@ -1139,6 +1317,51 @@ export interface components {
              * Format: uuid
              */
             question_attempt_id: string;
+        };
+        /** AssessmentQuestionOut */
+        AssessmentQuestionOut: {
+            answer?: components["schemas"]["AnswerOut"] | null;
+            /** Difficulty */
+            difficulty: number;
+            /** Options */
+            options: string[] | null;
+            /** Position */
+            position: number;
+            /** Prompt */
+            prompt: string;
+            /**
+             * Question Id
+             * Format: uuid
+             */
+            question_id: string;
+            /** Question Type */
+            question_type: string;
+            /** Question Version */
+            question_version: number;
+            result?: components["schemas"]["QuestionResultOut"] | null;
+        };
+        /** AssessmentSessionOut */
+        AssessmentSessionOut: {
+            /**
+             * Activity Id
+             * Format: uuid
+             */
+            activity_id: string;
+            /** Assessment Type */
+            assessment_type: string;
+            /** Grading State */
+            grading_state: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Questions */
+            questions: components["schemas"]["AssessmentQuestionOut"][];
+            /** Submission State */
+            submission_state: string;
+            /** Submitted At */
+            submitted_at: string | null;
         };
         /** AssignIn */
         AssignIn: {
@@ -1556,6 +1779,39 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** LearningActivityOut */
+        LearningActivityOut: {
+            /** Activity Type */
+            activity_type: string;
+            /** Assessment Session Id */
+            assessment_session_id?: string | null;
+            /**
+             * Course Version Id
+             * Format: uuid
+             */
+            course_version_id: string;
+            /** Decision Id */
+            decision_id: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Lesson Id */
+            lesson_id: string | null;
+            /** Presentation Format */
+            presentation_format: string;
+            /** Reading Completed At */
+            reading_completed_at: string | null;
+            /** Reading Position */
+            reading_position: number;
+            /** Reason */
+            reason: string | null;
+            /** Status */
+            status: string;
+            /** Target Concept Ids */
+            target_concept_ids: string[];
+        };
         /** LearningEventIn */
         LearningEventIn: {
             /** Dimension */
@@ -1573,6 +1829,13 @@ export interface components {
             seconds: number;
             /** Target Id */
             target_id?: string | null;
+        };
+        /** LearningStateOut */
+        LearningStateOut: {
+            active_activity: components["schemas"]["LearningActivityOut"] | null;
+            /** Concept Understanding */
+            concept_understanding: components["schemas"]["MasteryReportRow"][];
+            lesson_coverage: components["schemas"]["LessonCoverageOut"];
         };
         /** LessonConceptOut */
         LessonConceptOut: {
@@ -1596,6 +1859,20 @@ export interface components {
             grounding_mode: string;
             /** Retrieved Chunk Ids */
             retrieved_chunk_ids: string[];
+        };
+        /** LessonCoverageOut */
+        LessonCoverageOut: {
+            /**
+             * Course Version Id
+             * Format: uuid
+             */
+            course_version_id: string;
+            /** Covered Lesson Ids */
+            covered_lesson_ids: string[];
+            /** Lessons Covered */
+            lessons_covered: number;
+            /** Lessons Total */
+            lessons_total: number;
         };
         /** LessonOut */
         LessonOut: {
@@ -1713,22 +1990,14 @@ export interface components {
              */
             course_id: string;
         };
-        /**
-         * QuestionOut
-         * @description Learner-facing question shape. Deliberately excludes correct_answer
-         *     and rubric -- those never leave the server before grading.
-         */
-        QuestionOut: {
-            /** Difficulty */
-            difficulty: number;
-            /** Id */
-            id: string;
-            /** Options */
-            options?: string[] | null;
-            /** Prompt */
-            prompt: string;
-            /** Question Type */
-            question_type: string;
+        /** QuestionResultOut */
+        QuestionResultOut: {
+            /** Correctness */
+            correctness?: number | null;
+            /** Expected Answer */
+            expected_answer?: unknown;
+            /** Rubric */
+            rubric?: string[] | null;
         };
         /**
          * QuizAttemptIn
@@ -2394,6 +2663,184 @@ export interface operations {
             };
         };
     };
+    select_or_resume_activity_api_v1_courses__course_id__activities_next_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningActivityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_activity_api_v1_courses__course_id__activities__activity_id__get: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningActivityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_activity_progress_api_v1_courses__course_id__activities__activity_id__patch: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActivityProgressIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningActivityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_activity_assessment_api_v1_courses__course_id__activities__activity_id__assessment_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_reading_api_v1_courses__course_id__activities__activity_id__reading_complete_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningActivityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     record_assessment_outcome_api_v1_courses__course_id__adaptation_decisions__decision_id__outcomes_assessment_post: {
         parameters: {
             query?: never;
@@ -2545,6 +2992,152 @@ export interface operations {
             };
         };
     };
+    resume_assessment_api_v1_courses__course_id__assessment_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_session_answer_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__answer_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                session_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_session_grading_api_v1_courses__course_id__assessment_sessions__session_id__questions__question_id__retry_grading_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                session_id: string;
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_assessment_api_v1_courses__course_id__assessment_sessions__session_id__submit_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentSessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_chunk_api_v1_courses__course_id__chunks__chunk_id__get: {
         parameters: {
             query?: never;
@@ -2604,7 +3197,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["QuestionOut"][];
+                    "application/json": components["schemas"]["AssessmentSessionOut"];
                 };
             };
             /** @description Validation Error */
@@ -2910,6 +3503,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobOut"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_learning_state_api_v1_courses__course_id__learning_state_get: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningStateOut"];
                 };
             };
             /** @description Validation Error */

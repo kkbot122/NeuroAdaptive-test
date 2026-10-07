@@ -1,7 +1,8 @@
 # NeuroLearn product plan
 
-Status: agreed product direction. P0 repository configuration is implemented; hosted
-deployment and runtime pass conditions have not been demonstrated. Date: 2026-10-07.
+Status: agreed product direction. P0 repository configuration and P1 lifecycle contracts
+are implemented locally; hosted deployment and runtime pass conditions have not been
+demonstrated. Date: 2026-10-07.
 
 ## Read in this order
 
@@ -10,6 +11,7 @@ deployment and runtime pass conditions have not been demonstrated. Date: 2026-10
 | [user-flows.md](user-flows.md) | What does the student do from arrival to completion? |
 | [screens.md](screens.md) | What appears on each screen, and what actions are available? |
 | [learning-rules.md](learning-rules.md) | How do teaching, assessment, mastery, and selection behave? |
+| [p1-lifecycle-contract.md](p1-lifecycle-contract.md) | What durable P1 states, API payloads, and P2 seams are implemented? |
 | [implementation-gap.md](implementation-gap.md) | What can we reuse, and what is missing? |
 | [build-plan.md](build-plan.md) | What should we implement first, and how do we demonstrate it? |
 
@@ -117,8 +119,9 @@ Future tunable numbers need named, versioned, configurable policies.
 
 This folder records approved product/architecture decisions, not authorization to
 begin implementation or evidence that they exist. Operational rules for migrations,
-contracts, ownership, and honest reporting still apply. Only this planning folder
-was read during the update; historical Markdown was not consulted.
+contracts, ownership, and honest reporting still apply. P1 implementation status and
+executed local checks are recorded in [p1-lifecycle-contract.md](p1-lifecycle-contract.md)
+and [implementation-gap.md](implementation-gap.md); neither is a deployment claim.
 
 Explicit scope revisions: linked-course grounding/evidence, visible factual selection
 reasons, replacement before publication, support checks for all factual claims, and

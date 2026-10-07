@@ -3,6 +3,10 @@
 Agreed product and safeguard behavior. Numeric policies and implementation details
 remain open where noted in [README.md](README.md).
 
+P1's implemented state and API contract is in [p1-lifecycle-contract.md](p1-lifecycle-contract.md).
+The rules below remain the agreed product direction; the contract identifies the subset
+currently implemented and the pieces that await later work.
+
 ## Activities
 
 | Activity | Eligibility/purpose | Work | Finish condition |
@@ -105,4 +109,3 @@ Coverage records finished lesson work; understanding records concept evidence. O
 coverage and sufficient-understanding criteria are met, show completion and offer
 optional app-selected practice. Remaining gaps offer targeted work. No schedule,
 reminders, spaced review, programming execution, or OCR is added by this plan.
-

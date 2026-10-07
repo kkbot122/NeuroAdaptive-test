@@ -1,13 +1,13 @@
 import pytest
 
-from app.modules.courses.models import Course
+from app.modules.courses.models import Course, CourseStatus
 from app.modules.curriculum.models import Concept, ConceptPrerequisite, CourseVersion, CourseVersionStatus
 from tests.conftest import auth_headers
 
 
 @pytest.fixture()
 def course_with_concepts(db_session, owner):
-    course = Course(owner_id=owner.id, title="OS Course")
+    course = Course(owner_id=owner.id, title="OS Course", status=CourseStatus.PUBLISHED.value)
     db_session.add(course)
     db_session.commit()
     db_session.refresh(course)
@@ -59,11 +59,13 @@ class TestDiagnostic:
             f"/api/v1/courses/{course.id}/diagnostic", json={}, headers=auth_headers(owner.email)
         )
         assert resp.status_code == 200
-        questions = resp.json()
+        session = resp.json()
+        questions = session["questions"]
         assert len(questions) == 2
         for q in questions:
-            assert "correct_answer" not in q
+            assert "expected_answer" not in q
             assert "rubric" not in q
+            assert "result" not in q
 
     def test_unknown_course_is_404(self, client, owner):
         import uuid
@@ -90,15 +92,21 @@ class TestAttemptsAndReport:
             json={"max_questions": 1},
             headers=auth_headers(owner.email),
         ).json()
-        question_id = diagnostic[0]["id"]
-
-        attempt = client.post(
-            f"/api/v1/questions/{question_id}/attempts",
+        session_id = diagnostic["id"]
+        question_id = diagnostic["questions"][0]["question_id"]
+        answer = client.post(
+            f"/api/v1/courses/{course.id}/assessment-sessions/{session_id}/questions/{question_id}/answer",
             json={"given_answer": "A"},
             headers=auth_headers(owner.email),
         )
-        assert attempt.status_code == 201
-        assert attempt.json()["correctness"] == 1.0
+        assert answer.status_code == 200
+        assert "result" not in answer.json()["questions"][0]
+        submitted = client.post(
+            f"/api/v1/courses/{course.id}/assessment-sessions/{session_id}/submit",
+            headers=auth_headers(owner.email),
+        )
+        assert submitted.status_code == 200
+        assert submitted.json()["questions"][0]["result"]["correctness"] == 1.0
 
         report = client.get(
             f"/api/v1/courses/{course.id}/mastery-report", headers=auth_headers(owner.email)
@@ -179,7 +187,7 @@ class TestAttemptsAndReport:
             json={"max_questions": 1},
             headers=auth_headers(owner.email),
         ).json()
-        question_id = diagnostic[0]["id"]
+        question_id = diagnostic["questions"][0]["question_id"]
 
         resp = client.post(
             f"/api/v1/questions/{question_id}/attempts",

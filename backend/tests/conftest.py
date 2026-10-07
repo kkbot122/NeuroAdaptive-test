@@ -108,6 +108,9 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
     from app.modules.jobs.service import JobService
     from app.modules.mastery.router import _service as mastery_service_dep
     from app.modules.mastery.service import MasteryService
+    from app.modules.mastery.router import _learning_service as mastery_learning_service_dep
+    from app.modules.learning.router import _service as learning_service_dep
+    from app.modules.learning.service import LearningService
     from app.modules.retrieval.router import _service as retrieval_service_dep
     from app.modules.retrieval.service import RetrievalService
     from app.modules.tutor.router import _service as tutor_service_dep
@@ -137,6 +140,12 @@ def client(db_session, fake_embeddings, fake_vectors, fake_generation):
         db_session, fake_embeddings, fake_vectors
     )
     app.dependency_overrides[mastery_service_dep] = lambda: MasteryService(
+        db_session, fake_generation, fake_embeddings
+    )
+    app.dependency_overrides[mastery_learning_service_dep] = lambda: LearningService(
+        db_session, fake_generation, fake_embeddings
+    )
+    app.dependency_overrides[learning_service_dep] = lambda: LearningService(
         db_session, fake_generation, fake_embeddings
     )
     app.dependency_overrides[adaptation_service_dep] = lambda: AdaptationService(
