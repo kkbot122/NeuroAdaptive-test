@@ -247,6 +247,16 @@ def test_postgresql_submit_and_final_grading_interleave_completes_activity(postg
                 allow_grading_to_finish.set()
             graded = grading.result(timeout=10)
             assert graded["grading_state"] == "COMPLETE"
+            assert graded["graded_answer_count"] == 1
+            assert graded["unresolved_answer_count"] == 0
+            assert graded["concept_progress_reference_at"] == graded["submitted_at"]
+            assert graded["concept_progress"][0]["before_band"] == "Not assessed"
+            assert graded["concept_progress"][0]["after_band"] == "Developing"
+            with session_factory() as db:
+                refreshed = LearningService(db, FakeGenerationGateway(), embeddings).get_assessment(
+                    course_id, assessment_id, owner_id
+                )
+                assert refreshed["concept_progress"] == graded["concept_progress"]
     finally:
         allow_grading_to_finish.set()
 

@@ -19,12 +19,12 @@ Paths below are relative to repository root.
 | Diagnostic | P1 persists/resumes fixed question ID/version/order sets and distinguishes saved answers from grading; small graphs may yield fewer questions than the PDF's stated minimum | Later define skip/retry policy; do not restore historical minimum counts as guarantees |
 | Lesson assessment | P1 activity sessions reuse existing questions for the saved course version and target concepts | **P2 implemented locally:** grounded MCQs are generated for the prepared activity, versioned, and attached to its fixed P1 session; see [P2 contract](p2-grounded-preparation-contract.md) |
 | Grading/evidence | P1 persists answers independently, gates feedback until set submission, retries failed grading, and deduplicates existing attempt/evidence writes | Later add durable grading workers and authorized corrections preserving original judgments |
-| Mastery | `mastery/engine.py` computes weighted prior/uncertainty/decay | Agree policies; expose honest bands/evidence strength; no calibration claim |
-| Selection | P1 persists the selected recommendation trace with one unfinished activity per owner/course and resumes it before selecting again | Later policy work may refine eligibility/scoring; do not change existing mastery thresholds in P1 |
-| Activity navigation | P1 learn/study/assessment consumers save position/format, resume fixed sessions, and provide a dashboard exit | Full distinct lesson, practice, challenge, and course overview experiences remain later UI work |
+| Mastery | `mastery/engine.py` computes weighted prior/uncertainty/decay | **P3 exposes approved uncalibrated bands and separate evidence strength;** no second mastery store or calibration claim |
+| Selection | P1 persists the selected recommendation trace with one unfinished activity per owner/course and resumes it before selecting again | **P3 Continue uses this path and preserves the decision/activity trace;** do not change recommendation weights. P4 adds unsupported activity experiences |
+| Activity navigation | P1 learn/study/assessment consumers save position/format, resume fixed sessions, and provide a dashboard exit | **P3 adds results/progress and supported/unavailable handling;** full distinct lesson, practice, challenge, and course overview experiences remain later UI work |
 | Teaching/tutor | `tutor/service.py`; study/tutor/source pages | Consistent teaching structure; contextual side panels; assessment restriction |
 | Presentation | Study page sends learner-button success before assessment | Replace learning-effectiveness signal with attributed graded outcomes |
-| Progress/resume | Evidence/decision records exist; inspected models lack explicit assessment-set/activity progress lifecycle | Durable reading position, fixed questions, coverage, completion |
+| Progress/resume | P1 persists reading position, fixed assessment questions/answers, activity/session states, and lesson coverage; P3 derives concept comparisons at the saved submission time | P9 still needs agreed course-completion/retention criteria; no second progress store |
 | Account controls | `identity/router.py`, `privacy/service.py`; existing profile UI | Wire product settings; review deletion/retention for every new entity |
 | Legacy experience | `chat/router.py`, `content/router.py`, profile use learning-style data | Decide navigation placement; don't present it as the new course adaptation |
 
@@ -131,3 +131,19 @@ The first course remains learner-owned and current-course grounded. P2 does not 
 linked-course retrieval, short-answer grading/review, new recommendation or mastery
 rules, or production migration/deployment. Hosted worker capacity and live Gemini
 behavior remain unverified.
+
+## P3 implementation update — 2026-10-08
+
+P3 connects submitted P1/P2 sessions to before/after concept labels, separate evidence
+strength, lesson coverage, and Continue. Results are reconstructed through the existing
+mastery engine from immutable evidence at the saved assessment submission time. Pending
+grades remain unresolved; retries add no second evidence event. `LearningActivity` keeps
+the course version, decision, targets, reason, and format. The existing active-activity
+guard and course lock protect concurrent Continue requests. P3 requests P2 preparation
+only for supported lessons; other selected activity types remain explicitly unavailable
+until P4.
+
+No P3 migration or new learning record is required. OpenAPI and generated frontend types
+include `evidence_strength`, submitted-session grade counts/concept progress, and activity
+experience availability. Approved display defaults and verification evidence are in
+[P3 contract](p3-results-progress-contract.md). Hosted behavior is not claimed.

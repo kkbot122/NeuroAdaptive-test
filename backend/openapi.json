@@ -184,6 +184,45 @@
         "title": "ArchetypeOverrideRequest",
         "type": "object"
       },
+      "AssessmentConceptProgressOut": {
+        "properties": {
+          "after_band": {
+            "title": "After Band",
+            "type": "string"
+          },
+          "after_evidence_strength": {
+            "title": "After Evidence Strength",
+            "type": "string"
+          },
+          "before_band": {
+            "title": "Before Band",
+            "type": "string"
+          },
+          "before_evidence_strength": {
+            "title": "Before Evidence Strength",
+            "type": "string"
+          },
+          "concept_id": {
+            "format": "uuid",
+            "title": "Concept Id",
+            "type": "string"
+          },
+          "concept_name": {
+            "title": "Concept Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "concept_id",
+          "concept_name",
+          "before_band",
+          "after_band",
+          "before_evidence_strength",
+          "after_evidence_strength"
+        ],
+        "title": "AssessmentConceptProgressOut",
+        "type": "object"
+      },
       "AssessmentOutcomeIn": {
         "properties": {
           "baseline_question_attempt_id": {
@@ -300,6 +339,36 @@
             "title": "Assessment Type",
             "type": "string"
           },
+          "concept_progress": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AssessmentConceptProgressOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept Progress"
+          },
+          "concept_progress_reference_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Concept Progress Reference At"
+          },
+          "graded_answer_count": {
+            "title": "Graded Answer Count",
+            "type": "integer"
+          },
           "grading_state": {
             "title": "Grading State",
             "type": "string"
@@ -331,6 +400,10 @@
               }
             ],
             "title": "Submitted At"
+          },
+          "unresolved_answer_count": {
+            "title": "Unresolved Answer Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -340,7 +413,9 @@
           "submission_state",
           "grading_state",
           "submitted_at",
-          "questions"
+          "questions",
+          "graded_answer_count",
+          "unresolved_answer_count"
         ],
         "title": "AssessmentSessionOut",
         "type": "object"
@@ -1423,6 +1498,14 @@
             ],
             "title": "Decision Id"
           },
+          "experience_availability": {
+            "enum": [
+              "SUPPORTED",
+              "UNAVAILABLE"
+            ],
+            "title": "Experience Availability",
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -1492,6 +1575,17 @@
             },
             "title": "Target Concept Ids",
             "type": "array"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Reason"
           }
         },
         "required": [
@@ -1499,6 +1593,7 @@
           "course_version_id",
           "decision_id",
           "activity_type",
+          "experience_availability",
           "target_concept_ids",
           "lesson_id",
           "reason",
@@ -1757,6 +1852,10 @@
             "title": "Concept Name",
             "type": "string"
           },
+          "evidence_strength": {
+            "title": "Evidence Strength",
+            "type": "string"
+          },
           "lesson_id": {
             "anyOf": [
               {
@@ -1784,7 +1883,8 @@
         "required": [
           "concept_id",
           "concept_name",
-          "band"
+          "band",
+          "evidence_strength"
         ],
         "title": "MasteryReportRow",
         "type": "object"

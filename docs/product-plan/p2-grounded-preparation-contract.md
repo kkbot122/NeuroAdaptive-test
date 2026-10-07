@@ -132,8 +132,9 @@ recommendation policy, full UI redesign, live-provider validation, or hosted wor
 verification. Question-generation failure preserves saved content and leaves assessment
 unavailable/recoverable; it creates no question set or mastery evidence.
 
-P3 can rely on P1 activity/session/answer/evidence lifecycle, P2 durable preparation
+P3 relies on P1 activity/session/answer/evidence lifecycle, P2 durable preparation
 stages and validated saved lesson artifacts, activity-bound immutable question IDs/
 versions/order, exact set-submission feedback gating, and zero mastery effect from
-reading. P3 may add results/progress/next-activity presentation without introducing a
-second progress or assessment system.
+reading. Implemented P3 results/progress/next-activity behavior is in
+[p3-results-progress-contract.md](p3-results-progress-contract.md); it adds no second
+progress or assessment system.

@@ -1,7 +1,7 @@
 import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Barrier
 
 import pytest
@@ -18,8 +18,10 @@ from app.modules.auth.models import User
 from app.modules.courses.models import Course, CourseStatus
 from app.modules.curriculum.models import (
     Concept,
+    ConceptPrerequisite,
     CourseVersion,
     CourseVersionStatus,
+    EdgeStrength,
     Lesson,
     LessonConcept,
     Module,
@@ -124,6 +126,23 @@ def start_diagnostic(client, course, owner, max_questions=2):
 
 
 class TestDiagnosticResumeAndFeedback:
+    def test_continue_resumes_saved_diagnostic_as_supported_work(
+        self, client, owner, db_session, fake_generation, published_course_with_lessons
+    ):
+        configure_diagnostic(fake_generation)
+        course, *_ = published_course_with_lessons
+        session = start_diagnostic(client, course, owner).json()
+
+        continued = client.post(
+            f"/api/v1/courses/{course.id}/activities/next",
+            headers=auth_headers(owner.email),
+        )
+
+        assert continued.status_code == 200
+        assert continued.json()["activity_type"] == "DIAGNOSTIC"
+        assert continued.json()["experience_availability"] == "SUPPORTED"
+        assert continued.json()["assessment_session_id"] == session["id"]
+
     def test_refresh_returns_the_same_order_and_historical_question_version(
         self, client, owner, db_session, fake_generation, published_course_with_lessons
     ):
@@ -245,6 +264,7 @@ class TestDiagnosticResumeAndFeedback:
         retry = client.post(answer_url, json=body, headers=auth_headers(owner.email))
         assert first.status_code == retry.status_code == 200
         assert all("result" not in question for question in first.json()["questions"])
+        assert "concept_progress" not in first.json()
         assert "expected_answer" not in json.dumps(first.json())
         assert db_session.query(AnswerSubmission).count() == 1
         assert db_session.query(QuestionAttempt).filter(QuestionAttempt.assessment_question_id.isnot(None)).count() == 1
@@ -288,6 +308,7 @@ class TestDiagnosticResumeAndFeedback:
         )
         assert second.status_code == 200
         assert all("result" not in question for question in second.json()["questions"])
+        assert "concept_progress" not in second.json()
         assessed_concept_ids = {
             str(row[0])
             for row in db_session.query(QuestionConcept.concept_id)
@@ -305,7 +326,26 @@ class TestDiagnosticResumeAndFeedback:
 
         submitted = client.post(f"{session_url}/submit", headers=auth_headers(owner.email))
         assert submitted.status_code == 200
-        assert [q["result"]["correctness"] for q in submitted.json()["questions"]] == [1.0, 1.0]
+        submitted_body = submitted.json()
+        assert [q["result"]["correctness"] for q in submitted_body["questions"]] == [1.0, 1.0]
+        assert submitted_body["graded_answer_count"] == 2
+        assert submitted_body["unresolved_answer_count"] == 0
+        assert submitted_body["concept_progress_reference_at"] == submitted_body["submitted_at"]
+        progress_by_id = {row["concept_id"]: row for row in submitted_body["concept_progress"]}
+        assert set(progress_by_id) == assessed_concept_ids
+        assert progress_by_id[str(concept_id)]["before_band"] == "Not assessed"
+        assert progress_by_id[str(concept_id)]["after_band"] == "Developing"
+        assert progress_by_id[str(concept_id)]["before_evidence_strength"] == "Not assessed"
+        assert progress_by_id[str(concept_id)]["after_evidence_strength"] == "Limited evidence"
+        refreshed_results = client.get(session_url, headers=auth_headers(owner.email)).json()
+        assert refreshed_results["concept_progress"] == submitted_body["concept_progress"]
+        assert refreshed_results["concept_progress_reference_at"] == submitted_body["submitted_at"]
+        decisions_before_refresh = db_session.query(AdaptationDecision).count()
+        generation_calls_before_refresh = len(fake_generation.calls)
+        refreshed_again = client.get(session_url, headers=auth_headers(owner.email))
+        assert refreshed_again.status_code == 200
+        assert db_session.query(AdaptationDecision).count() == decisions_before_refresh
+        assert len(fake_generation.calls) == generation_calls_before_refresh
         mastery_after_submit = client.get(
             f"/api/v1/courses/{course.id}/mastery-report",
             headers=auth_headers(owner.email),
@@ -437,7 +477,53 @@ class TestActivityCoverageAndOwnership:
         assert state["lesson_coverage"]["covered_lesson_ids"] == [str(lesson.id)]
         understanding = next(row for row in state["concept_understanding"] if row["concept_id"] == str(concept_a.id))
         assert understanding["band"] == "Not assessed"
+        assert understanding["evidence_strength"] == "Not assessed"
         assert db_session.query(MasteryEvent).count() == 0
+
+    def test_p4_activity_is_reported_unavailable_and_cannot_start_a_p2_assessment(
+        self, client, owner, db_session, published_course_with_lessons
+    ):
+        course, version, concept_a, _, lesson = published_course_with_lessons
+        activity = LearningActivity(
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            activity_type="TARGETED_PRACTICE",
+            target_concept_ids=[str(concept_a.id)],
+            lesson_id=lesson.id,
+            status="READY",
+            presentation_format="concise",
+        )
+        db_session.add(activity)
+        db_session.commit()
+        headers = auth_headers(owner.email)
+
+        saved = client.get(
+            f"/api/v1/courses/{course.id}/activities/{activity.id}", headers=headers
+        )
+        assert saved.status_code == 200
+        assert saved.json()["experience_availability"] == "UNAVAILABLE"
+        assert "P4" in saved.json()["unavailable_reason"]
+        assessment = client.post(
+            f"/api/v1/courses/{course.id}/activities/{activity.id}/assessment", headers=headers
+        )
+        assert assessment.status_code == 409
+        assert "until P4" in assessment.json()["detail"]
+        assert db_session.query(AssessmentSession).count() == 0
+
+        legacy_session = AssessmentSession(
+            activity_id=activity.id,
+            course_version_id=version.id,
+            assessment_type="LESSON",
+            status="OPEN",
+        )
+        db_session.add(legacy_session)
+        db_session.commit()
+        resumed = client.post(
+            f"/api/v1/courses/{course.id}/activities/{activity.id}/assessment", headers=headers
+        )
+        assert resumed.status_code == 409
+        assert "until P4" in resumed.json()["detail"]
 
     def test_foreign_course_session_and_question_relationships_return_404(
         self, client, owner, other_user, db_session, fake_generation, published_course_with_lessons
@@ -624,6 +710,19 @@ class TestActivityCoverageAndOwnership:
         assert "correctness" not in result
         assert result["rubric"] == ["identifies the concept"]
         assert completed_set.json()["grading_state"] == "RETRY_REQUIRED"
+        assert completed_set.json()["graded_answer_count"] == 0
+        assert completed_set.json()["unresolved_answer_count"] == 1
+        pending_progress = completed_set.json()["concept_progress"][0]
+        assert pending_progress["before_band"] == "Not assessed"
+        assert pending_progress["after_band"] == "Not assessed"
+        assert pending_progress["after_evidence_strength"] == "Not assessed"
+        active_on_continue = client.post(
+            f"/api/v1/courses/{course.id}/activities/next", headers=headers
+        )
+        assert active_on_continue.status_code == 200
+        assert active_on_continue.json()["id"] == str(activity.id)
+        assert active_on_continue.json()["assessment_session_id"] == session["id"]
+        assert db_session.query(AdaptationDecision).count() == 0
 
         def recovered_service():
             generation = FakeGenerationGateway().set_default('{"criteria_met": [true]}')
@@ -639,12 +738,209 @@ class TestActivityCoverageAndOwnership:
         assert recovered.status_code == retried_again.status_code == 200
         assert recovered.json()["grading_state"] == "COMPLETE"
         assert recovered.json()["questions"][0]["result"]["correctness"] == 1.0
+        assert recovered.json()["graded_answer_count"] == 1
+        assert recovered.json()["unresolved_answer_count"] == 0
+        assert recovered.json()["concept_progress"][0]["after_band"] == "Developing"
+        assert recovered.json()["concept_progress"][0]["after_evidence_strength"] == "Limited evidence"
         assert db_session.query(AnswerSubmission).one().given_answer == "A supported response"
         assert db_session.query(QuestionAttempt).filter(QuestionAttempt.assessment_question_id.isnot(None)).count() == 1
         assert db_session.query(MasteryEvent).count() == 1
+        db_session.refresh(activity)
+        assert activity.status == "COMPLETED"
+
+
+class TestAssessmentProgressAttribution:
+    def test_grade_committed_during_progress_read_stays_after_its_own_session(
+        self, owner, db_session, fake_generation, published_course_with_lessons, monkeypatch
+    ):
+        course, version, concept_a, _, lesson = published_course_with_lessons
+        activity = LearningActivity(
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            activity_type="NEW_LESSON",
+            target_concept_ids=[str(concept_a.id)],
+            lesson_id=lesson.id,
+            status="COMPLETED",
+        )
+        db_session.add(activity)
+        db_session.flush()
+        question = Question(
+            course_id=course.id,
+            course_version_id=version.id,
+            owner_id=owner.id,
+            question_type="MCQ",
+            prompt="Question for the progress snapshot?",
+            options=["supported", "unsupported"],
+            correct_answer="supported",
+            rubric=None,
+            difficulty=0.5,
+            is_diagnostic=0,
+            version=1,
+            model_id="fixture",
+            prompt_version="test-v1",
+        )
+        db_session.add(question)
+        db_session.flush()
+        db_session.add(QuestionConcept(question_id=question.id, concept_id=concept_a.id, weight=1.0))
+        submitted_at = datetime.now(timezone.utc)
+        session = AssessmentSession(
+            activity_id=activity.id,
+            course_version_id=version.id,
+            assessment_type="LESSON",
+            status="SUBMITTED",
+            submitted_at=submitted_at,
+        )
+        db_session.add(session)
+        db_session.flush()
+        assessment_question = AssessmentQuestion(
+            session_id=session.id,
+            question_id=question.id,
+            question_version=question.version,
+            position=0,
+        )
+        db_session.add(assessment_question)
+        db_session.commit()
+
+        from app.modules.mastery.service import MasteryService
+
+        original_visible_events = MasteryService.visible_mastery_events
+        injected = False
+
+        def commit_grade_before_evidence_read(service, *args, **kwargs):
+            nonlocal injected
+            if not injected:
+                injected = True
+                attempt = QuestionAttempt(
+                    assessment_question_id=assessment_question.id,
+                    question_id=question.id,
+                    question_version=question.version,
+                    owner_id=owner.id,
+                    course_id=course.id,
+                    given_answer="supported",
+                    correctness=1.0,
+                )
+                db_session.add(attempt)
+                db_session.flush()
+                db_session.add(
+                    MasteryEvent(
+                        owner_id=owner.id,
+                        course_id=course.id,
+                        course_version_id=version.id,
+                        concept_id=concept_a.id,
+                        question_attempt_id=attempt.id,
+                        correctness=1.0,
+                        evidence_weight_base=1.0,
+                        created_at=submitted_at - timedelta(seconds=1),
+                    )
+                )
+                db_session.commit()
+            return original_visible_events(service, *args, **kwargs)
+
+        monkeypatch.setattr(
+            MasteryService, "visible_mastery_events", commit_grade_before_evidence_read
+        )
+        progress = MasteryService(
+            db_session, fake_generation, FakeEmbeddingGateway()
+        ).get_assessment_concept_progress(course.id, owner.id, session.id, submitted_at)
+
+        assert injected
+        assert len(progress) == 1
+        assert progress[0]["before_band"] == "Not assessed"
+        assert progress[0]["after_band"] == "Developing"
 
 
 class TestConcurrentActivitySelection:
+    def test_completed_results_continue_to_one_persisted_supported_next_lesson(
+        self, client, owner, db_session, fake_generation, published_course_with_lessons
+    ):
+        from app.modules.mastery.service import MasteryService
+
+        course, version, concept_a, concept_b, first_lesson = published_course_with_lessons
+        module = db_session.query(Module).filter_by(course_version_id=version.id).one()
+        concept_c = Concept(
+            course_id=course.id,
+            course_version_id=version.id,
+            owner_id=owner.id,
+            canonical_key="concept-c",
+            name="Concept C",
+            definition="A later, unassessed concept.",
+            importance=0.8,
+        )
+        db_session.add(concept_c)
+        db_session.flush()
+        next_lesson = Lesson(module_id=module.id, position=1, title="Next lesson", objective="Teach Concept C")
+        db_session.add(next_lesson)
+        db_session.flush()
+        db_session.add(LessonConcept(lesson_id=next_lesson.id, concept_id=concept_c.id, weight=1.0))
+        db_session.add(
+            ConceptPrerequisite(
+                course_id=course.id,
+                course_version_id=version.id,
+                prerequisite_concept_id=concept_a.id,
+                dependent_concept_id=concept_c.id,
+                strength=EdgeStrength.HARD.value,
+                confidence=1.0,
+            )
+        )
+
+        mastery = MasteryService(db_session, fake_generation, FakeEmbeddingGateway())
+        for concept in (concept_a, concept_b):
+            question = mastery.create_question(
+                course.id,
+                version.id,
+                owner.id,
+                "MCQ",
+                f"Prior fixture check for {concept.name}?",
+                {concept.id: 1.0},
+                options=["yes", "no"],
+                correct_answer="yes",
+                difficulty=0.5,
+                commit=False,
+            )
+            for _ in range(9):
+                mastery.record_graded_attempt(question, owner.id, "yes", 1.0, commit=False)
+        db_session.commit()
+
+        configure_diagnostic(fake_generation)
+        diagnostic = start_diagnostic(client, course, owner, max_questions=2).json()
+        headers = auth_headers(owner.email)
+        session_url = f"/api/v1/courses/{course.id}/assessment-sessions/{diagnostic['id']}"
+        for question, answer in zip(diagnostic["questions"], ("A", "B"), strict=True):
+            saved = client.post(
+                f"{session_url}/questions/{question['question_id']}/answer",
+                json={"given_answer": answer},
+                headers=headers,
+            )
+            assert saved.status_code == 200
+        submitted = client.post(f"{session_url}/submit", headers=headers)
+        assert submitted.status_code == 200
+        assert submitted.json()["grading_state"] == "COMPLETE"
+
+        selected = client.post(f"/api/v1/courses/{course.id}/activities/next", headers=headers)
+        repeated = client.post(f"/api/v1/courses/{course.id}/activities/next", headers=headers)
+        assert selected.status_code == repeated.status_code == 200
+        activity = selected.json()
+        assert activity["id"] == repeated.json()["id"]
+        assert activity["decision_id"] == repeated.json()["decision_id"]
+        assert activity["experience_availability"] == "SUPPORTED"
+        assert activity["activity_type"] == "NEW_LESSON"
+        assert activity["course_version_id"] == str(version.id)
+        assert activity["lesson_id"] == str(next_lesson.id)
+        assert activity["target_concept_ids"] == [str(concept_c.id)]
+        assert activity["reason"] == "You're ready for the next lesson, covering Concept C."
+        assert activity["presentation_format"]
+        assert db_session.query(AdaptationDecision).count() == 1
+        assert (
+            db_session.query(LearningActivity)
+            .filter(
+                LearningActivity.course_id == course.id,
+                LearningActivity.status != "COMPLETED",
+            )
+            .count()
+            == 1
+        )
+
     def test_parallel_continue_requests_return_one_persisted_activity(
         self, client, tmp_path, monkeypatch
     ):
@@ -688,6 +984,16 @@ class TestConcurrentActivitySelection:
         seed.add(lesson)
         seed.flush()
         seed.add(LessonConcept(lesson_id=lesson.id, concept_id=concept.id, weight=1.0))
+        seed.add(
+            LearningActivity(
+                owner_id=user.id,
+                course_id=course.id,
+                course_version_id=version.id,
+                activity_type="DIAGNOSTIC",
+                target_concept_ids=[str(concept.id)],
+                status="COMPLETED",
+            )
+        )
         course.active_version_id = version.id
         seed.commit()
         course_id = str(course.id)
@@ -734,11 +1040,19 @@ class TestConcurrentActivitySelection:
         bodies = [response.json() for response in responses]
         assert bodies[0]["id"] == bodies[1]["id"]
         assert bodies[0]["decision_id"] == bodies[1]["decision_id"]
+        assert bodies[0]["experience_availability"] == "SUPPORTED"
 
         check = session_factory()
-        assert check.query(LearningActivity).filter(LearningActivity.course_id == uuid.UUID(course_id)).count() == 1
+        assert check.query(LearningActivity).filter(LearningActivity.course_id == uuid.UUID(course_id)).count() == 2
         assert check.query(AdaptationDecision).filter(AdaptationDecision.course_id == uuid.UUID(course_id)).count() == 1
-        activity = check.query(LearningActivity).filter(LearningActivity.course_id == uuid.UUID(course_id)).one()
+        activity = (
+            check.query(LearningActivity)
+            .filter(
+                LearningActivity.course_id == uuid.UUID(course_id),
+                LearningActivity.status != "COMPLETED",
+            )
+            .one()
+        )
         selected_concept_id = uuid.UUID(activity.target_concept_ids[0])
         assert activity.lesson_id is not None
         activity.reading_completed_at = datetime.now(timezone.utc)

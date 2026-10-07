@@ -1347,6 +1347,24 @@ export interface components {
             /** Primary Archetype */
             primary_archetype: string;
         };
+        /** AssessmentConceptProgressOut */
+        AssessmentConceptProgressOut: {
+            /** After Band */
+            after_band: string;
+            /** After Evidence Strength */
+            after_evidence_strength: string;
+            /** Before Band */
+            before_band: string;
+            /** Before Evidence Strength */
+            before_evidence_strength: string;
+            /**
+             * Concept Id
+             * Format: uuid
+             */
+            concept_id: string;
+            /** Concept Name */
+            concept_name: string;
+        };
         /** AssessmentOutcomeIn */
         AssessmentOutcomeIn: {
             /** Baseline Question Attempt Id */
@@ -1393,6 +1411,12 @@ export interface components {
             activity_id: string;
             /** Assessment Type */
             assessment_type: string;
+            /** Concept Progress */
+            concept_progress?: components["schemas"]["AssessmentConceptProgressOut"][] | null;
+            /** Concept Progress Reference At */
+            concept_progress_reference_at?: string | null;
+            /** Graded Answer Count */
+            graded_answer_count: number;
             /** Grading State */
             grading_state: string;
             /**
@@ -1406,6 +1430,8 @@ export interface components {
             submission_state: string;
             /** Submitted At */
             submitted_at: string | null;
+            /** Unresolved Answer Count */
+            unresolved_answer_count: number;
         };
         /** AssignIn */
         AssignIn: {
@@ -1837,6 +1863,11 @@ export interface components {
             /** Decision Id */
             decision_id: string | null;
             /**
+             * Experience Availability
+             * @enum {string}
+             */
+            experience_availability: "SUPPORTED" | "UNAVAILABLE";
+            /**
              * Id
              * Format: uuid
              */
@@ -1856,6 +1887,8 @@ export interface components {
             status: string;
             /** Target Concept Ids */
             target_concept_ids: string[];
+            /** Unavailable Reason */
+            unavailable_reason?: string | null;
         };
         /** LearningEventIn */
         LearningEventIn: {
@@ -1951,6 +1984,8 @@ export interface components {
             concept_id: string;
             /** Concept Name */
             concept_name: string;
+            /** Evidence Strength */
+            evidence_strength: string;
             /** Lesson Id */
             lesson_id?: string | null;
             /** Raw */

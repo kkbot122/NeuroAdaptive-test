@@ -1,7 +1,7 @@
 # Learning rules
 
-Agreed product and safeguard behavior. Numeric policies and implementation details
-remain open where noted in [README.md](README.md).
+Agreed product and safeguard behavior. Remaining open numeric policies are listed in
+[README.md](README.md); P3 progress-display defaults are recorded below.
 
 P1 and P2 implemented behavior is in [p1-lifecycle-contract.md](p1-lifecycle-contract.md)
 and [p2-grounded-preparation-contract.md](p2-grounded-preparation-contract.md). The
@@ -54,6 +54,9 @@ must have honest recovery; the ultimate exit policy remains open.
 - Grading failure stores Awaiting grading, not incorrect. Evidence enters mastery once
   per successfully graded attempt; retries must not duplicate it.
 - Results explain rubric points, concept changes, source support, and the next step.
+- P3 results expose saved answers, grade or unresolved status, P2-supported expected
+  answers/explanations, and source links only after the complete set is submitted.
+  Graded and unresolved counts are explicit; pending answers never count as incorrect.
 - Reporting preserves original evidence; no automatic score change or immediate-resolution
   promise. An authorized reviewer can correct the judgment. Keep the original judgment
   and correction history; recompute affected mastery/attributed outcomes without another
@@ -65,12 +68,35 @@ must have honest recovery; the ultimate exit policy remains open.
   or learner success buttons. No evidence means Not assessed.
 - Multi-concept questions need explicit concept attribution. Wrong challenge answers
   do not erase prior progress or automatically mark every related concept weak.
-- Evidence strength and mastery are distinct. Bands/completion criteria require an
-  explicit versioned policy; current formulas are unvalidated defaults.
+- P3 labels use the existing `mastery-v1` classifier: no evidence → Not assessed; below
+  0.40 → Needs attention; 0.40–<0.70 → Developing; 0.70–<0.85 → Proficient; Mastered
+  requires mastery ≥0.85 and uncertainty ≤0.35. These are uncalibrated evidence labels,
+  not claims of real-world mastery or learning gain; raw percentages are not shown.
+- Evidence strength is separate: no evidence → Not assessed; recency-adjusted effective
+  evidence weight below the `evidence-strength-v1` boundary (1.0) → Limited evidence;
+  at or above it → More supporting evidence. This fixed, uncalibrated presentation
+  boundary does not alter the mastery formula or adaptation inputs. A policy change
+  requires a new evidence-strength policy version.
+- Submitted assessment comparisons use the persisted submission timestamp for both
+  states. “Before” excludes this session; “after” adds only its successfully graded
+  evidence. Later grading retries update the same comparison, while later unrelated
+  evidence and passage of time do not change it. The comparison is rebuilt from existing
+  immutable evidence and session links; there is no second mastery store.
 - Presentation preference is separate from mastery. Manual switches are weak preference
   signals; subsequent relevant assessment results inform effectiveness.
 - Format changes preserve activity progress. No fixed learning-style identity drives
   the new learning path. Exact attribution and exploration policy remain open.
+
+## Continue and milestone support
+
+- Continue resumes unfinished activity/session work first. After completion, it persists
+  one selection through the existing recommendation path; refreshing submitted results
+  does not select an activity or request preparation.
+- P3 prepares only selected `NEW_LESSON` and `RESUME_INTERRUPTED` activities through P2.
+  A selected remediation, practice, or challenge is shown as unavailable until P4 adds
+  its distinct experience; P3 does not substitute a lesson or assessment.
+- Lesson coverage remains a reading-completion measure and is presented separately from
+  concept evidence.
 
 ## Sources and prerequisites
 

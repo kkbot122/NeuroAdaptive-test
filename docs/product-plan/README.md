@@ -1,6 +1,6 @@
 # NeuroLearn product plan
 
-Status: agreed product direction. P0 repository configuration and P1/P2 learning
+Status: agreed product direction. P0 repository configuration and P1–P3 learning
 contracts are implemented locally; hosted deployment and runtime pass conditions have
 not been demonstrated. Date: 2026-10-08.
 
@@ -13,6 +13,7 @@ not been demonstrated. Date: 2026-10-08.
 | [learning-rules.md](learning-rules.md) | How do teaching, assessment, mastery, and selection behave? |
 | [p1-lifecycle-contract.md](p1-lifecycle-contract.md) | What durable P1 states, API payloads, and P2 seams are implemented? |
 | [p2-grounded-preparation-contract.md](p2-grounded-preparation-contract.md) | How are first-activity content and lesson MCQs prepared, validated, and reused? |
+| [p3-results-progress-contract.md](p3-results-progress-contract.md) | How do submitted results, concept evidence, and the next activity connect? |
 | [implementation-gap.md](implementation-gap.md) | What can we reuse, and what is missing? |
 | [build-plan.md](build-plan.md) | What should we implement first, and how do we demonstrate it? |
 
@@ -103,7 +104,7 @@ Demo both a real prepared course and a fresh upload through the production path.
 
 | Decision | Must be settled before |
 | --- | --- |
-| Mastery bands, evidence-strength labels, completion criteria, and decay policy | Progress/selection acceptance |
+| Completion criteria and decay policy | P9 completion/retention policy |
 | Short-answer rubric and review policy; calibrated mastery/selection rules | P3–P5 policy acceptance |
 | Reliable cross-course concept matching and evidence reuse | Linked-course integration |
 | Missing-prerequisite detection and supporting evidence for warnings | Prerequisite-warning release |
@@ -113,16 +114,17 @@ Demo both a real prepared course and a fresh upload through the production path.
 | Provider eligibility, region/network configuration, and storage credentials | Hosted verification |
 | Retention/deletion details for new entities and complete short-answer claim coverage | Safeguard acceptance |
 
-P2 defaults are approved for implementation, but unvalidated. They are named,
-versioned, configurable policies in the P2 contract. They do not change mastery
-thresholds, decay, or recommendation scoring. Other numeric defaults are unvalidated;
-future tunable numbers need named, versioned, configurable policies.
+P2 defaults are approved for implementation, but unvalidated. P3 also approves the
+existing uncalibrated mastery-label cutoffs and the versioned evidence-strength display
+boundary; details are in the P3 contract. These do not change mastery formulas, decay,
+or recommendation scoring. Other numeric defaults are unvalidated; future tunable
+numbers need named, versioned, configurable policies.
 
 ## Scope and authority
 
 This folder records approved product/architecture decisions and implementation evidence;
 it is not a deployment claim. Operational rules for migrations, contracts, ownership,
-and honest reporting still apply. P1 and P2 status/checks are recorded in their contracts
+and honest reporting still apply. P1–P3 status/checks are recorded in their contracts
 and [implementation-gap.md](implementation-gap.md).
 
 Explicit scope revisions: linked-course grounding/evidence, visible factual selection

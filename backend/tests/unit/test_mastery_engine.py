@@ -103,6 +103,17 @@ class TestMasteredIsGated:
         assert engine.is_mastered(state)
 
 
+class TestEvidenceStrengthLabels:
+    def test_evidence_strength_is_separate_from_mastery_and_uses_effective_weight(self):
+        no_evidence = engine.compute_mastery([], NOW)
+        limited = engine.compute_mastery([make_event(0.0, 0.999)], NOW)
+        more = engine.compute_mastery([make_event(0.0, 1.0)], NOW)
+
+        assert engine.classify_evidence_strength(no_evidence) == "Not assessed"
+        assert engine.classify_evidence_strength(limited) == "Limited evidence"
+        assert engine.classify_evidence_strength(more) == "More supporting evidence"
+
+
 class TestBandBoundaries:
     @pytest.mark.parametrize(
         "mastery,expected",

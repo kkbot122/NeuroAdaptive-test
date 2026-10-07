@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import List, Optional
 
 MASTERY_POLICY_VERSION = "mastery-v1"
+EVIDENCE_STRENGTH_POLICY_VERSION = "evidence-strength-v1"
 
 # Shrinkage-toward-prior constants (SDD Deep Dive 4). Named, versioned,
 # explicitly NOT calibrated -- "stated defaults, not fitted values."
@@ -48,12 +49,15 @@ RECENCY_HALF_LIFE_DAYS = 21.0
 
 MASTERED_THRESHOLD = 0.85
 MASTERED_MAX_UNCERTAINTY = 0.35
+EVIDENCE_STRENGTH_LIMIT_V1 = 1.0
 
 NOT_ASSESSED = "Not assessed"
 NEEDS_ATTENTION = "Needs attention"
 DEVELOPING = "Developing"
 PROFICIENT = "Proficient"
 MASTERED = "Mastered"
+LIMITED_EVIDENCE = "Limited evidence"
+MORE_SUPPORTING_EVIDENCE = "More supporting evidence"
 
 
 def difficulty_factor(difficulty: float) -> float:
@@ -154,3 +158,20 @@ def classify_band(state: MasteryState) -> str:
 
 def is_mastered(state: MasteryState) -> bool:
     return classify_band(state) == MASTERED
+
+
+def classify_evidence_strength(
+    state: MasteryState,
+    limited_below_weight: float = EVIDENCE_STRENGTH_LIMIT_V1,
+) -> str:
+    """Describe the amount of current support independently from mastery.
+
+    The boundary is a versioned presentation default, not a calibrated
+    statistical confidence threshold. ``evidence_weight_total`` already
+    includes the engine's evidence weighting and recency decay.
+    """
+    if state.evidence_weight_total <= 0.0:
+        return NOT_ASSESSED
+    if state.evidence_weight_total < limited_below_weight:
+        return LIMITED_EVIDENCE
+    return MORE_SUPPORTING_EVIDENCE

@@ -22,6 +22,7 @@ from app.modules.learning.service import (
     LearningConflict,
     LearningNotFound,
     LearningService,
+    P2_SUPPORTED_ACTIVITY_TYPES,
 )
 from app.modules.preparation.dependencies import get_preparation_service as _preparation_service
 from app.modules.preparation.service import (
@@ -71,7 +72,11 @@ def select_or_resume_activity(
 ):
     try:
         activity = service.select_or_resume(course_id, user.id)
-        if preparation is not None and activity["lesson_id"] and activity["activity_type"] in {"NEW_LESSON", "RESUME_INTERRUPTED"}:
+        if (
+            preparation is not None
+            and activity["lesson_id"]
+            and activity["activity_type"] in P2_SUPPORTED_ACTIVITY_TYPES
+        ):
             preparation.request_activity(course_id, activity["id"], user.id)
             return service.get_activity(course_id, activity["id"], user.id)
         return activity
@@ -89,7 +94,11 @@ def get_activity(
 ):
     try:
         activity = service.get_activity(course_id, activity_id, user.id)
-        if preparation is not None and activity["lesson_id"] and activity["activity_type"] in {"NEW_LESSON", "RESUME_INTERRUPTED"}:
+        if (
+            preparation is not None
+            and activity["lesson_id"]
+            and activity["activity_type"] in P2_SUPPORTED_ACTIVITY_TYPES
+        ):
             preparation.request_activity(course_id, activity_id, user.id)
             return service.get_activity(course_id, activity_id, user.id)
         return activity
@@ -190,7 +199,10 @@ def start_activity_assessment(
     try:
         if preparation is not None:
             activity = service.get_activity(course_id, activity_id, user.id)
-            if activity["lesson_id"] is not None:
+            if (
+                activity["lesson_id"] is not None
+                and activity["activity_type"] in P2_SUPPORTED_ACTIVITY_TYPES
+            ):
                 preparation.require_assessment_ready(course_id, activity_id, user.id)
         return service.start_activity_assessment(course_id, activity_id, user.id)
     except (LearningNotFound, LearningConflict, AssessmentUnavailable, PreparationNotFound, PreparationConflict) as exc:

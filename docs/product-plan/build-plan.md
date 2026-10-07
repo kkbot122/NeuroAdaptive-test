@@ -22,7 +22,7 @@ numeric and operational details remain open.
 | P0 | Hosted foundation and worker/storage verification | Deployment/configuration | **Repository configuration implemented; hosted pass conditions remain unverified.** Vercel reaches Railway API; worker consumes Railway Redis tasks; API/worker access private Supabase originals; deployed identity/DB/migrations work; restart recovery demonstrated |
 | P1 | Activity/assessment lifecycle and saved progress contracts | Policy review | **Implemented locally.** Durable resume, fixed question sets, safe answer/grading states, and coverage/mastery separation; see [P1 contract](p1-lifecycle-contract.md) for checks and limits. Not deployed. |
 | P2 | Async first-activity preparation, grounded MCQ assessment, reliable submission | P1; approved P2 defaults | **Implemented locally.** Deterministic upload → outline publish → prepared lesson/MCQs path; saved artifacts reused; feedback withheld until set submission. See [P2 contract](p2-grounded-preparation-contract.md). Not deployed. |
-| P3 | Results, evidence, progress, and next-activity integration | P0, P2; mastery policy | Deployed graded answers update relevant concepts once; reading does not; results show changes; Continue uses recorded selection/progress; bounded next-activity preparation starts |
+| P3 | Results, evidence, progress, and next-activity integration | P0, P2; approved display policy | **Implemented locally.** Submitted results expose supported feedback and reproducible concept changes; reading affects coverage only; Continue resumes or persists one selected activity and requests P2 preparation when supported. See [P3 contract](p3-results-progress-contract.md). Hosted behavior is not verified. |
 | P4 | Remediation, targeted practice, and challenge experiences | P3; eligibility policy | Weak/mixed/strong evidence reaches the appropriate distinct activity; fresh questions; no unsupported prerequisite teaching |
 | P5 | Short-answer grading and authorized review | P2–P3; rubric/access/retention policy | Rubric feedback has sources; failed grading remains pending; retries don't duplicate evidence; reviewer correction preserves original judgment and updates evidence once |
 | P6 | Course overview and workspace integration | P3–P5 | Outline inspection cannot launch alternatives; tutor/sources open alongside teaching/results; tutor unavailable during assessment; format and position preserved |
@@ -37,7 +37,8 @@ and recovery states.
 
 ## First milestone: P0–P3 together
 
-A deployed, resumable lesson → assessment → results → mastery → next-activity flow.
+A locally verified, resumable lesson → assessment → results → concept evidence →
+next-activity flow. Hosted behavior remains unverified.
 Real providers/preparation for demonstrations; deterministic stubs in automated checks.
 MCQ first, then short answers and all activity types. Preserve work across navigation/
 worker restarts; check all factual teaching claims; retain saved-content access on failures.

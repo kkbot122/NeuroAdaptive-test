@@ -38,6 +38,7 @@ class MasteryReportRow(BaseModel):
     concept_id: str
     concept_name: str
     band: str
+    evidence_strength: str
     # None when the concept was never assigned to a lesson (e.g. an edge
     # case in module/lesson clustering) -- never guessed, since the frontend
     # uses this to link straight to that lesson.

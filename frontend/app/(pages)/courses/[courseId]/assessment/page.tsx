@@ -8,6 +8,31 @@ import { Brain, ArrowLeft, CheckCircle2, ChevronRight, Trophy, Loader2 } from "l
 
 type AssessmentSession = components["schemas"]["AssessmentSessionOut"];
 type AssessmentQuestion = components["schemas"]["AssessmentQuestionOut"];
+type LearningState = components["schemas"]["LearningStateOut"];
+
+const bandDescriptions: Record<string, string> = {
+  "Not assessed": "No graded evidence is available yet.",
+  "Needs attention": "Current evidence points to a concept that may need review.",
+  Developing: "Evidence is still building for this concept.",
+  Proficient: "Current evidence meets the proficient label threshold.",
+  Mastered: "Current evidence meets both the estimate and uncertainty gates for this label.",
+};
+
+function answerText(answer: unknown): string {
+  if (typeof answer === "string") return answer;
+  if (Array.isArray(answer)) return answer.map(String).join(", ");
+  return answer == null ? "" : JSON.stringify(answer);
+}
+
+function describeProgressChange(progress: NonNullable<AssessmentSession["concept_progress"]>[number]): string {
+  if (progress.before_band !== progress.after_band) {
+    return `The evidence label moved from ${progress.before_band} to ${progress.after_band} at this assessment's reference time.`;
+  }
+  if (progress.before_evidence_strength !== progress.after_evidence_strength) {
+    return `The understanding label stayed ${progress.after_band}; evidence strength changed from ${progress.before_evidence_strength} to ${progress.after_evidence_strength}.`;
+  }
+  return `No label boundary changed at this assessment's reference time.`;
+}
 
 export default function AssessmentPage() {
   const params = useParams();
@@ -20,12 +45,25 @@ export default function AssessmentPage() {
   const sessionId = searchParams.get("sessionId");
 
   const [session, setSession] = useState<AssessmentSession | null>(null);
+  const [learningState, setLearningState] = useState<LearningState | null>(null);
+  const [coverageError, setCoverageError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [draftAnswer, setDraftAnswer] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const loadLearningState = useCallback(async () => {
+    setCoverageError(null);
+    try {
+      const response = await fetch(`/api/v1/courses/${courseId}/learning-state`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Lesson coverage is unavailable right now.");
+      setLearningState(await response.json());
+    } catch (error) {
+      setCoverageError(error instanceof Error ? error.message : "Lesson coverage is unavailable right now.");
+    }
+  }, [courseId]);
 
   const loadSession = useCallback(async () => {
     setIsLoading(true);
@@ -56,6 +94,7 @@ export default function AssessmentPage() {
       const data: AssessmentSession = await response.json();
       if (data.questions.length === 0) throw new Error("No questions are available for this assessment yet.");
       setSession(data);
+      if (data.submission_state === "SUBMITTED") void loadLearningState();
       const nextQuestion = data.questions.findIndex((question) => !question.answer);
       setCurrentStep(nextQuestion >= 0 ? nextQuestion : Math.max(0, data.questions.length - 1));
       if (!sessionId) {
@@ -66,7 +105,7 @@ export default function AssessmentPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [activityId, courseId, router, sessionId, type]);
+  }, [activityId, courseId, loadLearningState, router, sessionId, type]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadSession(), 0);
@@ -83,9 +122,7 @@ export default function AssessmentPage() {
   const isSubmitted = session?.submission_state === "SUBMITTED";
   const isLocked = Boolean(currentQuestion?.answer);
   const isLastStep = Boolean(session && currentStep === session.questions.length - 1);
-  const graded = session?.questions.filter((question) => typeof question.result?.correctness === "number") || [];
   const allGraded = session?.grading_state === "COMPLETE";
-  const score = graded.reduce((sum, question) => sum + (question.result?.correctness || 0), 0);
 
   const confirmAnswer = async () => {
     if (!session || !currentQuestion || isLocked) return;
@@ -123,6 +160,7 @@ export default function AssessmentPage() {
         const data = await response.json();
         if (!response.ok) throw new Error(data?.detail || "Assessment could not be submitted.");
         setSession(data);
+        if (data.submission_state === "SUBMITTED") void loadLearningState();
       } catch (error) {
         setActionError(error instanceof Error ? error.message : "Assessment could not be submitted.");
       } finally {
@@ -145,6 +183,7 @@ export default function AssessmentPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data?.detail || "Grading could not be retried.");
       setSession(data);
+      if (data.submission_state === "SUBMITTED") void loadLearningState();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Grading could not be retried.");
     } finally {
@@ -183,22 +222,22 @@ export default function AssessmentPage() {
           </div>
           <h1 className="text-3xl font-black mb-2 uppercase tracking-tight">Assessment submitted</h1>
           {allGraded ? (
-            <p className="text-lg font-bold text-gray-600 mb-6">Graded answers: {score}/{session.questions.length}. This result is evidence for the assessed concepts; it does not mark the course complete.</p>
+            <p className="text-lg font-bold text-gray-600 mb-6">{session.graded_answer_count} of {session.questions.length} answers are graded. This result contributes evidence only to concepts linked to these questions; it does not mark the course complete.</p>
           ) : (
-            <p className="text-lg font-bold text-gray-600 mb-6">Grading is still pending for some saved answers. Pending answers are unresolved, not incorrect.</p>
+            <p className="text-lg font-bold text-gray-600 mb-6">{session.graded_answer_count} of {session.questions.length} answers are graded; {session.unresolved_answer_count} remain unresolved. Pending answers are not treated as incorrect.</p>
           )}
           <div className="space-y-4">
             {session.questions.map((question) => (
               <section key={question.question_id} className="border-2 border-black rounded-xl p-4">
                 <p className="font-black">{question.position + 1}. {question.prompt}</p>
-                <p className="mt-2 text-gray-700">Your answer: {String(question.answer?.given_answer ?? "")}</p>
+                <p className="mt-2 text-gray-700">Your answer: {answerText(question.answer?.given_answer)}</p>
                 {typeof question.result?.correctness === "number" ? (
-                  <p className="mt-2 font-bold">Correctness: {Math.round(question.result.correctness * 100)}%</p>
+                  <p className="mt-2 font-bold">{question.result.correctness >= 1 ? "Correct" : question.result.correctness <= 0 ? "Incorrect" : "Partly met"}</p>
                 ) : (
                   <p className="mt-2 font-bold text-orange-700">Grading pending</p>
                 )}
                 {question.result?.expected_answer !== undefined && (
-                  <p className="mt-1 text-gray-700">Expected answer: {JSON.stringify(question.result.expected_answer)}</p>
+                  <p className="mt-1 text-gray-700">Expected answer: {answerText(question.result.expected_answer)}</p>
                 )}
                 {question.result?.explanation && (
                   <p className="mt-2 text-gray-700">Explanation: {question.result.explanation}</p>
@@ -225,13 +264,47 @@ export default function AssessmentPage() {
               </section>
             ))}
           </div>
+          <section className="mt-8 border-2 border-black rounded-xl bg-[#CBF3F0] p-5">
+            <h2 className="text-xl font-black">Lesson coverage</h2>
+            {learningState ? (
+              <p className="mt-2 font-bold">{learningState.lesson_coverage.lessons_covered} of {learningState.lesson_coverage.lessons_total} lessons covered.</p>
+            ) : coverageError ? (
+              <p role="status" className="mt-2 text-red-700 font-bold">{coverageError}</p>
+            ) : (
+              <p className="mt-2 text-gray-700">Loading saved lesson coverage…</p>
+            )}
+            <p className="mt-1 text-sm text-gray-700">Reading coverage tracks completed lessons separately from concept evidence.</p>
+          </section>
+          <section className="mt-6 border-2 border-black rounded-xl p-5">
+            <h2 className="text-xl font-black">Concept progress from this assessment</h2>
+            <p className="mt-2 text-sm text-gray-700">Before and after use the same saved submission time. Evidence strength describes the amount and age of support separately from the understanding label.</p>
+            <div className="mt-4 space-y-3">
+              {session.concept_progress?.length ? session.concept_progress.map((progress) => (
+                <article key={progress.concept_id} className="border-2 border-black bg-white p-4">
+                  <h3 className="font-black">{progress.concept_name}</h3>
+                  <p className="mt-1 font-bold">Understanding: {progress.before_band} → {progress.after_band}</p>
+                  <p className="text-sm">Evidence strength: {progress.before_evidence_strength} → {progress.after_evidence_strength}</p>
+                  <p className="mt-2 text-sm text-gray-700">{describeProgressChange(progress)}</p>
+                  <p className="mt-1 text-sm text-gray-600">{bandDescriptions[progress.after_band] || "This label summarizes the recorded course evidence."}</p>
+                </article>
+              )) : (
+                <p className="mt-3 text-gray-700">No concept was linked to this assessment&apos;s questions.</p>
+              )}
+            </div>
+            <p className="mt-4 text-xs text-gray-600">These labels summarize this course&apos;s graded evidence. They do not prove real-world mastery or learning gain.</p>
+          </section>
           {actionError && <p role="status" className="mt-4 text-red-700 font-bold">{actionError}</p>}
-          <button
-            onClick={() => router.push(allGraded ? `/courses/${courseId}/learn` : "/dashboard")}
-            className="w-full mt-8 bg-black text-white hover:bg-gray-800 border-4 border-black py-4 rounded-2xl font-black text-xl"
-          >
-            {allGraded ? "CONTINUE LEARNING" : "RETURN TO DASHBOARD"}
-          </button>
+          {allGraded && (
+            <button
+              onClick={() => router.push(`/courses/${courseId}/learn`)}
+              className="w-full mt-8 bg-black text-white hover:bg-gray-800 border-4 border-black py-4 rounded-2xl font-black text-xl"
+            >
+              CONTINUE LEARNING
+            </button>
+          )}
+          <Link href="/dashboard" className="mt-3 block w-full border-2 border-black bg-white py-3 text-center font-bold">
+            Return to dashboard
+          </Link>
         </div>
       </div>
     );

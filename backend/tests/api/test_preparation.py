@@ -19,6 +19,7 @@ from app.modules.documents.models import Document
 from app.modules.learning.models import ActivityStatus, LearningActivity
 from app.modules.learning.router import _preparation_service as preparation_dependency
 from app.modules.mastery.models import MasteryEvent, Question, QuestionConcept
+from app.modules.mastery.service import MasteryService
 from app.modules.abuse.models import AIUsageDaily
 from app.modules.preparation.models import (
     ActivityPreparation,
@@ -29,6 +30,7 @@ from app.modules.preparation.models import (
 from app.modules.preparation.service import ActivityPreparationService, PreparationFailure
 from app.services.generation.fake import FakeGenerationGateway
 from app.services.generation.gateway import GenerationError
+from app.services.embedding.fake import FakeEmbeddingGateway
 from tests.conftest import auth_headers
 
 
@@ -411,6 +413,258 @@ def test_duplicate_delivery_and_repeated_requests_share_one_preparation_and_ques
     speculative = db_session.query(ActivityPreparation).filter(ActivityPreparation.is_speculative.is_(True)).one()
     assert speculative.include_assessment is False
     assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=speculative.id).count() == 0
+
+
+def test_selected_next_lesson_reuses_speculative_content_without_regenerating_it(db_session, owner):
+    course, version, concepts, chunks, _first_lesson, first_activity = seed_published_activity(
+        db_session, owner, with_next_lesson=True
+    )
+    next_lesson = (
+        db_session.query(Lesson)
+        .join(Module, Module.id == Lesson.module_id)
+        .filter(Module.course_version_id == version.id, Lesson.title == "Next lesson")
+        .one()
+    )
+    gateway = FakeGenerationGateway()
+    gateway.when_prompt_contains(
+        'LESSON: {"title": "Next lesson",',
+        _lesson_draft([concepts[1].id], [chunks[1].id]),
+    ).when_prompt_contains(
+        f'CONCEPTS: [{{"id": "{concepts[1].id}"',
+        _question_draft([concepts[1].id], [chunks[1].id], prompt_offset=20),
+    ).when_prompt_contains(
+        "Prepare the first lesson",
+        _lesson_draft([concept.id for concept in concepts], [chunk.id for chunk in chunks]),
+    ).when_prompt_contains(
+        "Write exactly 5 single-answer",
+        _question_draft([concept.id for concept in concepts], [chunk.id for chunk in chunks]),
+    ).when_prompt_contains(
+        "is also a supported correct answer.", '{"supported": false}'
+    ).set_default('{"supported": true}')
+    service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
+
+    first_preparation = service.request_activity(course.id, first_activity.id, owner.id)
+    assert service.run(first_preparation.id, owner.id).status == PreparationStatus.READY
+    speculative = (
+        db_session.query(ActivityPreparation)
+        .filter(ActivityPreparation.is_speculative.is_(True))
+        .one()
+    )
+    assert speculative.lesson_id == next_lesson.id
+    speculative_result = service.run(speculative.id, owner.id)
+    assert speculative_result.status == PreparationStatus.READY, speculative_result.error_category
+    saved_content_id = speculative.content_artifact_id
+    next_content_calls = [
+        prompt for prompt in gateway.calls if 'LESSON: {"title": "Next lesson",' in prompt
+    ]
+    assert saved_content_id is not None
+    assert len(next_content_calls) == 1
+    assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=speculative.id).count() == 0
+
+    first_activity.status = ActivityStatus.COMPLETED.value
+    next_activity = LearningActivity(
+        owner_id=owner.id,
+        course_id=course.id,
+        course_version_id=version.id,
+        activity_type="NEW_LESSON",
+        target_concept_ids=[str(concepts[1].id)],
+        lesson_id=next_lesson.id,
+        status=ActivityStatus.SELECTED.value,
+        presentation_format="detailed",
+    )
+    db_session.add(next_activity)
+    db_session.commit()
+
+    selected_preparation = service.request_activity(course.id, next_activity.id, owner.id)
+    assert service.run(selected_preparation.id, owner.id).status == PreparationStatus.READY
+    assert selected_preparation.content_artifact_id == saved_content_id
+    assert len([prompt for prompt in gateway.calls if 'LESSON: {"title": "Next lesson",' in prompt]) == 1
+    assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=selected_preparation.id).count() == 5
+    saved = service.content_response(course.id, next_activity.id, owner.id, "detailed")
+    assert saved["content"]["artifact_id"] == saved_content_id
+
+
+def test_submitted_lesson_results_select_next_activity_and_resume_reused_preparation(
+    client, owner, db_session, fake_generation, monkeypatch
+):
+    course, version, concepts, chunks, _first_lesson, first_activity = seed_published_activity(db_session, owner)
+    next_concept = Concept(
+        course_id=course.id,
+        course_version_id=version.id,
+        owner_id=owner.id,
+        canonical_key=f"p3-next-{uuid4().hex[:8]}",
+        name="Next concept",
+        definition="A later, source-backed concept.",
+        importance=0.8,
+    )
+    db_session.add(next_concept)
+    db_session.flush()
+    next_source_text = "The next course concept is explained in this source passage."
+    next_checksum = hashlib.sha256(next_source_text.encode()).hexdigest()
+    next_document = Document(
+        course_id=course.id,
+        owner_id=owner.id,
+        filename="next-concept.txt",
+        role="STUDY",
+        status="EXTRACTED",
+        storage_path=f"/tmp/p3-{uuid4().hex}.txt",
+        size_bytes=len(next_source_text),
+        checksum_sha256=next_checksum,
+    )
+    db_session.add(next_document)
+    db_session.flush()
+    next_chunk = Chunk(
+        id=uuid4(),
+        document_id=next_document.id,
+        course_id=course.id,
+        owner_id=owner.id,
+        position=0,
+        text=next_source_text,
+        char_count=len(next_source_text),
+        token_count=10,
+    )
+    db_session.add(next_chunk)
+    db_session.flush()
+    checksums = [
+        row[0]
+        for row in db_session.query(Document.checksum_sha256).filter_by(course_id=course.id).all()
+    ]
+    version.source_fingerprint = hashlib.sha256("|".join(sorted(checksums)).encode()).hexdigest()
+    next_lesson = Lesson(
+        module_id=db_session.query(Module).filter_by(course_version_id=version.id).one().id,
+        position=1,
+        title="Next lesson",
+        objective="Teach the next concept",
+    )
+    db_session.add(next_lesson)
+    db_session.flush()
+    db_session.add(LessonConcept(lesson_id=next_lesson.id, concept_id=next_concept.id, weight=1.0))
+    db_session.add(
+        ConceptSource(
+            concept_id=next_concept.id,
+            chunk_id=next_chunk.id,
+            course_id=course.id,
+            owner_id=owner.id,
+        )
+    )
+
+    mastery = MasteryService(db_session, fake_generation, FakeEmbeddingGateway())
+    for concept in concepts:
+        question = mastery.create_question(
+            course.id,
+            version.id,
+            owner.id,
+            "MCQ",
+            f"Prior fixture check for {concept.name}?",
+            {concept.id: 1.0},
+            options=["yes", "no"],
+            correct_answer="yes",
+            difficulty=0.5,
+            commit=False,
+        )
+        for _ in range(9):
+            mastery.record_graded_attempt(question, owner.id, "yes", 1.0, commit=False)
+    db_session.commit()
+
+    gateway = FakeGenerationGateway()
+    gateway.when_prompt_contains(
+        'LESSON: {"title": "Next lesson",',
+        _lesson_draft([next_concept.id], [next_chunk.id]),
+    ).when_prompt_contains(
+        f'CONCEPTS: [{{"id": "{next_concept.id}"',
+        _question_draft([next_concept.id], [next_chunk.id], prompt_offset=30),
+    ).when_prompt_contains(
+        "Prepare the first lesson",
+        _lesson_draft([concept.id for concept in concepts], [chunk.id for chunk in chunks]),
+    ).when_prompt_contains(
+        "Write exactly 5 single-answer",
+        _question_draft([concept.id for concept in concepts], [chunk.id for chunk in chunks]),
+    ).when_prompt_contains(
+        "is also a supported correct answer.", '{"supported": false}'
+    ).set_default('{"supported": true}')
+    dispatcher = RecordingDispatcher()
+    preparation = ActivityPreparationService(db_session, gateway, dispatcher)
+    from app.main import app
+
+    monkeypatch.setitem(app.dependency_overrides, preparation_dependency, lambda: preparation)
+    headers = auth_headers(owner.email)
+
+    first = client.post(f"/api/v1/courses/{course.id}/activities/next", headers=headers)
+    assert first.status_code == 200
+    assert first.json()["id"] == str(first_activity.id)
+    first_preparation = db_session.query(ActivityPreparation).filter_by(activity_id=first_activity.id).one()
+    assert preparation.run(first_preparation.id, owner.id).status == PreparationStatus.READY
+
+    speculative = (
+        db_session.query(ActivityPreparation)
+        .filter(ActivityPreparation.is_speculative.is_(True))
+        .one()
+    )
+    assert speculative.lesson_id == next_lesson.id
+    assert preparation.run(speculative.id, owner.id).status == PreparationStatus.READY
+    saved_next_content_id = speculative.content_artifact_id
+    next_content_prompts = [
+        prompt for prompt in gateway.calls if 'LESSON: {"title": "Next lesson",' in prompt
+    ]
+    assert saved_next_content_id is not None
+    assert len(next_content_prompts) == 1
+
+    content = client.get(
+        f"/api/v1/courses/{course.id}/activities/{first_activity.id}/content?format=detailed",
+        headers=headers,
+    )
+    assert content.status_code == 200
+    assert content.json()["content"]["artifact_id"] == str(first_preparation.content_artifact_id)
+    completed_reading = client.post(
+        f"/api/v1/courses/{course.id}/activities/{first_activity.id}/reading-complete",
+        headers=headers,
+    )
+    assert completed_reading.status_code == 200
+    session_response = client.post(
+        f"/api/v1/courses/{course.id}/activities/{first_activity.id}/assessment",
+        headers=headers,
+    )
+    assert session_response.status_code == 200
+    session = session_response.json()
+    session_url = f"/api/v1/courses/{course.id}/assessment-sessions/{session['id']}"
+    for question in session["questions"]:
+        saved_answer = client.post(
+            f"{session_url}/questions/{question['question_id']}/answer",
+            json={"given_answer": question["options"][0]},
+            headers=headers,
+        )
+        assert saved_answer.status_code == 200
+        assert all("result" not in row for row in saved_answer.json()["questions"])
+    submitted = client.post(f"{session_url}/submit", headers=headers)
+    assert submitted.status_code == 200
+    assert submitted.json()["grading_state"] == "COMPLETE"
+    assert submitted.json()["graded_answer_count"] == len(session["questions"])
+    assert submitted.json()["concept_progress"]
+
+    selected = client.post(f"/api/v1/courses/{course.id}/activities/next", headers=headers)
+    assert selected.status_code == 200
+    selected_body = selected.json()
+    assert selected_body["activity_type"] == "NEW_LESSON"
+    assert selected_body["experience_availability"] == "SUPPORTED"
+    assert selected_body["lesson_id"] == str(next_lesson.id)
+    assert selected_body["target_concept_ids"] == [str(next_concept.id)]
+    assert selected_body["preparation"]["status"] == "PENDING"
+    selected_preparation = db_session.query(ActivityPreparation).filter_by(
+        activity_id=UUID(selected_body["id"])
+    ).one()
+
+    assert preparation.run(selected_preparation.id, owner.id).status == PreparationStatus.READY
+    assert selected_preparation.content_artifact_id == saved_next_content_id
+    assert len([prompt for prompt in gateway.calls if 'LESSON: {"title": "Next lesson",' in prompt]) == 1
+    assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=selected_preparation.id).count() == 5
+
+    resumed = client.post(f"/api/v1/courses/{course.id}/activities/next", headers=headers)
+    assert resumed.status_code == 200
+    assert resumed.json()["id"] == selected_body["id"]
+    assert resumed.json()["decision_id"] == selected_body["decision_id"]
+    assert resumed.json()["preparation"]["id"] == str(selected_preparation.id)
+    assert resumed.json()["preparation"]["status"] == "READY"
+    assert len([prompt for prompt in gateway.calls if 'LESSON: {"title": "Next lesson",' in prompt]) == 1
 
 
 def test_foreign_owner_cannot_read_or_prepare_an_activity(client, owner, other_user, db_session, monkeypatch):

@@ -29,6 +29,8 @@ class LearningActivityOut(BaseModel):
     course_version_id: UUID
     decision_id: Optional[UUID]
     activity_type: str
+    experience_availability: Literal["SUPPORTED", "UNAVAILABLE"]
+    unavailable_reason: Optional[str] = None
     target_concept_ids: list[UUID]
     lesson_id: Optional[UUID]
     reason: Optional[str]
@@ -101,6 +103,15 @@ class AssessmentQuestionOut(BaseModel):
     result: Optional[QuestionResultOut] = None
 
 
+class AssessmentConceptProgressOut(BaseModel):
+    concept_id: UUID
+    concept_name: str
+    before_band: str
+    after_band: str
+    before_evidence_strength: str
+    after_evidence_strength: str
+
+
 class AssessmentSessionOut(BaseModel):
     id: UUID
     activity_id: UUID
@@ -109,6 +120,10 @@ class AssessmentSessionOut(BaseModel):
     grading_state: str
     submitted_at: Optional[datetime]
     questions: list[AssessmentQuestionOut]
+    graded_answer_count: int
+    unresolved_answer_count: int
+    concept_progress_reference_at: Optional[datetime] = None
+    concept_progress: Optional[list[AssessmentConceptProgressOut]] = None
 
 
 class AnswerIn(BaseModel):

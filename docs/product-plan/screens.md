@@ -13,7 +13,7 @@ Proposed screens; route names and visual styling are not prescribed.
 | Course overview | Inspectable outline; concept labels/evidence strength; coverage; current activity and reason | Continue studying; inspect outline/progress; Back to dashboard |
 | Activity workspace | Title, purpose/reason; activity-specific content; saved position | Format switch; tutor/source panels; Ready for questions or Start questions; Back to course |
 | Assessment | One MCQ/short-answer question; count/progress; submission/pending states | Submit answer; Next question; Back to course |
-| Results | Correctness or pending judgment; expected reasoning; rubric points; sources; concept changes; next step | Continue; Ask tutor; Report grading issue; Retry grading; Back to course |
+| Results | Saved answers; correctness or unresolved grading; supported expected reasoning and sources; before/after concept labels and evidence strength; separate lesson coverage | Continue when grading is complete; Retry grading; Return to dashboard |
 | Completion | Coverage and demonstrated understanding; limits of the estimate | Return to dashboard; Optional practice |
 | Account settings | Tracking preference; independent presentation reset; account controls | Save; Reset preferences; Sign out; Delete account |
 
@@ -45,6 +45,9 @@ Explicit reviewer authorization is required; this is not a general learner scree
   are separate states, not one Complete Lesson button.
 - Reports promise no immediate correction. Results distinguish original/corrected
   judgments; pending grading never appears as incorrect.
+- Results refresh reads the saved session and evidence only. Continue resumes existing
+  work or persists one next recommendation; an unsupported P4 selection is named and
+  left unavailable. Dashboard is a direct exit.
 
 ## Shared states
 
@@ -56,8 +59,8 @@ actions clearly. Settings distinguish required learning records from optional te
 
 ## Progress vocabulary
 
-Not assessed; Needs attention; Developing; Proficient; Mastered. Explain each label
-briefly and show limited evidence / more supporting evidence under an agreed policy.
-Do not show precise mastery percentages as established knowledge. Keep lesson coverage
-and concept understanding separate.
-
+Not assessed; Needs attention; Developing; Proficient; Mastered. P3 uses the approved
+uncalibrated `mastery-v1` label thresholds and a separate evidence-strength label. Explain
+that labels summarize course evidence and do not prove real-world mastery or learning
+gain. Do not show precise mastery percentages. Keep lesson coverage and concept
+understanding separate.

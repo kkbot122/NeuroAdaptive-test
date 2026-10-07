@@ -14,7 +14,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.modules.courses.service import CourseNotFound, CourseService
-from app.modules.curriculum.models import LessonConcept
+from app.modules.curriculum.models import Concept, LessonConcept
 from app.modules.curriculum.service import CurriculumService
 from app.modules.mastery import diagnostic, engine
 from app.modules.mastery.grading import grade_attempt
@@ -311,18 +311,25 @@ class MasteryService:
 
     # -- reporting ----------------------------------------------------------------
 
-    def visible_mastery_events(self):
+    def visible_mastery_events(self, *, include_session_attribution: bool = False):
         """Return evidence visible to reports and selection.
 
         A fixed assessment may grade answers as they are saved, but its
         evidence stays out of learner-facing mastery and adaptation inputs
         until the complete question set is submitted. Existing standalone
         attempts and evidence from submitted sessions remain visible.
+
+        Progress comparisons can request the linked session ID in the same
+        SQL statement as each event, so a concurrently committed grade cannot
+        be split from its attribution by READ COMMITTED query snapshots.
         """
         from app.modules.learning.models import AssessmentQuestion, AssessmentSession
 
+        query = self.db.query(MasteryEvent)
+        if include_session_attribution:
+            query = query.add_columns(AssessmentSession.id.label("evidence_session_id"))
         return (
-            self.db.query(MasteryEvent)
+            query
             .outerjoin(QuestionAttempt, MasteryEvent.question_attempt_id == QuestionAttempt.id)
             .outerjoin(
                 AssessmentQuestion,
@@ -339,6 +346,16 @@ class MasteryService:
         )
 
     def get_concept_mastery(self, owner_id: int, concept_id: UUID) -> engine.MasteryState:
+        return self._concept_mastery_at(owner_id, concept_id, datetime.now(timezone.utc))
+
+    @staticmethod
+    def _utc(value: datetime) -> datetime:
+        # SQLite may drop timezone metadata; app writes these values as UTC.
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    def _concept_mastery_at(
+        self, owner_id: int, concept_id: UUID, reference_at: datetime
+    ) -> engine.MasteryState:
         """Independent per (owner_id, concept_id) -- reads only this
         concept's evidence, never another concept's."""
         rows = self.visible_mastery_events().filter(
@@ -349,15 +366,11 @@ class MasteryService:
             engine.EvidenceEvent(
                 correctness=r.correctness,
                 evidence_weight_base=r.evidence_weight_base,
-                # SQLite drops tzinfo on round-trip even for a timezone=True
-                # column; every timestamp this app writes is UTC (server
-                # default `func.now()`), so a naive value read back is
-                # re-attached as UTC rather than compared naively.
-                created_at=r.created_at if r.created_at.tzinfo else r.created_at.replace(tzinfo=timezone.utc),
+                created_at=self._utc(r.created_at),
             )
             for r in rows
         ]
-        return engine.compute_mastery(events, datetime.now(timezone.utc))
+        return engine.compute_mastery(events, self._utc(reference_at))
 
     def get_mastery_report(self, course_id: UUID, owner_id: int, include_raw: bool = False) -> List[dict]:
         """One row per concept in the relevant course version (active, else
@@ -380,14 +393,16 @@ class MasteryService:
             ):
                 lesson_by_concept.setdefault(link.concept_id, link.lesson_id)
 
+        reference_at = datetime.now(timezone.utc)
         report = []
         for concept in graph.concepts:
-            state = self.get_concept_mastery(owner_id, concept.id)
+            state = self._concept_mastery_at(owner_id, concept.id, reference_at)
             lesson_id = lesson_by_concept.get(concept.id)
             row = {
                 "concept_id": str(concept.id),
                 "concept_name": concept.name,
                 "band": engine.classify_band(state),
+                "evidence_strength": engine.classify_evidence_strength(state),
                 "lesson_id": str(lesson_id) if lesson_id else None,
             }
             if include_raw:
@@ -398,3 +413,100 @@ class MasteryService:
                 }
             report.append(row)
         return report
+
+    def get_assessment_concept_progress(
+        self,
+        course_id: UUID,
+        owner_id: int,
+        session_id: UUID,
+        reference_at: datetime,
+    ) -> List[dict]:
+        """Rebuild a submitted assessment's before/after display from evidence.
+
+        Both states use the session's persisted submission timestamp. The
+        baseline excludes evidence attributed to this session; the after
+        state adds its successfully graded evidence. Later unrelated evidence
+        is omitted, so refreshing or retrying grading is reproducible and
+        passage of time alone cannot look like an assessment-induced change.
+        """
+        from app.modules.learning.models import AssessmentQuestion, AssessmentSession, LearningActivity
+
+        session = (
+            self.db.query(AssessmentSession)
+            .join(LearningActivity, LearningActivity.id == AssessmentSession.activity_id)
+            .filter(
+                AssessmentSession.id == session_id,
+                AssessmentSession.status == "SUBMITTED",
+                LearningActivity.owner_id == owner_id,
+                LearningActivity.course_id == course_id,
+            )
+            .first()
+        )
+        if session is None or session.submitted_at is None:
+            return []
+        reference_at = self._utc(reference_at)
+        question_rows = (
+            self.db.query(AssessmentQuestion.id, AssessmentQuestion.question_id)
+            .filter(AssessmentQuestion.session_id == session.id)
+            .all()
+        )
+        question_ids = [question_id for _, question_id in question_rows]
+        if not question_ids:
+            return []
+
+        concepts = (
+            self.db.query(Concept.id, Concept.name)
+            .join(QuestionConcept, QuestionConcept.concept_id == Concept.id)
+            .filter(
+                QuestionConcept.question_id.in_(question_ids),
+                Concept.course_id == course_id,
+                Concept.owner_id == owner_id,
+                Concept.course_version_id == session.course_version_id,
+            )
+            .distinct()
+            .order_by(Concept.name, Concept.id)
+            .all()
+        )
+        if not concepts:
+            return []
+
+        concept_ids = [concept_id for concept_id, _ in concepts]
+        visible_rows = (
+            self.visible_mastery_events(include_session_attribution=True)
+            .filter(MasteryEvent.owner_id == owner_id, MasteryEvent.concept_id.in_(concept_ids))
+            .all()
+        )
+        events_by_concept: Dict[UUID, List[MasteryEvent]] = {concept_id: [] for concept_id in concept_ids}
+        session_by_event: Dict[UUID, UUID | None] = {}
+        for row, evidence_session_id in visible_rows:
+            events_by_concept.setdefault(row.concept_id, []).append(row)
+            session_by_event[row.id] = evidence_session_id
+
+        progress = []
+        for concept_id, concept_name in concepts:
+            baseline_events = []
+            assessment_events = []
+            for row in events_by_concept.get(concept_id, []):
+                event = engine.EvidenceEvent(
+                    correctness=row.correctness,
+                    evidence_weight_base=row.evidence_weight_base,
+                    created_at=self._utc(row.created_at),
+                )
+                if session_by_event[row.id] == session.id:
+                    assessment_events.append(event)
+                elif self._utc(row.created_at) <= reference_at:
+                    baseline_events.append(event)
+
+            before = engine.compute_mastery(baseline_events, reference_at)
+            after = engine.compute_mastery(baseline_events + assessment_events, reference_at)
+            progress.append(
+                {
+                    "concept_id": concept_id,
+                    "concept_name": concept_name,
+                    "before_band": engine.classify_band(before),
+                    "after_band": engine.classify_band(after),
+                    "before_evidence_strength": engine.classify_evidence_strength(before),
+                    "after_evidence_strength": engine.classify_evidence_strength(after),
+                }
+            )
+        return progress

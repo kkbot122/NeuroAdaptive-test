@@ -34,6 +34,7 @@ from app.services.generation.gateway import GenerationGateway
 logger = logging.getLogger(__name__)
 MAX_SESSION_QUESTIONS = 50
 _LIFECYCLE_LOCKS = tuple(threading.Lock() for _ in range(64))
+P2_SUPPORTED_ACTIVITY_TYPES = frozenset({"NEW_LESSON", "RESUME_INTERRUPTED"})
 
 
 class LearningNotFound(Exception):
@@ -173,11 +174,18 @@ class LearningService:
             settings.P2_ASSESSMENT_DEFAULT_QUESTION_COUNT_V1,
             len(activity.target_concept_ids or []),
         )
+        supported_experience = (
+            activity.activity_type in P2_SUPPORTED_ACTIVITY_TYPES and activity.lesson_id is not None
+        ) or (activity.activity_type == "DIAGNOSTIC" and session is not None)
         return {
             "id": activity.id,
             "course_version_id": activity.course_version_id,
             "decision_id": activity.decision_id,
             "activity_type": activity.activity_type,
+            "experience_availability": "SUPPORTED" if supported_experience else "UNAVAILABLE",
+            "unavailable_reason": None
+            if supported_experience
+            else "This selected activity type needs the distinct experience planned for P4. Its recommendation is saved; no lesson or assessment was substituted.",
             "target_concept_ids": [UUID(item) if isinstance(item, str) else item for item in activity.target_concept_ids],
             "lesson_id": activity.lesson_id,
             "reason": activity.reason_text,
@@ -556,6 +564,13 @@ class LearningService:
     ) -> dict:
         self._owned_course(course_id, owner_id, lock=True)
         activity = self._owned_activity(course_id, activity_id, owner_id, lock=True)
+        if (
+            activity.activity_type not in P2_SUPPORTED_ACTIVITY_TYPES
+            or activity.lesson_id is None
+        ):
+            raise AssessmentUnavailable(
+                "This selected activity type does not have an assessment experience until P4"
+            )
         existing = self._session_for_activity(activity.id)
         if existing is not None:
             self._reconcile_submitted_activity(activity, course_id, owner_id)
@@ -924,6 +939,19 @@ class LearningService:
             "submission_state": session.status,
             "grading_state": grading_state,
             "submitted_at": session.submitted_at,
+            "graded_answer_count": sum(
+                1 for answer in answers.values() if answer.status == AnswerStatus.GRADED.value
+            ),
+            "unresolved_answer_count": len(items)
+            - sum(1 for answer in answers.values() if answer.status == AnswerStatus.GRADED.value),
+            "concept_progress_reference_at": session.submitted_at,
+            "concept_progress": (
+                self.mastery.get_assessment_concept_progress(
+                    course_id, owner_id, session.id, session.submitted_at
+                )
+                if session.status == AssessmentStatus.SUBMITTED.value and session.submitted_at is not None
+                else None
+            ),
             "questions": question_out,
         }
 
