@@ -10,7 +10,9 @@ import app.db.model_registry  # noqa: F401 -- shared API/worker/migration metada
 config = context.config
 
 # Use DATABASE_URL from .env
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# ConfigParser uses percent interpolation; escape URL-encoded credentials here
+# so SQLAlchemy receives the original DATABASE_URL unchanged.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
