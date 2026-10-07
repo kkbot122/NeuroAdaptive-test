@@ -63,11 +63,11 @@ alone therefore cannot appear as an assessment-induced change.
   presentation format.
 - Results refresh uses only saved-session and learning-state reads; it does not select
   another activity or request generation. Continue is an explicit learner action.
-  P2 preparation is requested/reused only for `NEW_LESSON` and `RESUME_INTERRUPTED`.
-- API activity output labels other selected activity types `UNAVAILABLE` with the P4
-  dependency. P3 does not launch an unsupported assessment or substitute another
-  activity, including when a legacy session is attached. The learn route shows the
-  recorded selection/reason and a direct dashboard exit.
+  At the P3 baseline, P2 preparation covered `NEW_LESSON` and `RESUME_INTERRUPTED`.
+- At the P3 baseline, API activity output marked other selected types `UNAVAILABLE`;
+  P3 did not substitute another activity. P4 extends this seam with distinct
+  remediation, practice, and challenge preparation and screens; see the
+  [P4 contract](p4-adaptive-activities-contract.md).
 - Results show lesson coverage separately from concept evidence and state that labels
   do not prove real-world mastery or learning gain. The current dashboard is the exit;
   the full course overview/workspace remains P6.
@@ -111,8 +111,6 @@ checks; hosted behavior was not verified. No live AI quota, production data, mig
 deployment, or service purchase was used. PostgreSQL emitted an existing local
 collation-version warning that did not prevent the tests from running.
 
-P4 can rely on the persisted selected activity type/targets/reason/format, the
-explicit availability state, fixed assessment/evidence lifecycle, and existing P2
-lesson preparation seam. P4 must implement distinct remediation, targeted-practice,
-and challenge content/questions; it must not reinterpret P3's unavailable response
-as a lesson.
+P4 extends the persisted selection, explicit availability state, fixed assessment and
+evidence lifecycle, and P2 preparation seam. Its implemented activity policies and
+verification are in the [P4 contract](p4-adaptive-activities-contract.md).

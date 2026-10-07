@@ -1,0 +1,12 @@
+"""Shared activity-purpose groups used by lifecycle and preparation services."""
+
+P2_TEACHING_ACTIVITY_TYPES = frozenset({"NEW_LESSON", "RESUME_INTERRUPTED"})
+P4_TEACHING_ACTIVITY_TYPES = frozenset({"PREREQUISITE_REMEDIATION"})
+QUESTION_ONLY_ACTIVITY_TYPES = frozenset({"TARGETED_PRACTICE", "CHALLENGE"})
+
+TEACHING_ACTIVITY_TYPES = P2_TEACHING_ACTIVITY_TYPES | P4_TEACHING_ACTIVITY_TYPES
+PREPARED_ACTIVITY_TYPES = TEACHING_ACTIVITY_TYPES | QUESTION_ONLY_ACTIVITY_TYPES
+
+
+def activity_includes_teaching(activity_type: str) -> bool:
+    return activity_type in TEACHING_ACTIVITY_TYPES

@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     P2_ASSESSMENT_DEFAULT_QUESTION_COUNT_V1: int = Field(default=5, ge=1, le=8)
     P2_ASSESSMENT_MAX_QUESTION_COUNT_V1: int = Field(default=8, ge=1, le=8)
     P2_MCQ_DEFAULT_DIFFICULTY_V1: float = Field(default=0.5, ge=0.0, le=1.0)
+    # P4 fresh assessment sizes are approved defaults, not calibrated values.
+    P4_REMEDIATION_QUESTION_COUNT_V1: int = Field(default=5, ge=1, le=8)
+    P4_TARGETED_PRACTICE_QUESTION_COUNT_V1: int = Field(default=5, ge=1, le=8)
+    P4_CHALLENGE_QUESTION_COUNT_V1: int = Field(default=5, ge=2, le=8)
     P2_PREPARATION_MAX_CANDIDATES_V1: int = Field(default=3, ge=1, le=5)
     P2_PREPARATION_MAX_LOOKAHEAD_V1: int = Field(default=1, ge=0, le=1)
     P2_PREPARATION_MAX_SOURCE_CHUNKS_V1: int = Field(default=12, ge=1, le=24)
@@ -121,6 +125,12 @@ class Settings(BaseSettings):
             raise ValueError("WORKER_TASK_TIME_LIMIT_SECONDS_V1 must exceed the soft time limit")
         if self.P2_ASSESSMENT_DEFAULT_QUESTION_COUNT_V1 > self.P2_ASSESSMENT_MAX_QUESTION_COUNT_V1:
             raise ValueError("P2 assessment default question count must not exceed its maximum")
+        if max(
+            self.P4_REMEDIATION_QUESTION_COUNT_V1,
+            self.P4_TARGETED_PRACTICE_QUESTION_COUNT_V1,
+            self.P4_CHALLENGE_QUESTION_COUNT_V1,
+        ) > self.P2_ASSESSMENT_MAX_QUESTION_COUNT_V1:
+            raise ValueError("P4 activity question counts must not exceed the P2 assessment maximum")
         return self
 
     model_config = ConfigDict(

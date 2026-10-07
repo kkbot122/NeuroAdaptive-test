@@ -3,8 +3,8 @@
 Agreed product and safeguard behavior. Remaining open numeric policies are listed in
 [README.md](README.md); P3 progress-display defaults are recorded below.
 
-P1 and P2 implemented behavior is in [p1-lifecycle-contract.md](p1-lifecycle-contract.md)
-and [p2-grounded-preparation-contract.md](p2-grounded-preparation-contract.md). The
+P1–P4 implemented behavior is in the corresponding lifecycle, preparation, results,
+and [P4 contract](p4-adaptive-activities-contract.md). The
 rules below identify implemented behavior and pieces that await later work.
 
 ## Activities
@@ -12,9 +12,9 @@ rules below identify implemented behavior and pieces that await later work.
 | Activity | Eligibility/purpose | Work | Finish condition |
 | --- | --- | --- | --- |
 | New lesson | New material; no demonstrated prerequisite gap requiring attention | Objective, explanation, example, recap; assess only taught concepts | Teaching covered and assessment graded; weakness can remain |
-| Remediation | Demonstrated concept/prerequisite misunderstanding | One focused concept, supported explanation/example, fresh questions | Follow-up graded; selection uses new evidence |
-| Targeted practice | Limited or mixed evidence for one concept | Fresh questions without mandatory teaching first | Question set graded |
-| Challenge | Understanding demonstrated individually | Application of multiple taught concepts; no outside knowledge required | Question set graded; update assessed concepts only |
+| Remediation | The selected concept itself is Needs attention with More supporting evidence | Focused explanation, worked example, recap, and five fresh questions; teaching required before assessment | Follow-up graded; selection uses new evidence |
+| Targeted practice | Previously taught concept with Not assessed, Limited evidence, or Developing evidence | Five fresh questions with no mandatory teaching or reading gate | Question set graded; weak evidence can lead to remediation |
+| Challenge | Completed teaching and Proficient or Mastered evidence | Five fresh questions applying two eligible concepts when possible; otherwise a clearly labeled single-concept application | Question set graded; each question updates only its attributed concept |
 
 Resume preserves an existing activity, not a separate pedagogical activity. Failed
 generation/grading is not completion. An assessment can finish without mastery.
@@ -31,9 +31,10 @@ generation/grading is not completion. An assessment can finish without mastery.
 5. Students cannot select alternatives through the outline. They can stop, resume, change
    presentation, and skip the initial diagnostic/optional prerequisite check.
 
-Selecting prerequisite remediation is a recommendation, not a declaration that the
-student lacks knowledge based on source absence. Incomplete/unavailable assessments
-must have honest recovery; the ultimate exit policy remains open.
+Selecting remediation requires the selected concept's own assessment evidence. Unknown,
+limited, or mixed/developing evidence routes to practice; absent source coverage never
+implies weakness. Missing teaching support remains a saved, recoverable preparation
+limitation. The general exit policy for an assessment that stays unavailable remains open.
 
 ## Assessment and evidence
 
@@ -41,6 +42,10 @@ must have honest recovery; the ultimate exit policy remains open.
   approved, unvalidated policy is 5 questions by default, increasing to cover each
   taught concept, capped at 8 (`P2_ASSESSMENT_*_V1`). Lessons exceeding the bound
   remain recoverably unavailable.
+- P4 remediation, targeted practice, and challenge each use five fresh MCQs by default
+  (`P4_REMEDIATION_QUESTION_COUNT_V1`, `P4_TARGETED_PRACTICE_QUESTION_COUNT_V1`,
+  `P4_CHALLENGE_QUESTION_COUNT_V1`); these are named, versioned, configurable, and
+  unvalidated defaults. The P2 hard cap remains eight.
 - Persist a fixed set per assessment; one confirmed answer per question. No hints or
   same-question retries. Transport/grading retries reuse the saved answer.
 - P2 MCQ correctness is binary with difficulty 0.5 (`P2_MCQ_DEFAULT_DIFFICULTY_V1`);
@@ -67,7 +72,9 @@ must have honest recovery; the ultimate exit policy remains open.
 - Mastery comes from graded concept evidence, never reading, confidence, format switches,
   or learner success buttons. No evidence means Not assessed.
 - Multi-concept questions need explicit concept attribution. Wrong challenge answers
-  do not erase prior progress or automatically mark every related concept weak.
+  do not erase prior progress or automatically mark every related concept weak. A P4
+  challenge question has exactly one attributed taught concept; the full set covers each
+  selected concept, and validation rejects an item that cannot isolate its attribution.
 - P3 labels use the existing `mastery-v1` classifier: no evidence → Not assessed; below
   0.40 → Needs attention; 0.40–<0.70 → Developing; 0.70–<0.85 → Proficient; Mastered
   requires mastery ≥0.85 and uncertainty ≤0.35. These are uncalibrated evidence labels,
@@ -92,9 +99,10 @@ must have honest recovery; the ultimate exit policy remains open.
 - Continue resumes unfinished activity/session work first. After completion, it persists
   one selection through the existing recommendation path; refreshing submitted results
   does not select an activity or request preparation.
-- P3 prepares only selected `NEW_LESSON` and `RESUME_INTERRUPTED` activities through P2.
-  A selected remediation, practice, or challenge is shown as unavailable until P4 adds
-  its distinct experience; P3 does not substitute a lesson or assessment.
+- P4 routes selected remediation to focused teaching with a reading gate, while targeted
+  practice and challenge prepare questions directly without a lesson or reading gate.
+  Resume preserves the saved type, targets, decision, reason, version, format, question
+  versions/order, and confirmed answers through the existing P1–P3 lifecycle.
 - Lesson coverage remains a reading-completion measure and is presented separately from
   concept evidence.
 
@@ -111,7 +119,8 @@ must have honest recovery; the ultimate exit policy remains open.
 - Match concepts by meaning/scope, not names alone. Do not copy/merge mastery blindly;
   preserve origins and avoid double-counting. Uncertain matches offer optional checks.
 - Unsupported teaching/questions fail honestly. Repeated remediation changes supported
-  explanation/questions; never fabricate missing material.
+  explanation/questions; never fabricate missing material. Preparation keys include
+  purpose and target concepts, so unlike activities cannot share incompatible artifacts.
 
 ## Preparation and grounding
 

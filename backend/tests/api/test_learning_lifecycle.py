@@ -480,17 +480,17 @@ class TestActivityCoverageAndOwnership:
         assert understanding["evidence_strength"] == "Not assessed"
         assert db_session.query(MasteryEvent).count() == 0
 
-    def test_p4_activity_is_reported_unavailable_and_cannot_start_a_p2_assessment(
+    def test_question_only_activity_is_supported_but_waits_for_prepared_questions(
         self, client, owner, db_session, published_course_with_lessons
     ):
-        course, version, concept_a, _, lesson = published_course_with_lessons
+        course, version, concept_a, _, _lesson = published_course_with_lessons
         activity = LearningActivity(
             owner_id=owner.id,
             course_id=course.id,
             course_version_id=version.id,
             activity_type="TARGETED_PRACTICE",
             target_concept_ids=[str(concept_a.id)],
-            lesson_id=lesson.id,
+            lesson_id=None,
             status="READY",
             presentation_format="concise",
         )
@@ -502,28 +502,15 @@ class TestActivityCoverageAndOwnership:
             f"/api/v1/courses/{course.id}/activities/{activity.id}", headers=headers
         )
         assert saved.status_code == 200
-        assert saved.json()["experience_availability"] == "UNAVAILABLE"
-        assert "P4" in saved.json()["unavailable_reason"]
+        assert saved.json()["experience_availability"] == "SUPPORTED"
+        assert saved.json()["question_count"] == 5
+        assert saved.json().get("lesson_id") is None
         assessment = client.post(
             f"/api/v1/courses/{course.id}/activities/{activity.id}/assessment", headers=headers
         )
         assert assessment.status_code == 409
-        assert "until P4" in assessment.json()["detail"]
+        assert "saved questions" in assessment.json()["detail"].lower()
         assert db_session.query(AssessmentSession).count() == 0
-
-        legacy_session = AssessmentSession(
-            activity_id=activity.id,
-            course_version_id=version.id,
-            assessment_type="LESSON",
-            status="OPEN",
-        )
-        db_session.add(legacy_session)
-        db_session.commit()
-        resumed = client.post(
-            f"/api/v1/courses/{course.id}/activities/{activity.id}/assessment", headers=headers
-        )
-        assert resumed.status_code == 409
-        assert "until P4" in resumed.json()["detail"]
 
     def test_foreign_course_session_and_question_relationships_return_404(
         self, client, owner, other_user, db_session, fake_generation, published_course_with_lessons

@@ -15,7 +15,7 @@ from app.modules.curriculum.models import Concept, CourseVersion, CourseVersionS
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
 from app.modules.learning.models import ActivityStatus, LearningActivity
-from app.modules.mastery.models import MasteryEvent, Question
+from app.modules.mastery.models import MasteryEvent, Question, QuestionConcept
 from app.modules.preparation.models import (
     ActivityPreparation,
     LessonContentArtifact,
@@ -195,6 +195,58 @@ class TestAccountDeletion:
             artifact_keys={"lesson_content": str(artifact.id)},
             content_artifact_id=artifact.id,
         )
+        p4_activity = LearningActivity(
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            activity_type="PREREQUISITE_REMEDIATION",
+            target_concept_ids=[str(concept.id)],
+            lesson_id=None,
+            reason_text="The selected concept has demonstrated weak evidence.",
+            status=ActivityStatus.COMPLETED.value,
+            presentation_format="worked_example",
+        )
+        db_session.add(p4_activity)
+        db_session.flush()
+        p4_artifact = LessonContentArtifact(
+            artifact_key="e" * 64,
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            lesson_id=None,
+            activity_purpose="PREREQUISITE_REMEDIATION",
+            target_concept_ids=[str(concept.id)],
+            source_fingerprint="b" * 64,
+            curriculum_fingerprint="f" * 64,
+            presentation_format="worked_example",
+            sections={"objective": [], "explanation": [], "example": [], "recap": []},
+            source_chunk_ids=[str(chunk.id)],
+            model_id="fixture-model",
+            validation_model_id="fixture-model",
+            prompt_version="p4-remediation-content-v1",
+            schema_version="p4-remediation-content-schema-v1",
+            validation_policy_version="p4-grounding-freshness-v1",
+            validated_at=datetime.now(timezone.utc),
+        )
+        db_session.add(p4_artifact)
+        db_session.flush()
+        p4_preparation = ActivityPreparation(
+            preparation_key=f"activity:{p4_activity.id}:PREREQUISITE_REMEDIATION:targeted:default",
+            owner_id=owner.id,
+            course_id=course.id,
+            course_version_id=version.id,
+            activity_id=p4_activity.id,
+            lesson_id=None,
+            activity_purpose="PREREQUISITE_REMEDIATION",
+            target_concept_ids=[str(concept.id)],
+            presentation_format="worked_example",
+            include_assessment=True,
+            status="READY",
+            stage="COMPLETE",
+            progress=100,
+            artifact_keys={"lesson_content": str(p4_artifact.id)},
+            content_artifact_id=p4_artifact.id,
+        )
         question = Question(
             course_id=course.id,
             course_version_id=version.id,
@@ -214,6 +266,25 @@ class TestAccountDeletion:
         )
         db_session.add_all([preparation, question])
         db_session.flush()
+        p4_question = Question(
+            course_id=course.id,
+            course_version_id=version.id,
+            owner_id=owner.id,
+            question_type="MCQ",
+            prompt="Which source-supported idea needs attention?",
+            options=["Supported idea", "Other A", "Other B", "Other C"],
+            correct_answer="Supported idea",
+            explanation="The source passage supports this idea.",
+            content_hash="f" * 64,
+            schema_version="p4-activity-mcq-schema-v1",
+            validation_policy_version="p4-grounding-freshness-v1",
+            difficulty=0.5,
+            is_diagnostic=0,
+            model_id="fixture-model",
+            prompt_version="p4-activity-mcq-v1",
+        )
+        db_session.add_all([p4_preparation, p4_question])
+        db_session.flush()
         db_session.add_all(
             [
                 LessonContentCitation(artifact_id=artifact.id, chunk_id=chunk.id),
@@ -224,12 +295,24 @@ class TestAccountDeletion:
                     position=0,
                 ),
                 QuestionSource(question_id=question.id, chunk_id=chunk.id),
+                LessonContentCitation(artifact_id=p4_artifact.id, chunk_id=chunk.id),
+                PreparedActivityQuestion(
+                    preparation_id=p4_preparation.id,
+                    question_id=p4_question.id,
+                    question_version=p4_question.version,
+                    position=0,
+                ),
+                QuestionConcept(question_id=p4_question.id, concept_id=concept.id, weight=1.0),
+                QuestionSource(question_id=p4_question.id, chunk_id=chunk.id),
             ]
         )
         db_session.commit()
         preparation_id = preparation.id
         artifact_id = artifact.id
         question_id = question.id
+        p4_preparation_id = p4_preparation.id
+        p4_artifact_id = p4_artifact.id
+        p4_question_id = p4_question.id
 
         response = client.delete("/api/v1/me", headers=auth_headers(owner.email))
         assert response.status_code == 202
@@ -238,6 +321,11 @@ class TestAccountDeletion:
         assert db_session.query(LessonContentCitation).filter_by(artifact_id=artifact_id).count() == 0
         assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=preparation_id).count() == 0
         assert db_session.query(QuestionSource).filter_by(question_id=question_id).count() == 0
+        assert db_session.query(ActivityPreparation).filter_by(id=p4_preparation_id).count() == 0
+        assert db_session.query(LessonContentArtifact).filter_by(id=p4_artifact_id).count() == 0
+        assert db_session.query(LessonContentCitation).filter_by(artifact_id=p4_artifact_id).count() == 0
+        assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=p4_preparation_id).count() == 0
+        assert db_session.query(QuestionSource).filter_by(question_id=p4_question_id).count() == 0
 
     def test_deletion_cascades_and_a_refetch_is_404(
         self, client, owner, db_session, owner_with_full_footprint

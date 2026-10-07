@@ -1877,6 +1877,8 @@ export interface components {
             preparation?: components["schemas"]["PreparationOut"] | null;
             /** Presentation Format */
             presentation_format: string;
+            /** Question Count */
+            question_count: number;
             /** Reading Completed At */
             reading_completed_at: string | null;
             /** Reading Position */
@@ -2060,11 +2062,8 @@ export interface components {
              * Format: uuid
              */
             course_version_id: string;
-            /**
-             * Lesson Id
-             * Format: uuid
-             */
-            lesson_id: string;
+            /** Lesson Id */
+            lesson_id?: string | null;
             /**
              * Presentation Format
              * @enum {string}

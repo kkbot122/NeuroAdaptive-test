@@ -1537,6 +1537,11 @@
             "title": "Presentation Format",
             "type": "string"
           },
+          "question_count": {
+            "minimum": 0.0,
+            "title": "Question Count",
+            "type": "integer"
+          },
           "reading_completed_at": {
             "anyOf": [
               {
@@ -1599,6 +1604,7 @@
           "reason",
           "status",
           "presentation_format",
+          "question_count",
           "reading_position",
           "reading_completed_at"
         ],
@@ -2029,9 +2035,16 @@
             "type": "string"
           },
           "lesson_id": {
-            "format": "uuid",
-            "title": "Lesson Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
           },
           "presentation_format": {
             "enum": [
@@ -2061,7 +2074,6 @@
         "required": [
           "artifact_id",
           "course_version_id",
-          "lesson_id",
           "presentation_format",
           "sections",
           "source_chunk_ids"

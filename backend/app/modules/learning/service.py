@@ -13,7 +13,7 @@ from app.modules.adaptation.models import AdaptationDecision
 from app.modules.adaptation.service import AdaptationNotFound, AdaptationService
 from app.modules.courses.models import Course, CourseStatus
 from app.modules.courses.service import CourseNotFound, CourseService
-from app.modules.curriculum.models import Concept, CourseVersion, Lesson, Module
+from app.modules.curriculum.models import Concept, CourseVersion, Lesson, LessonConcept, Module
 from app.modules.learning.models import (
     ActivityStatus,
     AnswerStatus,
@@ -23,6 +23,11 @@ from app.modules.learning.models import (
     AssessmentStatus,
     AssessmentType,
     LearningActivity,
+)
+from app.modules.learning.activity_types import (
+    P2_TEACHING_ACTIVITY_TYPES,
+    PREPARED_ACTIVITY_TYPES,
+    activity_includes_teaching,
 )
 from app.modules.mastery.grading import grade_attempt
 from app.modules.mastery.models import Question, QuestionAttempt, QuestionConcept
@@ -34,7 +39,7 @@ from app.services.generation.gateway import GenerationGateway
 logger = logging.getLogger(__name__)
 MAX_SESSION_QUESTIONS = 50
 _LIFECYCLE_LOCKS = tuple(threading.Lock() for _ in range(64))
-P2_SUPPORTED_ACTIVITY_TYPES = frozenset({"NEW_LESSON", "RESUME_INTERRUPTED"})
+P2_SUPPORTED_ACTIVITY_TYPES = P2_TEACHING_ACTIVITY_TYPES
 
 
 class LearningNotFound(Exception):
@@ -154,14 +159,23 @@ class LearningService:
         if len(valid_targets) != len(set(target_ids)):
             raise LearningNotFound(str(activity.id))
         session = self._session_for_activity(activity.id)
-        preparation = (
+        preparations = (
             self.db.query(ActivityPreparation)
             .filter(
                 ActivityPreparation.activity_id == activity.id,
                 ActivityPreparation.include_assessment.is_(True),
+                ActivityPreparation.activity_purpose == activity.activity_type,
             )
             .order_by(ActivityPreparation.created_at.asc())
-            .first()
+            .all()
+        )
+        target_key = sorted(str(item) for item in target_ids)
+        preparation = next(
+            (
+                row for row in preparations
+                if sorted(str(item) for item in row.target_concept_ids or []) == target_key
+            ),
+            None,
         )
         prepared_count = (
             self.db.query(PreparedActivityQuestion.id)
@@ -170,12 +184,16 @@ class LearningService:
             if preparation is not None
             else 0
         )
-        expected_prepared_count = max(
-            settings.P2_ASSESSMENT_DEFAULT_QUESTION_COUNT_V1,
-            len(activity.target_concept_ids or []),
-        )
+        expected_prepared_count = self._expected_question_count(activity, preparation)
         supported_experience = (
-            activity.activity_type in P2_SUPPORTED_ACTIVITY_TYPES and activity.lesson_id is not None
+            activity.activity_type in PREPARED_ACTIVITY_TYPES
+            and (
+                (
+                    activity.activity_type == "PREREQUISITE_REMEDIATION"
+                    or (activity_includes_teaching(activity.activity_type) and activity.lesson_id is not None)
+                )
+                or (not activity_includes_teaching(activity.activity_type) and activity.lesson_id is None)
+            )
         ) or (activity.activity_type == "DIAGNOSTIC" and session is not None)
         return {
             "id": activity.id,
@@ -185,12 +203,13 @@ class LearningService:
             "experience_availability": "SUPPORTED" if supported_experience else "UNAVAILABLE",
             "unavailable_reason": None
             if supported_experience
-            else "This selected activity type needs the distinct experience planned for P4. Its recommendation is saved; no lesson or assessment was substituted.",
+            else "This activity cannot be prepared from its saved course concepts. Your selection and progress are still saved.",
             "target_concept_ids": [UUID(item) if isinstance(item, str) else item for item in activity.target_concept_ids],
             "lesson_id": activity.lesson_id,
             "reason": activity.reason_text,
             "status": activity.status,
             "presentation_format": activity.presentation_format,
+            "question_count": expected_prepared_count,
             "reading_position": activity.reading_position,
             "reading_completed_at": activity.reading_completed_at,
             "assessment_session_id": session.id if session else None,
@@ -200,13 +219,30 @@ class LearningService:
                 "stage": preparation.stage,
                 "progress": preparation.progress,
                 "error_category": preparation.error_category,
-                "content_ready": preparation.content_artifact_id is not None,
+                "content_ready": (
+                    not activity_includes_teaching(activity.activity_type)
+                    or preparation.content_artifact_id is not None
+                ),
                 "assessment_ready": preparation is not None
                 and preparation.status == PreparationStatus.READY
                 and prepared_count == expected_prepared_count,
                 "updated_at": preparation.updated_at,
             },
         }
+
+    @staticmethod
+    def _expected_question_count(activity: LearningActivity, preparation: ActivityPreparation | None) -> int:
+        p4_count = {
+            "PREREQUISITE_REMEDIATION": settings.P4_REMEDIATION_QUESTION_COUNT_V1,
+            "TARGETED_PRACTICE": settings.P4_TARGETED_PRACTICE_QUESTION_COUNT_V1,
+            "CHALLENGE": settings.P4_CHALLENGE_QUESTION_COUNT_V1,
+        }
+        if activity.activity_type in p4_count:
+            return p4_count[activity.activity_type]
+        concept_count = len(activity.target_concept_ids or [])
+        if preparation is not None and preparation.activity_id is None:
+            concept_count = len(preparation.target_concept_ids or []) or concept_count
+        return max(settings.P2_ASSESSMENT_DEFAULT_QUESTION_COUNT_V1, concept_count)
 
     def _owned_activity(self, course_id: UUID, activity_id: UUID, owner_id: int, *, lock: bool = False):
         query = (
@@ -260,6 +296,12 @@ class LearningService:
             .first()
         )
         if preparation is not None:
+            prepared_targets = sorted(str(item) for item in preparation.target_concept_ids or [])
+            if (
+                preparation.activity_purpose != activity.activity_type
+                or prepared_targets != sorted(str(item) for item in concept_ids)
+            ):
+                return []
             if preparation.status != PreparationStatus.READY:
                 return []
             prepared_items = (
@@ -289,7 +331,7 @@ class LearningService:
                     .filter(QuestionConcept.question_id == question.id)
                     .all()
                 }
-                if not question_concepts or not question_concepts.issubset(target_set):
+                if len(question_concepts) != 1 or not question_concepts.issubset(target_set):
                     return []
             return [question for _, question in prepared_items]
         query = self.db.query(Question).join(QuestionConcept).filter(
@@ -439,8 +481,10 @@ class LearningService:
         activity = self._owned_activity(course_id, activity_id, owner_id, lock=True)
         if activity.status == ActivityStatus.COMPLETED.value:
             return self._activity_out(activity)
-        if activity.lesson_id is None:
+        if not activity_includes_teaching(activity.activity_type):
             raise LearningConflict("This activity has no lesson reading to complete")
+        if activity.activity_type in P2_SUPPORTED_ACTIVITY_TYPES and activity.lesson_id is None:
+            raise LearningConflict("This lesson activity has no selected lesson")
         if activity.reading_completed_at is None:
             activity.reading_completed_at = datetime.now(timezone.utc)
             activity.status = ActivityStatus.AWAITING_ASSESSMENT.value
@@ -564,20 +608,33 @@ class LearningService:
     ) -> dict:
         self._owned_course(course_id, owner_id, lock=True)
         activity = self._owned_activity(course_id, activity_id, owner_id, lock=True)
-        if (
-            activity.activity_type not in P2_SUPPORTED_ACTIVITY_TYPES
-            or activity.lesson_id is None
-        ):
+        if activity.activity_type not in PREPARED_ACTIVITY_TYPES:
             raise AssessmentUnavailable(
-                "This selected activity type does not have an assessment experience until P4"
+                "This selected activity type has no supported assessment"
             )
+        if activity.activity_type in P2_SUPPORTED_ACTIVITY_TYPES and activity.lesson_id is None:
+            raise AssessmentUnavailable("This teaching activity has no selected lesson")
+        if activity.activity_type == "PREREQUISITE_REMEDIATION" and activity.lesson_id is not None:
+            target_ids = [UUID(item) if isinstance(item, str) else item for item in activity.target_concept_ids]
+            lesson_has_target = (
+                self.db.query(LessonConcept.concept_id)
+                .filter(
+                    LessonConcept.lesson_id == activity.lesson_id,
+                    LessonConcept.concept_id.in_(target_ids),
+                )
+                .count()
+            ) == len(target_ids)
+            if not lesson_has_target:
+                raise AssessmentUnavailable("The remediation lesson does not cover its selected concept")
+        if not activity_includes_teaching(activity.activity_type) and activity.lesson_id is not None:
+            raise AssessmentUnavailable("This question-only activity cannot depend on lesson reading")
         existing = self._session_for_activity(activity.id)
         if existing is not None:
             self._reconcile_submitted_activity(activity, course_id, owner_id)
             return self._session_out(existing, owner_id, course_id)
         if activity.status == ActivityStatus.COMPLETED.value:
             raise LearningConflict("Completed activity has no assessment session")
-        if activity.lesson_id is not None and activity.reading_completed_at is None:
+        if activity_includes_teaching(activity.activity_type) and activity.reading_completed_at is None:
             raise LearningConflict("Complete lesson reading before starting its assessment")
         questions = self._questions_for_activity(activity)
         try:

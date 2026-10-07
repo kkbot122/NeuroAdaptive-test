@@ -22,16 +22,16 @@ from app.modules.adaptation.presentation import AffinityState, apply_manual_swit
 from app.modules.adaptation.readiness import compute_readiness, is_ready
 from app.modules.adaptation.scoring import Candidate, ConceptState, LearnerStateSnapshot, recommend
 from app.modules.courses.service import CourseNotFound, CourseService
-from app.modules.curriculum.models import ConceptPrerequisite, CourseVersion, EdgeStrength
+from app.modules.curriculum.models import ConceptPrerequisite, CourseVersion, EdgeStrength, Lesson, Module
 from app.modules.curriculum.service import CurriculumService
+from app.modules.learning.models import LearningActivity
+from app.modules.mastery import engine
 from app.modules.mastery.models import MasteryEvent
 from app.modules.mastery.service import MasteryService
 from app.services.embedding.gateway import EmbeddingGateway
 from app.services.generation.gateway import GenerationGateway
 
 # Named, unvalidated defaults -- see candidates section of this module.
-REMEDIATION_TRIGGER_MASTERY = 0.5
-REMEDIATION_PREREQUISITE_THRESHOLD = 0.6
 REMEDIATION_BONUS = 0.5  # a flat bump so a triggered remediation outranks ordinary candidates
 STRUGGLING_RECENT_EVENTS = 5
 STRUGGLING_CORRECTNESS_THRESHOLD = 0.4
@@ -103,8 +103,55 @@ class AdaptationService:
             concept_states[concept.id] = ConceptState(
                 mastery=state.mastery, uncertainty=state.uncertainty,
                 importance=concept.importance, readiness=readiness,
+                evidence_weight_total=state.evidence_weight_total,
             )
         return concept_states, hard_prereqs
+
+    @staticmethod
+    def _mastery_state(state: ConceptState) -> engine.MasteryState:
+        return engine.MasteryState(
+            mastery=state.mastery,
+            uncertainty=state.uncertainty,
+            evidence_weight_total=state.evidence_weight_total,
+        )
+
+    def _taught_concepts(self, course_id: UUID, version_id: UUID, owner_id: int, concept_ids: Set[UUID]) -> Set[UUID]:
+        if not concept_ids:
+            return set()
+        rows = (
+            self.db.query(LearningActivity.target_concept_ids)
+            .filter(
+                LearningActivity.owner_id == owner_id,
+                LearningActivity.course_id == course_id,
+                LearningActivity.course_version_id == version_id,
+                LearningActivity.activity_type.in_(
+                    {"NEW_LESSON", "RESUME_INTERRUPTED", "PREREQUISITE_REMEDIATION"}
+                ),
+                LearningActivity.reading_completed_at.isnot(None),
+            )
+            .all()
+        )
+        taught: Set[UUID] = set()
+        for (target_ids,) in rows:
+            for target_id in target_ids or []:
+                parsed = UUID(target_id) if isinstance(target_id, str) else target_id
+                if parsed in concept_ids:
+                    taught.add(parsed)
+        return taught
+
+    def _covered_lessons(self, course_id: UUID, version_id: UUID, owner_id: int) -> Set[UUID]:
+        return {
+            lesson_id
+            for (lesson_id,) in self.db.query(LearningActivity.lesson_id)
+            .filter(
+                LearningActivity.owner_id == owner_id,
+                LearningActivity.course_id == course_id,
+                LearningActivity.course_version_id == version_id,
+                LearningActivity.lesson_id.isnot(None),
+                LearningActivity.reading_completed_at.isnot(None),
+            )
+            .all()
+        }
 
     def _last_decision(self, course_id: UUID, owner_id: int) -> Optional[AdaptationDecision]:
         return (
@@ -197,7 +244,7 @@ class AdaptationService:
     def _generate_candidates(
         self, version: CourseVersion, concept_states: Dict[UUID, ConceptState],
         hard_prereqs: Dict[UUID, List[UUID]], last_decision: Optional[AdaptationDecision],
-        course_id: UUID, owner_id: int,
+        course_id: UUID, owner_id: int, concepts,
     ) -> List[Candidate]:
         candidates: List[Candidate] = []
 
@@ -209,30 +256,32 @@ class AdaptationService:
                 remediation_bonus=remediation_bonus,
             )
 
-        # -- B: PREREQUISITE_REMEDIATION -- concrete trigger from the mandate:
-        # a checkpoint dropped concept X below 0.5 AND a hard prerequisite Y
-        # of X sits below 0.6. `remediation_trigger_by_target` keeps Y -> X so
-        # the reason text can name the actual concept that was missed, not
-        # just the prerequisite being remediated.
-        remediation_trigger_by_target: Dict[UUID, UUID] = {}
-        for concept_id, state in concept_states.items():
-            if state.mastery >= REMEDIATION_TRIGGER_MASTERY:
-                continue
-            for prereq_id in hard_prereqs.get(concept_id, []):
-                prereq_state = concept_states.get(prereq_id)
-                if prereq_state and prereq_state.mastery < REMEDIATION_PREREQUISITE_THRESHOLD:
-                    remediation_trigger_by_target.setdefault(prereq_id, concept_id)
-        for target_id in remediation_trigger_by_target:
+        # Remediation needs supported evidence on the selected concept itself.
+        # An unassessed prerequisite cannot inherit weakness from a dependent.
+        remediation_targets = [
+            concept_id
+            for concept_id, state in concept_states.items()
+            if engine.classify_band(self._mastery_state(state)) == engine.NEEDS_ATTENTION
+            and engine.classify_evidence_strength(self._mastery_state(state))
+            == engine.MORE_SUPPORTING_EVIDENCE
+        ]
+        for target_id in remediation_targets:
             candidates.append(
-                make("PREREQUISITE_REMEDIATION", [target_id], remediation_bonus=REMEDIATION_BONUS,
+                make(
+                    "PREREQUISITE_REMEDIATION",
+                    [target_id],
+                    remediation_bonus=REMEDIATION_BONUS,
                      difficulty=1.0 - concept_states[target_id].mastery)
             )
-        self._last_remediation_triggers = remediation_trigger_by_target
 
-        # -- NEW_LESSON: first lesson, in course order, whose concepts are
-        # all ready and not already fully mastered.
+        # -- NEW_LESSON: each uncovered lesson whose concepts are all ready
+        # and not already fully mastered. Covered lessons are reinforcement,
+        # handled by practice, remediation, or challenge candidates.
+        covered_lesson_ids = self._covered_lessons(course_id, version.id, owner_id)
         for module in version.modules:
             for lesson in module.lessons:
+                if lesson.id in covered_lesson_ids:
+                    continue
                 lesson_concept_ids = [lc.concept_id for lc in lesson.concepts]
                 if not lesson_concept_ids:
                     continue
@@ -241,10 +290,6 @@ class AdaptationService:
                     continue
                 if all(is_ready(s.readiness) for s in states) and any(s.mastery < 0.85 for s in states):
                     candidates.append(make("NEW_LESSON", lesson_concept_ids, lesson_id=lesson.id))
-                    break
-            else:
-                continue
-            break
 
         # -- RESUME_INTERRUPTED: last call recommended a NEW_LESSON and no
         # evidence has appeared for any of its concepts since.
@@ -270,18 +315,51 @@ class AdaptationService:
                         make("RESUME_INTERRUPTED", concept_ids, lesson_id=last_decision.selected_lesson_id)
                     )
 
-        # -- TARGETED_PRACTICE: concepts with evidence, ready, not yet mastered.
-        practice_pool = sorted(
-            (cid for cid, s in concept_states.items() if s.uncertainty < 1.0 and s.mastery < 0.85 and is_ready(s.readiness)),
-            key=lambda cid: concept_states[cid].mastery,
-        )
+        concept_ids = set(concept_states)
+        taught = self._taught_concepts(course_id, version.id, owner_id, concept_ids)
+
+        # -- TARGETED_PRACTICE: no evidence, limited evidence, or developing
+        # evidence. A never-taught, unassessed concept stays with new lessons.
+        practice_pool = []
+        for cid, state in concept_states.items():
+            mastery_state = self._mastery_state(state)
+            strength = engine.classify_evidence_strength(mastery_state)
+            band = engine.classify_band(mastery_state)
+            if strength not in {engine.NOT_ASSESSED, engine.LIMITED_EVIDENCE} and band != engine.DEVELOPING:
+                continue
+            if cid not in taught:
+                continue
+            if strength != engine.NOT_ASSESSED and not is_ready(state.readiness):
+                continue
+            practice_pool.append(cid)
+        practice_pool.sort(key=lambda cid: concept_states[cid].mastery)
         for concept_id in practice_pool[:TARGETED_PRACTICE_MAX_CANDIDATES]:
             candidates.append(make("TARGETED_PRACTICE", [concept_id]))
 
-        # -- CHALLENGE: concepts already mastered.
-        mastered_pool = [cid for cid, s in concept_states.items() if s.mastery >= 0.85 and s.uncertainty <= 0.35]
-        for concept_id in mastered_pool[:CHALLENGE_MAX_CANDIDATES]:
-            candidates.append(make("CHALLENGE", [concept_id], difficulty=0.8))
+        # -- CHALLENGE: concepts with completed teaching and demonstrated
+        # Proficient/Mastered evidence. Pair selected concepts when possible;
+        # retain a single-concept application when only one qualifies.
+        ordered_concepts = [concept.id for concept in concepts]
+        challenge_pool = [
+            cid
+            for cid in ordered_concepts
+            if cid in taught
+            and engine.classify_band(self._mastery_state(concept_states[cid]))
+            in {engine.PROFICIENT, engine.MASTERED}
+        ]
+        challenge_pairs = []
+        for index, first in enumerate(challenge_pool):
+            for second in challenge_pool[index + 1 :]:
+                challenge_pairs.append((first, second))
+                if len(challenge_pairs) >= CHALLENGE_MAX_CANDIDATES:
+                    break
+            if len(challenge_pairs) >= CHALLENGE_MAX_CANDIDATES:
+                break
+        selected_challenges = challenge_pairs[:CHALLENGE_MAX_CANDIDATES]
+        if not selected_challenges:
+            selected_challenges = [(cid,) for cid in challenge_pool[:CHALLENGE_MAX_CANDIDATES]]
+        for concept_ids in selected_challenges:
+            candidates.append(make("CHALLENGE", concept_ids, difficulty=0.8))
 
         return candidates
 
@@ -299,10 +377,11 @@ class AdaptationService:
         rejected_keys = self._rejected_candidate_keys(last_decision)
 
         candidates = self._generate_candidates(
-            version, concept_states, hard_prereqs, last_decision, course_id, owner_id
+            version, concept_states, hard_prereqs, last_decision, course_id, owner_id, graph.concepts
         )
         if not candidates:
             raise AdaptationNotFound(f"No eligible activity for course {course_id}")
+        taught_concepts = self._taught_concepts(course_id, version.id, owner_id, set(concept_states))
 
         course = self._get_owned_course(course_id, owner_id)
         snapshot = LearnerStateSnapshot(
@@ -320,8 +399,7 @@ class AdaptationService:
         presentation_format = select_format(affinity_states, exposure_index, is_struggling)
 
         concept_names = {c.id: c.name for c in graph.concepts}
-        triggers = getattr(self, "_last_remediation_triggers", {})
-        reason = self._reason_text(winner.candidate, concept_names, triggers)
+        reason = self._reason_text(winner.candidate, concept_names, concept_states)
 
         candidates_considered = [
             {
@@ -347,6 +425,18 @@ class AdaptationService:
             input_snapshot={
                 "concept_mastery": {str(cid): s.mastery for cid, s in concept_states.items()},
                 "concept_uncertainty": {str(cid): s.uncertainty for cid, s in concept_states.items()},
+                "concept_evidence_weight_total": {
+                    str(cid): s.evidence_weight_total for cid, s in concept_states.items()
+                },
+                "concept_evidence_strength": {
+                    str(cid): engine.classify_evidence_strength(self._mastery_state(s))
+                    for cid, s in concept_states.items()
+                },
+                "concept_understanding_band": {
+                    str(cid): engine.classify_band(self._mastery_state(s))
+                    for cid, s in concept_states.items()
+                },
+                "completed_teaching_concept_ids": sorted(str(item) for item in taught_concepts),
             },
         )
         self.db.add(decision)
@@ -367,7 +457,7 @@ class AdaptationService:
                 "activity_type": sc.candidate.activity_type,
                 "concept_ids": [str(cid) for cid in sc.candidate.concept_ids],
                 "lesson_id": str(sc.candidate.lesson_id) if sc.candidate.lesson_id else None,
-                "reason": self._reason_text(sc.candidate, concept_names, triggers),
+                "reason": self._reason_text(sc.candidate, concept_names, concept_states),
                 "score": sc.score,
             }
             if include_format:
@@ -382,25 +472,46 @@ class AdaptationService:
 
     @staticmethod
     def _reason_text(
-        candidate: Candidate, concept_names: Dict[UUID, str], remediation_triggers: Dict[UUID, UUID]
+        candidate: Candidate,
+        concept_names: Dict[UUID, str],
+        concept_states: Dict[UUID, ConceptState],
     ) -> str:
         names = [concept_names.get(cid, str(cid)) for cid in candidate.concept_ids]
         joined = ", ".join(names) if names else "this material"
         if candidate.activity_type == "PREREQUISITE_REMEDIATION":
-            target_id = candidate.concept_ids[0] if candidate.concept_ids else None
-            trigger_id = remediation_triggers.get(target_id)
-            trigger_name = concept_names.get(trigger_id, "a recent check") if trigger_id else "a recent check"
             return (
-                f"Recommended because {joined} needs review before continuing -- "
-                f"{trigger_name} dropped below a solid level on a recent check, "
-                f"and it depends on {joined}."
+                f"Submitted assessment evidence places {joined} in Needs attention with more supporting evidence, "
+                "so this activity revisits that concept."
             )
         if candidate.activity_type == "NEW_LESSON":
             return f"You're ready for the next lesson, covering {joined}."
         if candidate.activity_type == "TARGETED_PRACTICE":
-            return f"Extra practice on {joined} to strengthen a developing area."
+            state = concept_states[candidate.concept_ids[0]]
+            mastery_state = AdaptationService._mastery_state(state)
+            strength = engine.classify_evidence_strength(mastery_state)
+            band = engine.classify_band(mastery_state)
+            if strength == engine.NOT_ASSESSED:
+                return f"{joined} is not assessed yet; a short practice check can establish a baseline."
+            if strength == engine.LIMITED_EVIDENCE:
+                return f"There is limited submitted evidence for {joined}; a short practice check can clarify what you know."
+            return f"Submitted evidence places {joined} in Developing; targeted practice can help show what is secure."
         if candidate.activity_type == "CHALLENGE":
-            return f"A challenge on {joined}, since you've already mastered it."
+            if len(candidate.concept_ids) == 1:
+                label = engine.classify_band(
+                    AdaptationService._mastery_state(concept_states[candidate.concept_ids[0]])
+                )
+                return (
+                    f"You completed teaching for {joined} and your submitted evidence is {label}; "
+                    "try a single-concept application in a new situation."
+                )
+            labels = [
+                f"{concept_names.get(cid, str(cid))} ({engine.classify_band(AdaptationService._mastery_state(concept_states[cid]))})"
+                for cid in candidate.concept_ids
+            ]
+            return (
+                f"You completed teaching for {', '.join(concept_names.get(cid, str(cid)) for cid in candidate.concept_ids)} "
+                f"with submitted evidence at {', '.join(labels)}; apply both concepts in a new situation."
+            )
         if candidate.activity_type == "RESUME_INTERRUPTED":
             return f"Pick back up where you left off, on {joined}."
         return f"Recommended: {joined}."

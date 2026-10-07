@@ -9,6 +9,9 @@ from app.modules.curriculum.models import (
     CourseVersion,
     CourseVersionStatus,
     EdgeStrength,
+    Lesson,
+    LessonConcept,
+    Module,
 )
 from app.modules.mastery.models import MasteryEvent
 from tests.conftest import auth_headers
@@ -44,6 +47,13 @@ def course_setup(db_session, owner):
             strength=EdgeStrength.HARD.value,
         )
     )
+    module = Module(course_version_id=version.id, position=0, title="Course Module")
+    db_session.add(module)
+    db_session.flush()
+    lesson = Lesson(module_id=module.id, position=0, title="Mutual Exclusion Basics")
+    db_session.add(lesson)
+    db_session.flush()
+    db_session.add(LessonConcept(lesson_id=lesson.id, concept_id=concept_y.id, weight=1.0))
     db_session.commit()
 
     course.active_version_id = version.id
@@ -87,16 +97,17 @@ class TestNextActivityContract:
 
 
 class TestEndToEndRemediation:
-    def test_weak_prerequisite_surfaces_a_specific_remediation_reason(self, client, owner, db_session, course_setup):
-        course, version, concept_x, concept_y = course_setup
-        set_mastery(db_session, owner, concept_x.id, 0.4)  # fails a checkpoint
-        set_mastery(db_session, owner, concept_y.id, 0.5)  # weak hard prerequisite
+    def test_demonstrated_concept_weakness_surfaces_a_specific_remediation_reason(self, client, owner, db_session, course_setup):
+        course, version, _concept_x, concept_y = course_setup
+        set_mastery(db_session, owner, concept_y.id, 0.2)
 
         resp = client.get(f"/api/v1/courses/{course.id}/next-activity", headers=auth_headers(owner.email))
         body = resp.json()
         assert body["recommended"]["activity_type"] == "PREREQUISITE_REMEDIATION"
-        # References the actual missed concept, not a generic message.
-        assert concept_x.name in body["recommended"]["reason"] or concept_y.name in body["recommended"]["reason"]
+        assert body["recommended"]["concept_ids"] == [str(concept_y.id)]
+        assert concept_y.name in body["recommended"]["reason"]
+        assert "Needs attention" in body["recommended"]["reason"]
+        assert "more supporting evidence" in body["recommended"]["reason"]
 
 
 class TestPresentationAffinityEndpoints:

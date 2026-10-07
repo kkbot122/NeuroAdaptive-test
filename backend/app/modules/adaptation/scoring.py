@@ -26,6 +26,7 @@ class ConceptState:
     uncertainty: float
     importance: float
     readiness: float  # precomputed via readiness.compute_readiness by the caller
+    evidence_weight_total: float = 0.0  # read-time value from the existing mastery engine
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,9 @@ Proposed screens; route names and visual styling are not prescribed.
 | Diagnostic introduction | Purpose, question count, submission rules, meaning of skipping | Take diagnostic; Skip for now |
 | Course overview | Inspectable outline; concept labels/evidence strength; coverage; current activity and reason | Continue studying; inspect outline/progress; Back to dashboard |
 | Activity workspace | Title, purpose/reason; activity-specific content; saved position | Format switch; tutor/source panels; Ready for questions or Start questions; Back to course |
+| Concept remediation | One selected concept and evidence-based reason; source-linked explanation, worked example, recap, and question readiness | Study the focused concept; mark reading complete with Ready for questions; retry preparation |
+| Targeted practice | One concept, factual evidence reason, and question count | Start fresh questions directly; no lesson or reading completion |
+| Challenge | Selected taught concepts, factual reason, and question count; single-concept fallback is labeled plainly | Start fresh application questions directly; no lesson or reading completion |
 | Assessment | One MCQ/short-answer question; count/progress; submission/pending states | Submit answer; Next question; Back to course |
 | Results | Saved answers; correctness or unresolved grading; supported expected reasoning and sources; before/after concept labels and evidence strength; separate lesson coverage | Continue when grading is complete; Retry grading; Return to dashboard |
 | Completion | Coverage and demonstrated understanding; limits of the estimate | Return to dashboard; Optional practice |
@@ -23,7 +26,9 @@ Explicit reviewer authorization is required; this is not a general learner scree
 
 ## Workspace
 
-- One shared activity shell; meaningful teaching/question content changes by activity type.
+- Teaching remediation has a focused concept screen. Targeted practice and challenge
+  have distinct question-first screens; they do not open a substituted lesson page.
+- New lesson and interrupted-lesson study continue through the P2 lesson screen.
 - Main content: objective, explanation, example, recap for teaching activities.
 - Concise, detailed, worked example, analogy formats retain the same learning objective.
 - Tutor receives course/activity context. Sources open supporting passages with document
@@ -46,8 +51,9 @@ Explicit reviewer authorization is required; this is not a general learner scree
 - Reports promise no immediate correction. Results distinguish original/corrected
   judgments; pending grading never appears as incorrect.
 - Results refresh reads the saved session and evidence only. Continue resumes existing
-  work or persists one next recommendation; an unsupported P4 selection is named and
-  left unavailable. Dashboard is a direct exit.
+  work or persists one next recommendation; unsupported preparation is named and
+  recoverable. Supported P4 selections open their distinct activity screens. Dashboard
+  is a direct exit.
 
 ## Shared states
 

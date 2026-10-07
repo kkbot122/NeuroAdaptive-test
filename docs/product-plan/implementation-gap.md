@@ -20,8 +20,8 @@ Paths below are relative to repository root.
 | Lesson assessment | P1 activity sessions reuse existing questions for the saved course version and target concepts | **P2 implemented locally:** grounded MCQs are generated for the prepared activity, versioned, and attached to its fixed P1 session; see [P2 contract](p2-grounded-preparation-contract.md) |
 | Grading/evidence | P1 persists answers independently, gates feedback until set submission, retries failed grading, and deduplicates existing attempt/evidence writes | Later add durable grading workers and authorized corrections preserving original judgments |
 | Mastery | `mastery/engine.py` computes weighted prior/uncertainty/decay | **P3 exposes approved uncalibrated bands and separate evidence strength;** no second mastery store or calibration claim |
-| Selection | P1 persists the selected recommendation trace with one unfinished activity per owner/course and resumes it before selecting again | **P3 Continue uses this path and preserves the decision/activity trace;** do not change recommendation weights. P4 adds unsupported activity experiences |
-| Activity navigation | P1 learn/study/assessment consumers save position/format, resume fixed sessions, and provide a dashboard exit | **P3 adds results/progress and supported/unavailable handling;** full distinct lesson, practice, challenge, and course overview experiences remain later UI work |
+| Selection | P1 persists the selected recommendation trace with one unfinished activity per owner/course and resumes it before selecting again | **P3/P4 Continue uses this path and preserves the decision/activity trace;** P4 adjusts eligibility/targets only and retains existing ranking weights and ordering |
+| Activity navigation | P1 learn/study/assessment consumers save position/format, resume fixed sessions, and provide a dashboard exit | **P3 adds results/progress; P4 adds distinct remediation, targeted-practice, and challenge states.** Full course overview and side-panel integration remain P6 |
 | Teaching/tutor | `tutor/service.py`; study/tutor/source pages | Consistent teaching structure; contextual side panels; assessment restriction |
 | Presentation | Study page sends learner-button success before assessment | Replace learning-effectiveness signal with attributed graded outcomes |
 | Progress/resume | P1 persists reading position, fixed assessment questions/answers, activity/session states, and lesson coverage; P3 derives concept comparisons at the saved submission time | P9 still needs agreed course-completion/retention criteria; no second progress store |
@@ -139,11 +139,21 @@ strength, lesson coverage, and Continue. Results are reconstructed through the e
 mastery engine from immutable evidence at the saved assessment submission time. Pending
 grades remain unresolved; retries add no second evidence event. `LearningActivity` keeps
 the course version, decision, targets, reason, and format. The existing active-activity
-guard and course lock protect concurrent Continue requests. P3 requests P2 preparation
-only for supported lessons; other selected activity types remain explicitly unavailable
-until P4.
+guard and course lock protect concurrent Continue requests. P3 originally requested P2
+preparation only for supported lessons. P4 now supports three additional selected
+activity types through the same lifecycle.
 
 No P3 migration or new learning record is required. OpenAPI and generated frontend types
 include `evidence_strength`, submitted-session grade counts/concept progress, and activity
 experience availability. Approved display defaults and verification evidence are in
 [P3 contract](p3-results-progress-contract.md). Hosted behavior is not claimed.
+
+## P4 implementation update — 2026-10-08
+
+P4 adds evidence-gated concept remediation, question-first targeted practice and
+challenge, explicit single-concept fallback wording, and one-concept-per-question
+challenge attribution. Preparation reuses P2 jobs and validators with purpose/target
+scoped keys; the additive migration is `d3f4a8c1e620`. P1 fixed assessments and P3
+results/Continue remain authoritative. Numeric defaults, migration, API, verification,
+and limits are recorded in [P4 contract](p4-adaptive-activities-contract.md). Hosted
+behavior is not verified.

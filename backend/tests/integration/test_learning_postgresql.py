@@ -276,6 +276,111 @@ def _load_preparation_migration():
     return migration
 
 
+def _load_p4_preparation_migration():
+    path = Path(__file__).parents[2] / "alembic/versions/d3f4a8c1e620_p4_activity_preparation.py"
+    spec = importlib.util.spec_from_file_location("p4_preparation_migration_postgres", path)
+    migration = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(migration)
+    return migration
+
+
+def test_p4_preparation_migration_backfills_and_guards_question_only_downgrade(postgres_schema_engine):
+    metadata = MetaData()
+    learning_activities = Table(
+        "learning_activities",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("activity_type", sa.String(32), nullable=False),
+        Column("target_concept_ids", sa.JSON, nullable=False),
+    )
+    lesson_concepts = Table(
+        "lesson_concepts",
+        metadata,
+        Column("lesson_id", Uuid, nullable=False),
+        Column("concept_id", Uuid, nullable=False),
+    )
+    artifacts = Table(
+        "lesson_content_artifacts",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("lesson_id", Uuid, nullable=False),
+    )
+    preparations = Table(
+        "activity_preparations",
+        metadata,
+        Column("id", Uuid, primary_key=True),
+        Column("activity_id", Uuid),
+        Column("lesson_id", Uuid, nullable=False),
+    )
+    metadata.create_all(postgres_schema_engine)
+    migration = _load_p4_preparation_migration()
+    lesson_id, concept_id, activity_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    prep_id, artifact_id = uuid.uuid4(), uuid.uuid4()
+    with postgres_schema_engine.begin() as connection:
+        connection.execute(
+            learning_activities.insert().values(
+                id=activity_id,
+                activity_type="NEW_LESSON",
+                target_concept_ids=[str(concept_id)],
+            )
+        )
+        connection.execute(lesson_concepts.insert().values(lesson_id=lesson_id, concept_id=concept_id))
+        connection.execute(artifacts.insert().values(id=artifact_id, lesson_id=lesson_id))
+        connection.execute(
+            preparations.insert().values(id=prep_id, activity_id=activity_id, lesson_id=lesson_id)
+        )
+        context = MigrationContext.configure(connection)
+        with Operations.context(context):
+            migration.upgrade()
+
+        prepared = connection.execute(
+            sa.text("SELECT activity_purpose, target_concept_ids FROM activity_preparations WHERE id=:id"),
+            {"id": prep_id},
+        ).one()
+        content = connection.execute(
+            sa.text("SELECT activity_purpose, target_concept_ids FROM lesson_content_artifacts WHERE id=:id"),
+            {"id": artifact_id},
+        ).one()
+        assert prepared.activity_purpose == "NEW_LESSON"
+        assert prepared.target_concept_ids == [str(concept_id)]
+        assert content.activity_purpose == "NEW_LESSON"
+        assert content.target_concept_ids == [str(concept_id)]
+
+        question_only_activity_id, question_only_prep_id, question_only_artifact_id = (
+            uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        )
+        connection.execute(
+            learning_activities.insert().values(
+                id=question_only_activity_id,
+                activity_type="TARGETED_PRACTICE",
+                target_concept_ids=[str(concept_id)],
+            )
+        )
+        connection.execute(
+            preparations.insert().values(
+                id=question_only_prep_id,
+                activity_id=question_only_activity_id,
+                lesson_id=None,
+            )
+        )
+        connection.execute(artifacts.insert().values(id=question_only_artifact_id, lesson_id=None))
+        with Operations.context(context), pytest.raises(RuntimeError, match="Cannot restore"):
+            migration.downgrade()
+
+        connection.execute(preparations.delete().where(preparations.c.id == question_only_prep_id))
+        connection.execute(artifacts.delete().where(artifacts.c.id == question_only_artifact_id))
+        with Operations.context(context):
+            migration.downgrade()
+        assert "activity_purpose" not in {
+            column["name"] for column in inspect(connection).get_columns("activity_preparations")
+        }
+        assert not next(
+            column for column in inspect(connection).get_columns("activity_preparations")
+            if column["name"] == "lesson_id"
+        )["nullable"]
+
+
 def test_preparation_migration_upgrades_and_downgrades_a_postgresql_schema(postgres_schema_engine):
     metadata = MetaData()
     Table("users", metadata, Column("id", Integer, primary_key=True))

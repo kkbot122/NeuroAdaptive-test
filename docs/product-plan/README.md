@@ -1,6 +1,6 @@
 # NeuroLearn product plan
 
-Status: agreed product direction. P0 repository configuration and P1–P3 learning
+Status: agreed product direction. P0 repository configuration and P1–P4 learning
 contracts are implemented locally; hosted deployment and runtime pass conditions have
 not been demonstrated. Date: 2026-10-08.
 
@@ -14,6 +14,7 @@ not been demonstrated. Date: 2026-10-08.
 | [p1-lifecycle-contract.md](p1-lifecycle-contract.md) | What durable P1 states, API payloads, and P2 seams are implemented? |
 | [p2-grounded-preparation-contract.md](p2-grounded-preparation-contract.md) | How are first-activity content and lesson MCQs prepared, validated, and reused? |
 | [p3-results-progress-contract.md](p3-results-progress-contract.md) | How do submitted results, concept evidence, and the next activity connect? |
+| [p4-adaptive-activities-contract.md](p4-adaptive-activities-contract.md) | How do remediation, targeted practice, and challenge use saved recommendations? |
 | [implementation-gap.md](implementation-gap.md) | What can we reuse, and what is missing? |
 | [build-plan.md](build-plan.md) | What should we implement first, and how do we demonstrate it? |
 
@@ -105,7 +106,7 @@ Demo both a real prepared course and a fresh upload through the production path.
 | Decision | Must be settled before |
 | --- | --- |
 | Completion criteria and decay policy | P9 completion/retention policy |
-| Short-answer rubric and review policy; calibrated mastery/selection rules | P3–P5 policy acceptance |
+| Short-answer rubric and review policy; calibration of mastery/selection rules | P5 policy acceptance / later calibration |
 | Reliable cross-course concept matching and evidence reuse | Linked-course integration |
 | Missing-prerequisite detection and supporting evidence for warnings | Prerequisite-warning release |
 | Reviewer access, review operations, retention, and correction propagation | Report-grading-issue release |
@@ -117,14 +118,16 @@ Demo both a real prepared course and a fresh upload through the production path.
 P2 defaults are approved for implementation, but unvalidated. P3 also approves the
 existing uncalibrated mastery-label cutoffs and the versioned evidence-strength display
 boundary; details are in the P3 contract. These do not change mastery formulas, decay,
-or recommendation scoring. Other numeric defaults are unvalidated; future tunable
-numbers need named, versioned, configurable policies.
+or recommendation scoring. P4 approves five MCQs for each remediation, practice, and
+challenge set, with the P2 cap of eight; these named, versioned, configurable defaults
+are unvalidated and recorded in the P4 contract. Other numeric defaults are unvalidated;
+future tunable numbers need named, versioned, configurable policies.
 
 ## Scope and authority
 
 This folder records approved product/architecture decisions and implementation evidence;
 it is not a deployment claim. Operational rules for migrations, contracts, ownership,
-and honest reporting still apply. P1–P3 status/checks are recorded in their contracts
+and honest reporting still apply. P1–P4 status/checks are recorded in their contracts
 and [implementation-gap.md](implementation-gap.md).
 
 Explicit scope revisions: linked-course grounding/evidence, visible factual selection

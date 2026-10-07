@@ -36,6 +36,7 @@ class LearningActivityOut(BaseModel):
     reason: Optional[str]
     status: str
     presentation_format: str
+    question_count: int = Field(ge=0)
     reading_position: int
     reading_completed_at: Optional[datetime]
     assessment_session_id: Optional[UUID] = None
@@ -58,7 +59,7 @@ class PreparedLessonSectionsOut(BaseModel):
 class PreparedLessonContentOut(BaseModel):
     artifact_id: UUID
     course_version_id: UUID
-    lesson_id: UUID
+    lesson_id: Optional[UUID] = None
     presentation_format: PresentationFormat
     sections: PreparedLessonSectionsOut
     source_chunk_ids: list[UUID]

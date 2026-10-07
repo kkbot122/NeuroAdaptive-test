@@ -127,10 +127,12 @@ Starlette `BlockingPortal` deprecation warning.
 ## Limits and P3 handoff
 
 P2 grounds only in the current course; explicitly linked earlier courses remain P8.
-There is no short-answer grading/review worker, complete P4 activity set, new mastery or
-recommendation policy, full UI redesign, live-provider validation, or hosted worker
-verification. Question-generation failure preserves saved content and leaves assessment
-unavailable/recoverable; it creates no question set or mastery evidence.
+At the P2 baseline, the distinct P4 activity set was not implemented. P4 now extends the
+preparation seam; see the [P4 contract](p4-adaptive-activities-contract.md). There is
+still no short-answer grading/review worker, full UI redesign, live-provider validation,
+or hosted worker verification. Question-generation failure preserves saved content and
+leaves assessment unavailable/recoverable; it creates no question set or mastery
+evidence.
 
 P3 relies on P1 activity/session/answer/evidence lifecycle, P2 durable preparation
 stages and validated saved lesson artifacts, activity-bound immutable question IDs/
