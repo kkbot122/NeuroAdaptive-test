@@ -23,6 +23,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.modules.courses.models import Course
 from app.modules.courses.service import CourseNotFound, CourseService
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
@@ -40,6 +41,10 @@ class ChunkDetail:
     heading_path: Optional[str]
     page_start: Optional[int]
     page_end: Optional[int]
+    source_course_id: UUID
+    source_course_title: str
+    source_version_id: Optional[UUID]
+    is_linked_source: bool
 
 
 @dataclass
@@ -55,6 +60,10 @@ class RetrievedChunk:
     char_end: Optional[int]
     score: float
     source: str  # "vector" | "lexical" | "both"
+    source_course_id: UUID
+    source_course_title: str
+    source_version_id: Optional[UUID]
+    is_linked_source: bool
 
 
 class RetrievalNotAuthorized(Exception):
@@ -72,17 +81,21 @@ class RetrievalService:
         self, course_id: UUID, owner_id: int, query: str, limit: int = 10
     ) -> List[RetrievedChunk]:
         try:
-            self.courses.get_owned(course_id, owner_id)
+            current = self.courses.get_owned(course_id, owner_id)
         except CourseNotFound:
             raise RetrievalNotAuthorized(str(course_id))
+
+        allowed_courses = self._authorized_course_scope(current, owner_id)
+        course_ids = list(allowed_courses)
 
         vector_hits: dict = {}
         try:
             query_vector = self.embeddings.embed_texts([query])[0]
-            for point in self.vectors.search(
-                CHUNKS_COLLECTION, query_vector, owner_id, str(course_id), limit=limit
-            ):
-                vector_hits[str(point.id)] = point.score
+            for scoped_course_id in course_ids:
+                for point in self.vectors.search(
+                    CHUNKS_COLLECTION, query_vector, owner_id, str(scoped_course_id), limit=limit
+                ):
+                    vector_hits[str(point.id)] = point.score
         except (EmbeddingError, VectorStoreError):
             # A retrieval-quality degradation, not an authorization or
             # correctness failure: lexical search still runs. Nothing here
@@ -90,8 +103,9 @@ class RetrievalService:
             vector_hits = {}
 
         lexical_hits: dict = {}
-        for chunk, score in search_lexical(self.db, owner_id, course_id, query, limit=limit):
-            lexical_hits[str(chunk.id)] = score
+        for scoped_course_id in course_ids:
+            for chunk, score in search_lexical(self.db, owner_id, scoped_course_id, query, limit=limit):
+                lexical_hits[str(chunk.id)] = score
 
         all_ids = list(vector_hits.keys())
         for chunk_id in lexical_hits:
@@ -108,18 +122,28 @@ class RetrievalService:
         from uuid import UUID as _UUID
 
         chunk_uuids = [_UUID(cid) if not isinstance(cid, _UUID) else cid for cid in all_ids]
-        chunks_by_id = {
-            str(c.id): c
-            for c in self.db.query(Chunk)
-            .filter(Chunk.id.in_(chunk_uuids), Chunk.owner_id == owner_id, Chunk.course_id == course_id)
-            .all()
-        }
+        hydrated = (
+            self.db.query(Chunk, Document.filename, Course.title)
+            .join(Document, Document.id == Chunk.document_id)
+            .join(Course, Course.id == Chunk.course_id)
+            .filter(
+                Chunk.id.in_(chunk_uuids), Chunk.owner_id == owner_id,
+                Chunk.course_id.in_(course_ids), Document.owner_id == owner_id,
+                Document.course_id.in_(course_ids), Course.owner_id == owner_id,
+            ).all()
+        )
+        chunks_by_id = {str(chunk.id): (chunk, filename, title) for chunk, filename, title in hydrated}
 
         results = []
         for chunk_id in all_ids:
-            chunk = chunks_by_id.get(chunk_id)
-            if chunk is None:
+            hydrated_row = chunks_by_id.get(chunk_id)
+            if hydrated_row is None:
                 continue  # id came back from a store but the row is gone/not ours
+            chunk, _filename, title = hydrated_row
+            source_course_id = chunk.course_id
+            source_metadata = allowed_courses.get(source_course_id)
+            if source_metadata is None:
+                continue
 
             in_vector = chunk_id in vector_hits
             in_lexical = chunk_id in lexical_hits
@@ -139,6 +163,10 @@ class RetrievalService:
                     char_end=chunk.char_end,
                     score=score,
                     source=source,
+                    source_course_id=source_course_id,
+                    source_course_title=title,
+                    source_version_id=source_metadata[0],
+                    is_linked_source=source_metadata[1],
                 )
             )
 
@@ -153,20 +181,66 @@ class RetrievalService:
         chunk that does not exist, both raise RetrievalNotAuthorized.
         """
         try:
-            self.courses.get_owned(course_id, owner_id)
+            current = self.courses.get_owned(course_id, owner_id)
         except CourseNotFound:
             raise RetrievalNotAuthorized(str(course_id))
 
+        allowed_courses = self._authorized_course_scope(current, owner_id)
+        allowed_ids = list(allowed_courses)
+
         row = (
-            self.db.query(Chunk, Document.filename)
+            self.db.query(Chunk, Document.filename, Course.title)
             .join(Document, Chunk.document_id == Document.id)
-            .filter(Chunk.id == chunk_id, Chunk.course_id == course_id, Chunk.owner_id == owner_id)
+            .join(Course, Course.id == Chunk.course_id)
+            .filter(
+                Chunk.id == chunk_id,
+                Chunk.course_id.in_(allowed_ids),
+                Chunk.owner_id == owner_id,
+                Document.owner_id == owner_id,
+                Document.course_id.in_(allowed_ids),
+                Course.owner_id == owner_id,
+            )
             .first()
         )
         if row is None:
             raise RetrievalNotAuthorized(str(chunk_id))
-        chunk, filename = row
+        chunk, filename, course_title = row
+        source_version_id, linked_source = allowed_courses[chunk.course_id]
         return ChunkDetail(
             id=chunk.id, document_id=chunk.document_id, filename=filename, text=chunk.text,
             heading_path=chunk.heading_path, page_start=chunk.page_start, page_end=chunk.page_end,
+            source_course_id=chunk.course_id, source_course_title=course_title,
+            source_version_id=source_version_id, is_linked_source=linked_source,
         )
+
+    def _authorized_course_scope(self, current, owner_id: int) -> dict[UUID, tuple[UUID | None, bool]]:
+        """Return current plus the one exact, direct published link, if valid."""
+        from app.modules.curriculum.models import CourseVersion
+
+        current_version = None
+        if current.active_version_id is not None:
+            current_version = self.db.query(CourseVersion.id).filter_by(
+                id=current.active_version_id, course_id=current.id, owner_id=owner_id, status="READY"
+            ).scalar()
+        allowed: dict[UUID, tuple[UUID | None, bool]] = {
+            current.id: (current_version, False),
+        }
+        if (
+            current.status != "PUBLISHED" or current.link_revoked_at is not None
+            or current.linked_course_id is None or current.linked_version_id is None
+        ):
+            return allowed
+        linked_is_valid = self.db.query(CourseVersion.id).filter(
+            CourseVersion.id == current.linked_version_id,
+            CourseVersion.course_id == current.linked_course_id,
+            CourseVersion.owner_id == owner_id,
+            CourseVersion.status == "READY",
+            self.db.query(Course.id).filter(
+                Course.id == current.linked_course_id,
+                Course.owner_id == owner_id,
+                Course.status == "PUBLISHED",
+            ).exists(),
+        ).scalar()
+        if linked_is_valid is not None:
+            allowed[current.linked_course_id] = (current.linked_version_id, True)
+        return allowed

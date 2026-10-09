@@ -126,11 +126,29 @@ limitation. The general exit policy for an assessment that stays unavailable rem
   and rebuilds affected artifacts. Replaced or invalid artifacts cannot be published.
 - Source absence and knowledge absence are different. Missing explanations warn without
   blocking publication; detection must have support rather than invent a prerequisite.
-- Subject grouping is optional. Explicit links permit earlier owned courses; grouping
-  alone grants no reuse. Retrieval/evidence queries enforce links and ownership.
-  Matching and attribution details remain open.
-- Match concepts by meaning/scope, not names alone. Do not copy/merge mastery blindly;
-  preserve origins and avoid double-counting. Uncertain matches offer optional checks.
+- Subject grouping is optional and owner-scoped. Grouping alone grants no source or
+  evidence access. P8 permits one directional link to an earlier owned course's exact
+  published `READY` version; a later active version does not retarget it, and it does
+  not traverse that course's own links.
+- A reliable cross-course concept match uses both definitions and source passages to
+  establish the same meaning and learning scope. Names/embeddings only suggest candidates;
+  P8 adds no numeric match cutoff. Uncertain matches can offer an optional source-grounded
+  check; unsupported matches do not authorize reuse.
+- Reliable linked evidence remains attached to its original events and corrections. It
+  informs prerequisite readiness only while the corresponding current-course concept has
+  no current-course graded evidence. Current evidence takes precedence. Deduplicate by
+  original event ID; never clone attempts/events or count earlier reading as current
+  coverage. Current-course mastery remains separate; existing mastery/recommendation
+  formulas and weights do not change.
+- Optional P8 checks use the fixed assessment lifecycle and assess the current-course
+  concept from authorized current/linked passages. A graded answer creates current-course
+  evidence; skipping creates no attempt or negative evidence. Without usable source
+  support, explain the limitation and let the learner proceed. Submission gating applies.
+- Links can change before publication and freeze at publication. Unlinking invalidates
+  mappings and unstarted dependent artifacts. Deleting an earlier course revokes future
+  access and invalidates unstarted artifacts; started fixed sets remain playable, with
+  an unavailable-source notice where the deleted passage was cited. See the
+  [P8 contract](p8-linked-courses-contract.md).
 - Unsupported teaching/questions fail honestly. Repeated remediation changes supported
   explanation/questions; never fabricate missing material. Preparation keys include
   purpose and target concepts, so unlike activities cannot share incompatible artifacts.

@@ -157,6 +157,7 @@ class MasteryService:
             is_diagnostic=old.is_diagnostic,
             version=old.version + 1,
             supersedes_question_id=old.id,
+            source_revoked_at=old.source_revoked_at,
             # Regenerated now, by whichever gateway is current -- not
             # copied from the row being superseded.
             model_id=self.generation.model_name,
@@ -299,7 +300,11 @@ class MasteryService:
     ) -> QuestionAttempt:
         question = (
             self.db.query(Question)
-            .filter(Question.id == question_id, Question.owner_id == owner_id)
+            .filter(
+                Question.id == question_id,
+                Question.owner_id == owner_id,
+                Question.source_revoked_at.is_(None),
+            )
             .first()
         )
         if question is None:

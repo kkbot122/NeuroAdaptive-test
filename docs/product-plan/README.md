@@ -2,7 +2,9 @@
 
 Status: agreed product direction. P0 repository configuration and P1–P7 learning,
 source, settings, and privacy contracts are implemented locally; hosted deployment and
-runtime pass conditions have not been demonstrated. Date: 2026-10-09.
+runtime pass conditions have not been demonstrated. P8 policy was approved on
+2026-10-10; implementation is complete locally, with its additive migration not yet
+applied to the running local app database. Date: 2026-10-10.
 
 ## Read in this order
 
@@ -17,6 +19,7 @@ runtime pass conditions have not been demonstrated. Date: 2026-10-09.
 | [p4-adaptive-activities-contract.md](p4-adaptive-activities-contract.md) | How do remediation, targeted practice, and challenge use saved recommendations? |
 | [p5-short-answer-review-contract.md](p5-short-answer-review-contract.md) | How are grounded short answers graded, recovered, reported, and corrected? |
 | [p7-sources-settings-contract.md](p7-sources-settings-contract.md) | How do pre-publication source changes, presentation preferences, tracking consent, and deletion recovery work? |
+| [p8-linked-courses-contract.md](p8-linked-courses-contract.md) | How do optional subjects, explicit course links, concept matches, and evidence reuse work? |
 | [implementation-gap.md](implementation-gap.md) | What can we reuse, and what is missing? |
 | [build-plan.md](build-plan.md) | What should we implement first, and how do we demonstrate it? |
 
@@ -109,8 +112,6 @@ Demo both a real prepared course and a fresh upload through the production path.
 | --- | --- |
 | Completion criteria and decay policy | P9 completion/retention policy |
 | Calibration of mastery/selection rules | Later learner evaluation; existing rules remain unchanged |
-| Reliable cross-course concept matching and evidence reuse | Linked-course integration |
-| Missing-prerequisite detection and supporting evidence for warnings | Prerequisite-warning release |
 | What ends an activity whose assessment stays unavailable | Full recovery acceptance |
 | Hosted worker capacity, cross-process concurrency, and operational AI limits | Hosted worker acceptance |
 | Provider eligibility, region/network configuration, and storage credentials | Hosted verification |
@@ -136,5 +137,7 @@ Explicit scope revisions: linked-course grounding/evidence, visible factual sele
 reasons, replacement before publication, support checks for all factual claims, and
 authorized grading review. Railway Redis replaces Upstash. These revisions supersede
 earlier product descriptions where they conflict and are captured in the P1–P5 contracts.
-Evidence decay/completion interaction remains open. Prerequisite remediation is
-app-selected work, not a publication block for missing source coverage.
+P8's approved link, match, evidence, optional-check, and deletion policies are recorded in
+[p8-linked-courses-contract.md](p8-linked-courses-contract.md). Evidence
+decay/completion interaction remains open. Prerequisite remediation is app-selected work,
+not a publication block for missing source coverage.

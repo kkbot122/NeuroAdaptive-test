@@ -35,6 +35,7 @@ function sourceError(category?: string | null): string {
 }
 
 function labelFor(activity: Activity, names: string[]): string {
+  if (activity.is_optional_linked_check) return `Optional prerequisite check: ${names[0] || "possible earlier knowledge"}`;
   if (activity.activity_type === REMEDIATION) return `Review ${names[0] || "this concept"}`;
   if (activity.activity_type === "TARGETED_PRACTICE") return `Practice ${names[0] || "this concept"}`;
   if (names.length > 1) return `Apply ${names.join(" and ")}`;
@@ -80,7 +81,8 @@ export default function AdaptiveActivityPage() {
   const restoredActivityRef = useRef<string | null>(null);
 
   const isRemediation = activity?.activity_type === REMEDIATION;
-  const isQuestionFirst = activity?.activity_type === "TARGETED_PRACTICE" || activity?.activity_type === "CHALLENGE";
+  const isOptionalLinkedCheck = activity?.is_optional_linked_check ?? false;
+  const isQuestionFirst = isOptionalLinkedCheck || activity?.activity_type === "TARGETED_PRACTICE" || activity?.activity_type === "CHALLENGE";
   const names = useMemo(() => activity?.target_concept_ids.map((id) => conceptNames[id] || "Selected concept") || [], [activity, conceptNames]);
   const heading = activity ? labelFor(activity, names) : "Learning activity";
   const displayedContent = isRemediation ? visibleWorkspaceContent(contentState, identity, format) as Content | null : null;
@@ -276,13 +278,29 @@ export default function AdaptiveActivityPage() {
     }
   };
 
+  const skipOptionalCheck = async () => {
+    if (!isOptionalLinkedCheck || starting) return;
+    setStarting(true);
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/skip-optional-check`, { method: "POST" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail || "This optional check could not be skipped.");
+      router.push(`/courses/${courseId}/learn`);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "This optional check could not be skipped.");
+    } finally {
+      setStarting(false);
+    }
+  };
+
   if (isLoading && !activity) return <main className="nl-screen grid place-items-center p-6"><p className="flex items-center gap-3" role="status"><LoaderCircle className="size-5 animate-spin" />Loading your saved activity…</p></main>;
   if (!activity || pageError || activity.experience_availability === "UNAVAILABLE") return <main className="nl-screen grid place-items-center px-5 py-14 text-center"><section className="nl-card nl-card-raised w-full max-w-2xl"><p className="nl-kicker">Saved learning activity</p><h1 className="text-2xl font-bold">This activity is unavailable right now</h1><p className="mt-3 text-zinc-700">{pageError || activity?.unavailable_reason || "Your saved activity could not be loaded."}</p><div className="nl-row mt-6 justify-center"><Link href={`/courses/${courseId}/learn`} className="nl-button nl-button-primary">Course overview</Link><Link href="/dashboard" className="nl-button">Dashboard</Link></div></section></main>;
 
   const sourceIds = displayedContent?.source_chunk_ids || [];
 
   return <div className="nl-screen">
-    <nav className="nl-topbar" aria-label="Activity navigation"><Link href={`/courses/${courseId}/learn`} className="nl-button"><ArrowLeft className="size-4" /><span className="hidden sm:inline">Back to course</span></Link><div className="nl-crumb"><small>{isRemediation ? "Concept review" : activity.activity_type === "TARGETED_PRACTICE" ? "Targeted practice" : "Challenge"}</small><strong>{heading}</strong></div><span className="nl-spacer" /><span className={`nl-chip ${saved ? "nl-chip-mint" : "nl-chip-yellow"}`}>{saved ? "Progress saved" : "Saving progress…"}</span></nav>
+    <nav className="nl-topbar" aria-label="Activity navigation"><Link href={`/courses/${courseId}/learn`} className="nl-button"><ArrowLeft className="size-4" /><span className="hidden sm:inline">Back to course</span></Link><div className="nl-crumb"><small>{isOptionalLinkedCheck ? "Optional prerequisite check" : isRemediation ? "Concept review" : activity.activity_type === "TARGETED_PRACTICE" ? "Targeted practice" : "Challenge"}</small><strong>{heading}</strong></div><span className="nl-spacer" /><span className={`nl-chip ${saved ? "nl-chip-mint" : "nl-chip-yellow"}`}>{saved ? "Progress saved" : "Saving progress…"}</span></nav>
     <main className="nl-shell nl-grid">
       <article className="nl-stack min-w-0">
         <header className="nl-card nl-card-accent">
@@ -296,7 +314,7 @@ export default function AdaptiveActivityPage() {
           <h2 className="text-xl font-bold">Why this was selected</h2>
           <p className="mt-2 leading-relaxed">{activity.reason || "This activity was selected from your saved course evidence."}</p>
           <p className="mt-3 font-bold">{activity.question_count} fixed questions · question types are shown in the saved assessment</p>
-          {isQuestionFirst && <p className="mt-2 text-sm text-zinc-700">You can start questions directly. No lesson or reading completion is required.</p>}
+          {isQuestionFirst && <p className="mt-2 text-sm text-zinc-700">{isOptionalLinkedCheck ? "The check uses supported passages from both courses. Skipping it records no answer or negative evidence." : "You can start questions directly. No lesson or reading completion is required."}</p>}
         </section>
 
         {isRemediation && <section className="nl-card" aria-label="Saved focused explanation" aria-live="polite">
@@ -312,11 +330,14 @@ export default function AdaptiveActivityPage() {
         {actionError && <p role="alert" className="border-2 border-red-800 bg-red-50 p-3 text-red-900">{actionError}</p>}
 
         <footer className="nl-card flex flex-wrap items-center justify-between gap-4">
-          <p className="max-w-xl text-sm text-zinc-700">{isRemediation ? "Reading completion records coverage only. It does not count as understanding." : "Question-first activities do not require a reading step."}</p>
-          <button type="button" onClick={() => void startQuestions()} disabled={!questionsReady || starting || (Boolean(isRemediation) && (!displayedContent || !warmupReady))} className="nl-button nl-button-primary nl-button-large">
-            {starting || (isPreparing && questionsReady) ? <LoaderCircle className="size-5 animate-spin" /> : null}
-            {isRemediation ? "Ready for questions" : activity.activity_type === "TARGETED_PRACTICE" ? "Start questions" : "Start challenge"} · {activity.question_count}<ArrowRight className="size-5" />
-          </button>
+          <p className="max-w-xl text-sm text-zinc-700">{isRemediation ? "Reading completion records coverage only. It does not count as understanding." : isOptionalLinkedCheck ? "This check is optional. Skipping it leaves your evidence unchanged." : "Question-first activities do not require a reading step."}</p>
+          <div className="flex flex-wrap gap-3">
+            {isOptionalLinkedCheck && <button type="button" onClick={() => void skipOptionalCheck()} disabled={starting} className="nl-button">Skip optional check</button>}
+            <button type="button" onClick={() => void startQuestions()} disabled={!questionsReady || starting || (Boolean(isRemediation) && (!displayedContent || !warmupReady))} className="nl-button nl-button-primary nl-button-large">
+              {starting || (isPreparing && questionsReady) ? <LoaderCircle className="size-5 animate-spin" /> : null}
+              {isOptionalLinkedCheck ? "Start optional check" : isRemediation ? "Ready for questions" : activity.activity_type === "TARGETED_PRACTICE" ? "Start questions" : "Start challenge"} · {activity.question_count}<ArrowRight className="size-5" />
+            </button>
+          </div>
         </footer>
       </article>
 

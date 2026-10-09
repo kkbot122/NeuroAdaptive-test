@@ -773,6 +773,22 @@
             ],
             "title": "Lesson Id"
           },
+          "linked_source_course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Source Course Title"
+          },
+          "linked_sources_unavailable": {
+            "default": false,
+            "title": "Linked Sources Unavailable",
+            "type": "boolean"
+          },
           "questions": {
             "items": {
               "$ref": "#/components/schemas/AssessmentQuestionOut"
@@ -1028,6 +1044,11 @@
             ],
             "title": "Heading Path"
           },
+          "is_linked_source": {
+            "default": false,
+            "title": "Is Linked Source",
+            "type": "boolean"
+          },
           "page_end": {
             "anyOf": [
               {
@@ -1050,6 +1071,27 @@
             ],
             "title": "Page Start"
           },
+          "source_course_id": {
+            "format": "uuid",
+            "title": "Source Course Id",
+            "type": "string"
+          },
+          "source_course_title": {
+            "title": "Source Course Title",
+            "type": "string"
+          },
+          "source_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Version Id"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -1062,7 +1104,9 @@
           "text",
           "heading_path",
           "page_start",
-          "page_end"
+          "page_end",
+          "source_course_id",
+          "source_course_title"
         ],
         "title": "ChunkDetail",
         "type": "object"
@@ -1201,6 +1245,18 @@
       },
       "CourseCreate": {
         "properties": {
+          "builds_on_course_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Builds On Course Id"
+          },
           "goal": {
             "anyOf": [
               {
@@ -1212,6 +1268,19 @@
               }
             ],
             "title": "Goal"
+          },
+          "new_subject_name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Subject Name"
           },
           "starting_confidence": {
             "anyOf": [
@@ -1225,6 +1294,18 @@
               }
             ],
             "title": "Starting Confidence"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
           },
           "title": {
             "maxLength": 200,
@@ -1253,6 +1334,45 @@
             ],
             "title": "Active Version Id"
           },
+          "builds_on_course_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Builds On Course Id"
+          },
+          "builds_on_course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Builds On Course Title"
+          },
+          "builds_on_sources_available": {
+            "default": false,
+            "title": "Builds On Sources Available",
+            "type": "boolean"
+          },
+          "builds_on_version_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Builds On Version Number"
+          },
           "created_at": {
             "anyOf": [
               {
@@ -1264,6 +1384,11 @@
               }
             ],
             "title": "Created At"
+          },
+          "eligible_as_earlier_course": {
+            "default": false,
+            "title": "Eligible As Earlier Course",
+            "type": "boolean"
           },
           "goal": {
             "anyOf": [
@@ -1303,6 +1428,16 @@
             ],
             "title": "Latest Review Version Id"
           },
+          "link_revision": {
+            "default": 0,
+            "title": "Link Revision",
+            "type": "integer"
+          },
+          "reliable_linked_match_count": {
+            "default": 0,
+            "title": "Reliable Linked Match Count",
+            "type": "integer"
+          },
           "source_count": {
             "default": 0,
             "title": "Source Count",
@@ -1340,9 +1475,42 @@
             "title": "Status",
             "type": "string"
           },
+          "subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "uncertain_linked_match_count": {
+            "default": 0,
+            "title": "Uncertain Linked Match Count",
+            "type": "integer"
+          },
+          "unsupported_linked_match_count": {
+            "default": 0,
+            "title": "Unsupported Linked Match Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -1357,8 +1525,54 @@
         "title": "CourseOut",
         "type": "object"
       },
+      "CourseSubjectCreate": {
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CourseSubjectCreate",
+        "type": "object"
+      },
+      "CourseSubjectOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "CourseSubjectOut",
+        "type": "object"
+      },
       "CourseUpdate": {
         "properties": {
+          "builds_on_course_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Builds On Course Id"
+          },
           "goal": {
             "anyOf": [
               {
@@ -1383,6 +1597,18 @@
               }
             ],
             "title": "Starting Confidence"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
           },
           "title": {
             "anyOf": [
@@ -2043,6 +2269,22 @@
             "title": "Latest Effective Criteria Met",
             "type": "array"
           },
+          "linked_source_course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Source Course Title"
+          },
+          "linked_sources_unavailable": {
+            "default": false,
+            "title": "Linked Sources Unavailable",
+            "type": "boolean"
+          },
           "original_criteria_met": {
             "items": {
               "type": "boolean"
@@ -2192,6 +2434,10 @@
             "title": "Chunk Id",
             "type": "string"
           },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
           "heading_path": {
             "anyOf": [
               {
@@ -2203,6 +2449,37 @@
             ],
             "title": "Heading Path"
           },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          },
+          "source_course_id": {
+            "format": "uuid",
+            "title": "Source Course Id",
+            "type": "string"
+          },
+          "source_course_title": {
+            "title": "Source Course Title",
+            "type": "string"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -2210,6 +2487,11 @@
         },
         "required": [
           "chunk_id",
+          "source_course_id",
+          "source_course_title",
+          "filename",
+          "page_start",
+          "page_end",
           "heading_path",
           "text"
         ],
@@ -2442,6 +2724,11 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "is_optional_linked_check": {
+            "default": false,
+            "title": "Is Optional Linked Check",
+            "type": "boolean"
           },
           "lesson_id": {
             "anyOf": [
@@ -2774,6 +3061,52 @@
           "title"
         ],
         "title": "LessonRename",
+        "type": "object"
+      },
+      "LinkedConceptMatchOut": {
+        "properties": {
+          "current_concept_id": {
+            "format": "uuid",
+            "title": "Current Concept Id",
+            "type": "string"
+          },
+          "current_concept_name": {
+            "title": "Current Concept Name",
+            "type": "string"
+          },
+          "has_source_support": {
+            "title": "Has Source Support",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "linked_concept_id": {
+            "format": "uuid",
+            "title": "Linked Concept Id",
+            "type": "string"
+          },
+          "linked_concept_name": {
+            "title": "Linked Concept Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "current_concept_id",
+          "current_concept_name",
+          "linked_concept_id",
+          "linked_concept_name",
+          "status",
+          "has_source_support"
+        ],
+        "title": "LinkedConceptMatchOut",
         "type": "object"
       },
       "MasteryReportRow": {
@@ -3666,6 +3999,11 @@
             ],
             "title": "Heading Path"
           },
+          "is_linked_source": {
+            "default": false,
+            "title": "Is Linked Source",
+            "type": "boolean"
+          },
           "page_end": {
             "anyOf": [
               {
@@ -3696,6 +4034,27 @@
             "title": "Source",
             "type": "string"
           },
+          "source_course_id": {
+            "format": "uuid",
+            "title": "Source Course Id",
+            "type": "string"
+          },
+          "source_course_title": {
+            "title": "Source Course Title",
+            "type": "string"
+          },
+          "source_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Version Id"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -3712,7 +4071,9 @@
           "char_start",
           "char_end",
           "score",
-          "source"
+          "source",
+          "source_course_id",
+          "source_course_title"
         ],
         "title": "RetrievalOut",
         "type": "object"
@@ -4977,6 +5338,120 @@
         ]
       }
     },
+    "/api/v1/courses/subjects": {
+      "get": {
+        "operationId": "list_subjects_api_v1_courses_subjects_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CourseSubjectOut"
+                  },
+                  "title": "Response List Subjects Api V1 Courses Subjects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Subjects",
+        "tags": [
+          "courses"
+        ]
+      },
+      "post": {
+        "operationId": "create_subject_api_v1_courses_subjects_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CourseSubjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseSubjectOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Subject",
+        "tags": [
+          "courses"
+        ]
+      }
+    },
     "/api/v1/courses/{course_id}": {
       "delete": {
         "operationId": "delete_course_api_v1_courses__course_id__delete",
@@ -5703,6 +6178,77 @@
           }
         },
         "summary": "Complete Reading",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/activities/{activity_id}/skip-optional-check": {
+      "post": {
+        "operationId": "skip_optional_linked_check_api_v1_courses__course_id__activities__activity_id__skip_optional_check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "activity_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Activity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningActivityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Skip Optional Linked Check",
         "tags": [
           "learning"
         ]
@@ -7375,6 +7921,142 @@
         "summary": "Get Lesson Content",
         "tags": [
           "tutor"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/linked-matches": {
+      "get": {
+        "operationId": "list_linked_matches_api_v1_courses__course_id__linked_matches_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LinkedConceptMatchOut"
+                  },
+                  "title": "Response List Linked Matches Api V1 Courses  Course Id  Linked Matches Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Linked Matches",
+        "tags": [
+          "courses"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/linked-matches/{match_id}/optional-check": {
+      "post": {
+        "operationId": "start_optional_linked_check_api_v1_courses__course_id__linked_matches__match_id__optional_check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningActivityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Optional Linked Check",
+        "tags": [
+          "learning"
         ]
       }
     },

@@ -73,6 +73,7 @@ export default function SourceViewerPage() {
           {chunk && (
             <div className="bg-white border-2 border-black rounded-xl p-8 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
               <div className="mb-6 pb-6 border-b-2 border-gray-100">
+                {chunk.is_linked_source && <p className="mb-1 text-sm font-semibold text-gray-600">Linked from {chunk.source_course_title}</p>}
                 <h1 className="text-2xl font-bold mb-2">{chunk.filename}</h1>
                 <div className="flex flex-wrap gap-2 text-sm text-gray-500 font-medium">
                   {chunk.heading_path && (

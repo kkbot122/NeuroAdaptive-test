@@ -29,6 +29,7 @@ function SourcePassage({ courseId, chunkId, onOpenSource }: {
 
   return <section className="border-2 border-black bg-[#fffbe0] p-4" aria-label="Original source passage">
     {chunk ? <>
+      {chunk.is_linked_source && <p className="mb-1 text-sm font-semibold">Linked from {chunk.source_course_title}</p>}
       <h3 className="font-bold">{chunk.filename}</h3>
       {chunk.page_start != null && <p className="text-sm">{chunk.page_start === chunk.page_end
         ? `Page ${chunk.page_start}` : `Pages ${chunk.page_start}–${chunk.page_end ?? chunk.page_start}`}</p>}

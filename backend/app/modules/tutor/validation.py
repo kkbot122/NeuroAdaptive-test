@@ -18,6 +18,8 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.modules.courses.models import Course, CourseStatus
+from app.modules.curriculum.models import CourseVersion, CourseVersionStatus
 from app.modules.documents.chunk_models import Chunk
 from app.modules.tutor.entailment import check_support
 
@@ -55,14 +57,41 @@ class ValidatedClaim:
 
 
 def tier1_validate(db: Session, claim: Claim, course_id: UUID, owner_id: int) -> bool:
-    """Every cited chunk must resolve to a real chunk in THIS owned course.
+    """Every cited chunk must resolve to the current course or its exact live link.
 
-    Fabricated or wrong-course citations fail identically, including when a
-    claim uses several passages as combined evidence.
+    The one-hop linked scope is derived from the owned current course and its
+    pinned READY version. Subject membership and other same-owner courses do
+    not grant access. Fabricated or out-of-scope citations fail identically,
+    including when a claim uses several passages as combined evidence.
     """
     source_ids = _source_ids(claim)
     if not source_ids:
         return False
+
+    current = db.query(Course).filter(Course.id == course_id, Course.owner_id == owner_id).first()
+    if current is None:
+        return False
+    allowed_course_ids = {course_id}
+    if (
+        current.linked_course_id is not None
+        and current.linked_version_id is not None
+        and current.link_revoked_at is None
+    ):
+        linked_is_authorized = db.query(CourseVersion.id).join(
+            Course,
+            Course.id == CourseVersion.course_id,
+        ).filter(
+            Course.id == current.linked_course_id,
+            Course.owner_id == owner_id,
+            Course.status == CourseStatus.PUBLISHED.value,
+            CourseVersion.id == current.linked_version_id,
+            CourseVersion.course_id == current.linked_course_id,
+            CourseVersion.owner_id == owner_id,
+            CourseVersion.status == CourseVersionStatus.READY.value,
+        ).scalar()
+        if linked_is_authorized is not None:
+            allowed_course_ids.add(current.linked_course_id)
+
     for source_id in source_ids:
         try:
             chunk_uuid = UUID(source_id)
@@ -70,7 +99,11 @@ def tier1_validate(db: Session, claim: Claim, course_id: UUID, owner_id: int) ->
             return False
         exists = (
             db.query(Chunk)
-            .filter(Chunk.id == chunk_uuid, Chunk.course_id == course_id, Chunk.owner_id == owner_id)
+            .filter(
+                Chunk.id == chunk_uuid,
+                Chunk.course_id.in_(allowed_course_ids),
+                Chunk.owner_id == owner_id,
+            )
             .first()
             is not None
         )

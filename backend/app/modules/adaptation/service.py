@@ -22,6 +22,8 @@ from app.modules.adaptation.presentation import AffinityState, apply_manual_swit
 from app.modules.adaptation.readiness import compute_readiness, is_ready
 from app.modules.adaptation.scoring import Candidate, ConceptState, LearnerStateSnapshot, recommend
 from app.modules.courses.service import CourseNotFound, CourseService
+from app.modules.courses.models import Course
+from app.modules.courses.p8_models import CrossCourseConceptMatch
 from app.modules.curriculum.models import ConceptPrerequisite, CourseVersion, EdgeStrength, Lesson, Module
 from app.modules.curriculum.service import CurriculumService
 from app.modules.learning.models import LearningActivity
@@ -76,6 +78,7 @@ class AdaptationService:
         self.courses = CourseService(db)
         self.curriculum = CurriculumService(db, generation, embeddings)
         self.mastery = MasteryService(db, generation, embeddings)
+        self._linked_readiness_sources: Dict[UUID, Set[str]] = {}
 
     def _get_owned_course(self, course_id: UUID, owner_id: int):
         try:
@@ -93,12 +96,100 @@ class AdaptationService:
             bucket.setdefault(edge.dependent_concept_id, []).append(edge.prerequisite_concept_id)
 
         raw_states = {c.id: self.mastery.get_concept_mastery(owner_id, c.id) for c in concepts}
+        linked_readiness_states = {}
+        linked_source_by_concept: Dict[UUID, str] = {}
+        self._linked_readiness_sources = {}
+        if concepts:
+            current_course_id = concepts[0].course_id
+            current_version_id = concepts[0].course_version_id
+            current_course = self.db.query(Course).filter_by(id=current_course_id, owner_id=owner_id).first()
+            if (
+                current_course is not None and current_course.linked_course_id is not None
+                and current_course.linked_version_id is not None and current_course.link_revoked_at is None
+            ):
+                linked_course = self.db.query(Course).filter_by(
+                    id=current_course.linked_course_id,
+                    owner_id=owner_id,
+                    status="PUBLISHED",
+                ).first()
+                linked_version_ready = self.db.query(CourseVersion.id).filter_by(
+                    id=current_course.linked_version_id,
+                    course_id=current_course.linked_course_id,
+                    owner_id=owner_id,
+                    status="READY",
+                ).first() is not None
+                matches = self.db.query(CrossCourseConceptMatch).filter_by(
+                    owner_id=owner_id,
+                    current_course_id=current_course.id,
+                    current_version_id=current_version_id,
+                    linked_course_id=current_course.linked_course_id,
+                    linked_version_id=current_course.linked_version_id,
+                    status="RELIABLE",
+                ).all() if linked_course is not None and linked_version_ready else []
+                local_evidence_ids = set()
+                if matches:
+                    local_evidence_ids = {
+                        row.concept_id for row in self.mastery.visible_mastery_events().filter(
+                            MasteryEvent.owner_id == owner_id,
+                            MasteryEvent.course_id == current_course.id,
+                            MasteryEvent.course_version_id == current_version_id,
+                            MasteryEvent.concept_id.in_([item.id for item in concepts]),
+                        ).all()
+                    }
+                linked_match_counts: Dict[UUID, int] = {}
+                for match in matches:
+                    linked_match_counts[match.linked_concept_id] = linked_match_counts.get(match.linked_concept_id, 0) + 1
+                # A malformed/ambiguous fan-out must never make one original
+                # evidence item count for multiple current concepts.
+                matches = [match for match in matches if linked_match_counts[match.linked_concept_id] == 1]
+                linked_ids = {row.linked_concept_id for row in matches}
+                if linked_ids:
+                    rows = self.mastery.visible_mastery_events().filter(
+                        MasteryEvent.owner_id == owner_id,
+                        MasteryEvent.course_id == current_course.linked_course_id,
+                        MasteryEvent.course_version_id == current_course.linked_version_id,
+                        MasteryEvent.concept_id.in_(linked_ids),
+                    ).all()
+                    by_linked_concept = {}
+                    seen_event_ids = set()
+                    for row in rows:
+                        if row.id in seen_event_ids:
+                            continue
+                        seen_event_ids.add(row.id)
+                        by_linked_concept.setdefault(row.concept_id, []).append(row)
+                    events_by_current = {}
+                    for match in matches:
+                        for row in by_linked_concept.get(match.linked_concept_id, []):
+                            events_by_current.setdefault(match.current_concept_id, {})[row.id] = row
+                    reference_at = datetime.now(timezone.utc)
+                    for concept_id, rows_by_id in events_by_current.items():
+                        if concept_id in local_evidence_ids or raw_states.get(concept_id) is None:
+                            continue
+                        evidence = [
+                            engine.EvidenceEvent(
+                                correctness=row.effective_correctness,
+                                evidence_weight_base=row.evidence_weight_base,
+                                created_at=self.mastery._utc(row.created_at),
+                            )
+                            for row in rows_by_id.values()
+                        ]
+                        linked_readiness_states[concept_id] = engine.compute_mastery(evidence, reference_at)
+                        linked_source_by_concept[concept_id] = linked_course.title
 
         concept_states: Dict[UUID, ConceptState] = {}
         for concept in concepts:
-            hard_masteries = [raw_states[p].mastery for p in hard_prereqs.get(concept.id, []) if p in raw_states]
-            soft_masteries = [raw_states[p].mastery for p in soft_prereqs.get(concept.id, []) if p in raw_states]
+            prerequisites = [*hard_prereqs.get(concept.id, []), *soft_prereqs.get(concept.id, [])]
+            readiness_states = {
+                prereq: linked_readiness_states.get(prereq, raw_states.get(prereq))
+                for prereq in prerequisites
+                if prereq in raw_states
+            }
+            hard_masteries = [readiness_states[p].mastery for p in hard_prereqs.get(concept.id, []) if p in readiness_states]
+            soft_masteries = [readiness_states[p].mastery for p in soft_prereqs.get(concept.id, []) if p in readiness_states]
             readiness = compute_readiness(hard_masteries, soft_masteries)
+            reused_titles = {linked_source_by_concept[p] for p in prerequisites if p in linked_source_by_concept and p in linked_readiness_states}
+            if reused_titles:
+                self._linked_readiness_sources[concept.id] = reused_titles
             state = raw_states[concept.id]
             concept_states[concept.id] = ConceptState(
                 mastery=state.mastery, uncertainty=state.uncertainty,
@@ -400,6 +491,7 @@ class AdaptationService:
 
         concept_names = {c.id: c.name for c in graph.concepts}
         reason = self._reason_text(winner.candidate, concept_names, concept_states)
+        reason = self._explain_linked_readiness(reason, winner.candidate)
 
         candidates_considered = [
             {
@@ -437,6 +529,10 @@ class AdaptationService:
                     for cid, s in concept_states.items()
                 },
                 "completed_teaching_concept_ids": sorted(str(item) for item in taught_concepts),
+                "linked_prerequisite_readiness_sources": {
+                    str(concept_id): sorted(titles)
+                    for concept_id, titles in self._linked_readiness_sources.items()
+                },
             },
         )
         self.db.add(decision)
@@ -457,7 +553,9 @@ class AdaptationService:
                 "activity_type": sc.candidate.activity_type,
                 "concept_ids": [str(cid) for cid in sc.candidate.concept_ids],
                 "lesson_id": str(sc.candidate.lesson_id) if sc.candidate.lesson_id else None,
-                "reason": self._reason_text(sc.candidate, concept_names, concept_states),
+                "reason": self._explain_linked_readiness(
+                    self._reason_text(sc.candidate, concept_names, concept_states), sc.candidate
+                ),
                 "score": sc.score,
             }
             if include_format:
@@ -469,6 +567,24 @@ class AdaptationService:
             recommended=render(winner, include_format=True),
             alternatives=[render(sc) for sc in ranked[1:]],
         )
+
+    def _explain_linked_readiness(self, reason: str, candidate: Candidate) -> str:
+        titles = sorted({
+            title
+            for concept_id in candidate.concept_ids
+            for title in self._linked_readiness_sources.get(concept_id, set())
+        })
+        if not titles:
+            return reason
+        source_list = ", ".join(titles)
+        provenance = (
+            f" Prerequisite readiness also reflects corrected submitted evidence from {source_list}; "
+            "that evidence remains attributed to the earlier course, and this course's mastery is separate."
+        )
+        max_reason_chars = max(0, 500 - len(provenance))
+        if len(reason) > max_reason_chars:
+            reason = reason[:max(0, max_reason_chars - 1)].rstrip() + "…"
+        return reason + provenance
 
     @staticmethod
     def _reason_text(

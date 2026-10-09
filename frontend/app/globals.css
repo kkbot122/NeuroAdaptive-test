@@ -389,8 +389,22 @@ a { color: inherit; }
 .nl-course-setup-small-button { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; border: var(--nl-border); background: white; padding: 5px 12px; box-shadow: 2px 2px 0 var(--nl-ink); font-size: .88rem; font-weight: 600; }
 .nl-course-setup-confidence summary { display: flex; align-items: center; gap: 12px; cursor: pointer; list-style: none; }
 .nl-course-setup-confidence summary::-webkit-details-marker { display: none; }
+.nl-course-setup-group summary { display: flex; align-items: center; gap: 12px; cursor: pointer; list-style: none; }
+.nl-course-setup-group summary::-webkit-details-marker { display: none; }
+.nl-course-setup-group summary .nl-course-setup-label { margin: 0; }
 .nl-course-setup-caret { width: 11px; height: 11px; flex: none; transform: rotate(-45deg); border-right: 3px solid var(--nl-ink); border-bottom: 3px solid var(--nl-ink); transition: transform .12s; }
 .nl-course-setup-confidence[open] .nl-course-setup-caret { transform: rotate(45deg); }
+.nl-course-setup-group[open] .nl-course-setup-caret { transform: rotate(45deg); }
+.nl-course-setup-group-inner { display: grid; gap: 8px; margin-top: 18px; }
+.nl-course-setup-group-inner .nl-course-setup-hint { margin-bottom: 6px; }
+.nl-course-setup-group-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.nl-course-setup-group-fields > div { min-width: 0; }
+.nl-course-setup-state { margin: 0 0 8px; color: var(--nl-muted); font-size: .88rem; }
+.nl-course-setup-state.is-error { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: #741d16; }
+.nl-course-setup-retry { border-bottom: 1px solid currentColor; font-weight: 700; }
+.nl-course-setup-subject-create { margin-top: 6px; }
+.nl-course-setup-subject-create input { display: block; margin-top: 6px; font-family: var(--nl-body); font-weight: 400; }
+.nl-course-setup-link-label { margin-top: 16px; }
 .nl-course-setup-confidence-inner { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(100px, 2fr) minmax(70px, 1fr); align-items: center; gap: 14px; margin-top: 18px; color: var(--nl-muted); font-size: .9rem; }
 .nl-course-setup-confidence-inner span:last-child { text-align: right; }
 .nl-course-setup-confidence-inner input { width: 100%; accent-color: var(--nl-violet); }
@@ -405,6 +419,8 @@ a { color: inherit; }
 .nl-course-setup-check.is-complete i { background: var(--nl-mint); color: var(--nl-ink); }
 .nl-course-setup-review .nl-course-setup-submit { width: 100%; }
 .nl-course-setup-review-note { margin: 14px 0 0; color: var(--nl-muted); font-size: .88rem; }
+.nl-course-overview-relationship { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; font-size: .9rem; }
+.nl-course-overview-relationship span { border: var(--nl-border); background: white; padding: 5px 9px; }
 
 @media (max-width: 960px) {
   .nl-landing-nav { gap: 24px; padding-inline: 20px; }
@@ -438,6 +454,7 @@ a { color: inherit; }
   .nl-course-setup-file { grid-template-columns: auto minmax(0, 1fr); }
   .nl-course-setup-file .nl-course-setup-chip, .nl-course-setup-file-actions { grid-column: 2; justify-self: start; }
   .nl-course-setup-block { padding: 20px; }
+  .nl-course-setup-group-fields { grid-template-columns: minmax(0, 1fr); gap: 12px; }
 }
 
 /* Course preparation and outline review follow neurolearn-processing-outline.html. */

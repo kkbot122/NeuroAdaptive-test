@@ -21,6 +21,7 @@ const [dashboard, sidebar, newCourse, uploadHelper, landing, overview, overviewP
   read("../app/(pages)/grading-reviews/page.tsx"),
   read("../app/(pages)/courses/[courseId]/workspace/page.tsx"),
 ]);
+const learningRoute = await read("../lib/learning-route.ts");
 
 test("dashboard follows the sidebar reference and only selects work after Continue", () => {
   const loadFlow = dashboard.match(/const load = useCallback\(async \(\) => \{[\s\S]*?setCourses\(cards\);/)?.[0] || "";
@@ -42,7 +43,7 @@ test("landing follows its reference sections while keeping sign-in real", () => 
   assert.doesNotMatch(landing, /data-s=|setTimeout\(/);
 });
 
-test("course setup uses the sidebar form, real source upload, and preserves recovery", () => {
+test("course setup keeps creation and recovery while offering owner-scoped optional grouping and linking", () => {
   assert.match(newCourse, /CourseSidebar/);
   assert.match(newCourse, /nl-course-setup-review/);
   assert.match(newCourse, /CourseCreate/);
@@ -51,7 +52,19 @@ test("course setup uses the sidebar form, real source upload, and preserves reco
   assert.match(uploadHelper, /documents\/upload-intents/);
   assert.match(uploadHelper, /documents\/finalize/);
   assert.match(uploadHelper, /storage-not-configured/);
-  assert.doesNotMatch(newCourse, /Build on an earlier course|Subject/);
+  assert.match(newCourse, /<details className="nl-course-setup-group">/);
+  assert.match(newCourse, /Grouping courses under a subject shares nothing/);
+  assert.match(newCourse, /fetch\("\/api\/v1\/courses\/subjects"/);
+  assert.match(newCourse, /fetch\("\/api\/v1\/courses"/);
+  assert.match(newCourse, /eligible_as_earlier_course/);
+  assert.match(newCourse, /No subject/);
+  assert.match(newCourse, /Create a subject/);
+  assert.match(newCourse, /Build on an earlier course/);
+  assert.match(newCourse, /Loading your subjects and published courses/);
+  assert.match(newCourse, /relationshipsError/);
+  assert.match(newCourse, /Try again/);
+  assert.match(newCourse, /new_subject_name: subjectChoice === "__new__"/);
+  assert.match(newCourse, /builds_on_course_id: earlierCourseId/);
 });
 
 test("uploaded courses open the saved processing and outline workspace", () => {
@@ -78,6 +91,10 @@ test("overview selection is explicit and dashboard links leave the learning flow
   assert.match(overview, /onClick=\{\(\) => void continueStudying\(\)\}/);
   assert.match(overview, /href="\/dashboard"/);
   assert.match(overview, /aria-label="Current activity"/);
+  assert.match(overview, /unsupported_linked_match_count/);
+  assert.match(overview, /No earlier evidence is reused for this match/);
+  assert.match(overview, /you can continue with this course/);
+  assert.match(overview, /Optional prerequisite check:/);
 });
 
 test("diagnostic interruption resumes its fixed session and skip stays read-only", () => {
@@ -105,9 +122,12 @@ test("lessons restore and save reading position and selected format before asses
   assert.match(study, /StudyPositionRestorer/);
 });
 
-test("only remediation uses the reading gate; practice and challenge start their fixed sets directly", () => {
-  assert.match(activity, /const isQuestionFirst = activity\?\.activity_type === "TARGETED_PRACTICE" \|\| activity\?\.activity_type === "CHALLENGE"/);
+test("only remediation uses the reading gate; optional checks, practice, and challenges start question-first", () => {
+  assert.match(activity, /const isQuestionFirst = isOptionalLinkedCheck \|\| activity\?\.activity_type === "TARGETED_PRACTICE" \|\| activity\?\.activity_type === "CHALLENGE"/);
   assert.match(activity, /if \(isRemediation && !activity\.reading_completed_at\)/);
+  assert.match(activity, /skip-optional-check/);
+  assert.match(activity, /Skipping it records no answer or negative evidence/);
+  assert.match(learningRoute, /"OPTIONAL_PREREQUISITE_CHECK"/);
   assert.match(activity, /reading_position: position, presentation_format: selectedFormat/);
   assert.match(activity, /savedActivity\.assessment_session_id/);
   assert.match(activity, /reading-complete/);

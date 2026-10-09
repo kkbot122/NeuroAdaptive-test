@@ -98,7 +98,7 @@ export function selectedActivityHref(
   if (activity.assessment_session_id) {
     return `/courses/${courseId}/assessment?type=activity&sessionId=${activity.assessment_session_id}`;
   }
-  if (["PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE"].includes(activity.activity_type)) {
+  if (["PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE", "OPTIONAL_PREREQUISITE_CHECK"].includes(activity.activity_type)) {
     return `/courses/${courseId}/activities/${activity.id}`;
   }
   if (activity.activity_type === "DIAGNOSTIC") {

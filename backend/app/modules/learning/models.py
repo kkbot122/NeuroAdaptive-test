@@ -54,6 +54,7 @@ class LearningActivity(Base):
     course_id = Column(Uuid, ForeignKey("courses.id"), nullable=False, index=True)
     course_version_id = Column(Uuid, ForeignKey("course_versions.id"), nullable=False, index=True)
     decision_id = Column(Uuid, ForeignKey("adaptation_decisions.id"), nullable=True, index=True)
+    linked_match_id = Column(Uuid, nullable=True, index=True)
 
     activity_type = Column(String(32), nullable=False)
     target_concept_ids = Column(JSON, nullable=False, default=list)

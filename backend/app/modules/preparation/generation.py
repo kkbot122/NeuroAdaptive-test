@@ -333,11 +333,12 @@ def question_set_prompt(
         if correction_requested
         else ""
     )
-    if activity_purpose in {"PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE"}:
+    if activity_purpose in {"PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE", "OPTIONAL_PREREQUISITE_CHECK"}:
         purpose_text = {
             "PREREQUISITE_REMEDIATION": "focused remediation questions that reassess the selected concept after its explanation",
             "TARGETED_PRACTICE": "targeted practice questions that start directly, without requiring a teaching step",
             "CHALLENGE": "challenge questions applying only the selected, already taught concepts in a less familiar in-course situation",
+            "OPTIONAL_PREREQUISITE_CHECK": "optional, source-grounded prerequisite questions checking the current course concept against its current and explicitly linked earlier-course passages",
         }[activity_purpose]
         question_kind = (
             "single-answer multiple-choice and short-answer assessment questions"

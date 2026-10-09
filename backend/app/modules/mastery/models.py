@@ -83,6 +83,7 @@ class Question(Base):
 
     difficulty = Column(Float, nullable=False, default=0.5)  # [0, 1], unvalidated default
     is_diagnostic = Column(Integer, nullable=False, default=0)  # bool-as-int: SQLite portability
+    source_revoked_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     version = Column(Integer, nullable=False, default=1)
     supersedes_question_id = Column(Uuid, ForeignKey("questions.id"), nullable=True)

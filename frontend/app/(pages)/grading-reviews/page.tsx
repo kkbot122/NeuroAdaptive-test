@@ -400,6 +400,7 @@ export default function GradingReviewsPage() {
       {selected.status === "CORRECTED" && (
         <p className="nl-reviewer-result"><b>Decision: correction recorded.</b> Corrected judgment: {currentRubricScore} of {selected.rubric.length} criteria, {currentCorrect ? "correct" : "not correct"}. The original judgment is kept in the history.</p>
       )}
+      {selected.linked_sources_unavailable && <p className="border-2 border-amber-800 bg-amber-50 p-4 text-sm text-amber-950" role="status">This saved review remains available, but source passages from {selected.linked_source_course_title || "the linked earlier course"} are no longer available because that course was deleted.</p>}
 
       <section className="nl-reviewer-block">
         <h3>Fixed rubric and source context</h3>
@@ -407,7 +408,7 @@ export default function GradingReviewsPage() {
           <p className="nl-reviewer-reasoning"><b>Expected reasoning:</b> {selected.expected_reasoning}</p>
           {selected.sources.length > 0 ? selected.sources.map((source) => (
             <article className="nl-reviewer-source" key={source.chunk_id}>
-              <small>Source context{source.heading_path ? ` · ${source.heading_path}` : ""}</small>
+              <small>Source context · {source.source_course_title} · {source.filename}{source.page_start != null ? ` · ${source.page_start === source.page_end ? `Page ${source.page_start}` : `Pages ${source.page_start}–${source.page_end ?? source.page_start}`}` : ""}{source.heading_path ? ` · ${source.heading_path}` : ""}</small>
               <p>{source.text}</p>
             </article>
           )) : <p className="nl-reviewer-hint">No source passages were attached to this report.</p>}

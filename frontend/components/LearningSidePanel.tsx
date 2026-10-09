@@ -363,6 +363,7 @@ export function LearningSidePanel({
             {loadingChunk && <p className="flex items-center gap-2 text-sm" role="status"><LoaderCircle className="size-4 animate-spin" />Loading the cited passage…</p>}
             {chunkError && <p className="text-sm text-red-800" role="alert">{chunkError}</p>}
             {chunk && !loadingChunk && <article>
+              {chunk.is_linked_source && <p className="mb-1 text-sm font-semibold text-zinc-700">Linked from {chunk.source_course_title}</p>}
               <h2 className="text-lg font-bold">{chunk.filename}</h2>
               {locationFor(chunk) && <p className="mt-1 text-sm font-semibold text-zinc-700">{locationFor(chunk)}</p>}
               <blockquote className="mt-4 whitespace-pre-wrap border-l-4 border-black pl-4 text-sm leading-relaxed">{chunk.text}</blockquote>

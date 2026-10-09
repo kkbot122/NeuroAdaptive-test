@@ -27,13 +27,15 @@ numeric and operational details remain open.
 | P5 | Short-answer grading and authorized review | P2–P3; approved rubric/access/retention policy | **Implemented and verified locally.** Grounded mixed assessments, durable bounded grading recovery, source-backed rubric feedback, idempotent reports, paged separately authorized review, and correction-aware evidence; see [P5 contract](p5-short-answer-review-contract.md). Not deployed. |
 | P6 | Course overview and workspace integration | P3–P5 | **Accepted existing experience.** Outline inspection cannot launch alternatives; tutor/sources open alongside teaching/results; tutor unavailable during assessment; format and position preserved |
 | P7 | Pre-publication source changes, settings, and privacy | Accepted creation/review/diagnostic/recovery flows; P1; source/deletion contracts | Replace/remove sources before publish; retain unchanged extraction; invalidate and rebuild changed-source dependencies; re-review the current outline; persist tracking/presentation settings; delete owned records with tracked storage recovery |
-| P8 | Subjects and explicitly linked earlier courses | P3; cross-course/matching policy | Unit 2 can use supported Unit 1 evidence/source links; uncertain match offers optional check; standalone path works; foreign courses inaccessible |
+| P8 | Subjects and explicitly linked earlier courses | P3; approved [P8 policy](p8-linked-courses-contract.md) | **Implemented locally; additive migration and hosted behavior remain unverified.** Unit 2 can use supported Unit 1 evidence/source links; uncertain match offers optional check; standalone path works; foreign courses inaccessible |
 | P9 | Completion, full polish, and acceptance evidence | P4–P8; completion policy | Coverage differs from mastery; sufficient evidence leads to summary and optional guided practice; no unfinished advertised action |
 
 The P1–P5 assessment, results, and review contracts are local repository checkpoints.
 The existing P6 course overview, side-panel, creation, outline review, diagnostic, and
 recovery experiences are accepted. P7 extends their source controls and adds the Settings
-page without redesigning those flows. P8–P9 remain outstanding. Include responsive,
+page without redesigning those flows. P9 remains outstanding. Apply P8's additive
+migration through the normal controlled migration process before serving the new API.
+Include responsive,
 empty, loading, and recovery states in later acceptance work.
 
 ## First milestone: P0–P3 together

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
@@ -15,6 +15,8 @@ type SourceDraft = {
   issue: string | null;
   status: "selected" | "uploading" | "uploaded" | "failed";
 };
+type Subject = components["schemas"]["CourseSubjectOut"];
+type Course = components["schemas"]["CourseOut"];
 
 const maximumSourceBytes = 25 * 1024 * 1024;
 
@@ -53,6 +55,38 @@ export default function NewCoursePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [ownedCourses, setOwnedCourses] = useState<Course[]>([]);
+  const [relationshipsLoading, setRelationshipsLoading] = useState(true);
+  const [relationshipsError, setRelationshipsError] = useState("");
+  const [subjectChoice, setSubjectChoice] = useState("");
+  const [newSubjectName, setNewSubjectName] = useState("");
+  const [earlierCourseId, setEarlierCourseId] = useState("");
+
+  const loadRelationships = useCallback(async () => {
+    setRelationshipsLoading(true);
+    setRelationshipsError("");
+    try {
+      const [subjectResponse, courseResponse] = await Promise.all([
+        fetch("/api/v1/courses/subjects", { cache: "no-store" }),
+        fetch("/api/v1/courses", { cache: "no-store" }),
+      ]);
+      if (!subjectResponse.ok || !courseResponse.ok) {
+        throw new Error("Your subjects and published courses could not be loaded.");
+      }
+      const [subjectRows, courseRows]: [Subject[], Course[]] = await Promise.all([
+        subjectResponse.json(), courseResponse.json(),
+      ]);
+      setSubjects(subjectRows);
+      setOwnedCourses(courseRows);
+    } catch (cause) {
+      setRelationshipsError(cause instanceof Error ? cause.message : "Your subjects and courses could not be loaded.");
+    } finally {
+      setRelationshipsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadRelationships(); }, [loadRelationships]);
 
   const addSources = (files: FileList | File[]) => {
     const incoming = Array.from(files).map((file): SourceDraft => ({
@@ -82,6 +116,10 @@ export default function NewCoursePage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!titleReady || hasInvalidSource || isLoading || createdCourseId) return;
+    if (subjectChoice === "__new__" && !newSubjectName.trim()) {
+      setError("Enter a name for the new subject, or choose an existing subject.");
+      return;
+    }
 
     setIsLoading(true);
     setError("");
@@ -90,6 +128,9 @@ export default function NewCoursePage() {
         title: title.trim(),
         goal: goal.trim() || null,
         starting_confidence: Number(startingConfidence),
+        subject_id: subjectChoice && subjectChoice !== "__new__" ? subjectChoice : undefined,
+        new_subject_name: subjectChoice === "__new__" ? newSubjectName.trim() : undefined,
+        builds_on_course_id: earlierCourseId || undefined,
       };
       const response = await fetch("/api/v1/courses", {
         method: "POST",
@@ -212,6 +253,38 @@ export default function NewCoursePage() {
                 </li>;
               })}
             </ul>}
+          </section>
+
+          <section className="nl-course-setup-block">
+            <details className="nl-course-setup-group">
+              <summary>
+                <span className="nl-course-setup-caret" aria-hidden="true" />
+                <span className="nl-course-setup-label">Group and link <span className="nl-muted">Optional</span></span>
+              </summary>
+              <div className="nl-course-setup-group-inner">
+                <p className="nl-course-setup-hint">Grouping courses under a subject shares nothing. An explicit earlier-course link is what authorizes supported sources and evidence to be reused.</p>
+                {relationshipsLoading ? <p className="nl-course-setup-state" role="status">Loading your subjects and published courses…</p> : relationshipsError ? <div className="nl-course-setup-state is-error" role="alert"><span>{relationshipsError}</span><button type="button" className="nl-course-setup-retry" onClick={() => void loadRelationships()}>Try again</button></div> : <div className="nl-course-setup-group-fields">
+                  <div>
+                    <label className="nl-course-setup-label" htmlFor="course-subject">Subject</label>
+                    <select id="course-subject" className="nl-course-setup-field" value={subjectChoice} onChange={(event) => setSubjectChoice(event.target.value)} disabled={isLoading || Boolean(createdCourseId)}>
+                      <option value="">No subject</option>
+                      {subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}
+                      <option value="__new__">Create a subject…</option>
+                    </select>
+                    {subjects.length === 0 && <p className="nl-course-setup-state">You don’t have any subjects yet. You can create one here or keep this course standalone.</p>}
+                    {subjectChoice === "__new__" && <label className="nl-course-setup-label nl-course-setup-subject-create" htmlFor="new-subject-name">New subject name<input id="new-subject-name" className="nl-course-setup-field" type="text" maxLength={120} value={newSubjectName} onChange={(event) => setNewSubjectName(event.target.value)} placeholder="For example, Biology" disabled={isLoading || Boolean(createdCourseId)} /></label>}
+                  </div>
+                  <div>
+                    <label className="nl-course-setup-label" htmlFor="earlier-course">Build on an earlier course</label>
+                    <select id="earlier-course" className="nl-course-setup-field" value={earlierCourseId} onChange={(event) => setEarlierCourseId(event.target.value)} disabled={isLoading || Boolean(createdCourseId)}>
+                      <option value="">None</option>
+                      {ownedCourses.filter((course) => course.eligible_as_earlier_course).map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}
+                    </select>
+                    {ownedCourses.every((course) => !course.eligible_as_earlier_course) && <p className="nl-course-setup-state">No published courses are available to link yet. You can create this course on its own.</p>}
+                  </div>
+                </div>}
+              </div>
+            </details>
           </section>
 
           <section className="nl-course-setup-block">

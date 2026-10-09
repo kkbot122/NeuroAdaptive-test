@@ -34,6 +34,7 @@ class LearningActivityOut(BaseModel):
     target_concept_ids: list[UUID]
     lesson_id: Optional[UUID]
     reason: Optional[str]
+    is_optional_linked_check: bool = False
     status: str
     presentation_format: str
     question_count: int = Field(ge=0)
@@ -143,6 +144,11 @@ class GradingCorrectionIn(GradingReviewReasonIn):
 
 class GradingReviewSourceOut(BaseModel):
     chunk_id: UUID
+    source_course_id: UUID
+    source_course_title: str
+    filename: str
+    page_start: Optional[int]
+    page_end: Optional[int]
     heading_path: Optional[str]
     text: str
 
@@ -172,6 +178,8 @@ class GradingReviewItemOut(BaseModel):
     answer: str
     question_id: UUID
     question_version: int
+    linked_sources_unavailable: bool = False
+    linked_source_course_title: Optional[str] = None
     prompt: str
     rubric: list[str]
     rubric_passing_criteria: int
@@ -223,6 +231,8 @@ class AssessmentSessionOut(BaseModel):
     decision_id: Optional[UUID] = None
     lesson_id: Optional[UUID] = None
     assessment_type: str
+    linked_sources_unavailable: bool = False
+    linked_source_course_title: Optional[str] = None
     submission_state: str
     grading_state: str
     submitted_at: Optional[datetime]

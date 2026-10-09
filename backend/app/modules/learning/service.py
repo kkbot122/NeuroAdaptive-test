@@ -16,9 +16,10 @@ from app.services.ai_usage import ai_usage_scope, provider_attempt
 from app.modules.adaptation.models import AdaptationDecision
 from app.modules.adaptation.service import AdaptationNotFound, AdaptationService
 from app.modules.courses.models import Course, CourseStatus
+from app.modules.courses.p8_models import CrossCourseConceptMatch, P8_OPTIONAL_LINK_CHECK_REASON
 from app.modules.courses.service import CourseNotFound, CourseService
 from app.modules.auth.models import User
-from app.modules.curriculum.models import Concept, CourseVersion, Lesson, LessonConcept, Module
+from app.modules.curriculum.models import Concept, ConceptSource, CourseVersion, Lesson, LessonConcept, Module
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
 from app.modules.learning.models import (
@@ -319,6 +320,10 @@ class LearningService:
             "target_concept_ids": [UUID(item) if isinstance(item, str) else item for item in activity.target_concept_ids],
             "lesson_id": activity.lesson_id,
             "reason": activity.reason_text,
+            "is_optional_linked_check": (
+                activity.activity_type == "OPTIONAL_PREREQUISITE_CHECK"
+                and activity.reason_text == P8_OPTIONAL_LINK_CHECK_REASON
+            ),
             "status": activity.status,
             "presentation_format": activity.presentation_format,
             "question_count": expected_prepared_count,
@@ -348,6 +353,7 @@ class LearningService:
             "PREREQUISITE_REMEDIATION": settings.P4_REMEDIATION_QUESTION_COUNT_V1,
             "TARGETED_PRACTICE": settings.P4_TARGETED_PRACTICE_QUESTION_COUNT_V1,
             "CHALLENGE": settings.P4_CHALLENGE_QUESTION_COUNT_V1,
+            "OPTIONAL_PREREQUISITE_CHECK": settings.P4_TARGETED_PRACTICE_QUESTION_COUNT_V1,
         }
         if activity.activity_type in p4_count:
             return p4_count[activity.activity_type]
@@ -424,6 +430,7 @@ class LearningService:
                     Question.owner_id == activity.owner_id,
                     Question.course_id == activity.course_id,
                     Question.course_version_id == activity.course_version_id,
+                    Question.source_revoked_at.is_(None),
                     Question.version == PreparedActivityQuestion.question_version,
                     Question.is_diagnostic == 0,
                 )
@@ -450,6 +457,7 @@ class LearningService:
             Question.course_id == activity.course_id,
             Question.course_version_id == activity.course_version_id,
             Question.owner_id == activity.owner_id,
+            Question.source_revoked_at.is_(None),
             QuestionConcept.concept_id.in_(concept_ids),
         )
         if activity.decision_id is not None:
@@ -623,6 +631,97 @@ class LearningService:
         lock = self._local_lifecycle_lock(course_id, owner_id)
         with lock:
             return self._start_diagnostic_locked(course_id, owner_id, max_questions)
+
+    def create_optional_linked_check(self, course_id: UUID, owner_id: int, match_id: UUID) -> dict:
+        course = self._owned_course(course_id, owner_id, lock=True)
+        if (
+            course.status != CourseStatus.PUBLISHED.value
+            or course.active_version_id is None
+            or course.linked_course_id is None
+            or course.linked_version_id is None
+            or course.link_revoked_at is not None
+        ):
+            raise LearningConflict("The linked course is no longer available for this check")
+        match = self.db.query(CrossCourseConceptMatch).filter_by(
+            id=match_id,
+            owner_id=owner_id,
+            current_course_id=course.id,
+            current_version_id=course.active_version_id,
+            linked_course_id=course.linked_course_id,
+            linked_version_id=course.linked_version_id,
+            status="UNCERTAIN",
+        ).first()
+        if match is None:
+            raise LearningNotFound(str(match_id))
+        linked_course = self.db.query(Course).filter_by(
+            id=course.linked_course_id,
+            owner_id=owner_id,
+            status=CourseStatus.PUBLISHED.value,
+        ).first()
+        linked_version_ready = self.db.query(CourseVersion.id).filter_by(
+            id=course.linked_version_id,
+            course_id=course.linked_course_id,
+            owner_id=owner_id,
+            status="READY",
+        ).first() is not None
+        if linked_course is None or not linked_version_ready:
+            raise LearningConflict("The linked course is no longer available for this check")
+        source_rows = self.db.query(ConceptSource.course_id).join(
+            Concept, Concept.id == ConceptSource.concept_id
+        ).join(
+            Chunk, Chunk.id == ConceptSource.chunk_id
+        ).join(Document, Document.id == Chunk.document_id).filter(
+            ConceptSource.owner_id == owner_id,
+            ConceptSource.course_id.in_([course.id, linked_course.id]),
+            ConceptSource.concept_id.in_([match.current_concept_id, match.linked_concept_id]),
+            Concept.owner_id == owner_id,
+            Concept.course_id == ConceptSource.course_id,
+            Concept.course_version_id.in_([course.active_version_id, course.linked_version_id]),
+            Chunk.owner_id == owner_id,
+            Chunk.course_id == ConceptSource.course_id,
+            Document.owner_id == owner_id,
+            Document.course_id == Chunk.course_id,
+        ).all()
+        supporting_courses = {row[0] for row in source_rows}
+        if course.id not in supporting_courses or linked_course.id not in supporting_courses:
+            raise LearningConflict("There is no usable explanation in both course sources for this check. You can continue without it.")
+        if self._active_activity(course_id, owner_id) is not None:
+            raise LearningConflict("Finish or resume your current activity before starting this optional check")
+        activity = LearningActivity(
+            owner_id=owner_id,
+            course_id=course.id,
+            course_version_id=course.active_version_id,
+            linked_match_id=match.id,
+            activity_type="OPTIONAL_PREREQUISITE_CHECK",
+            target_concept_ids=[str(match.current_concept_id)],
+            lesson_id=None,
+            reason_text=P8_OPTIONAL_LINK_CHECK_REASON,
+            status=ActivityStatus.READY.value,
+            presentation_format="quiz_first",
+        )
+        self.db.add(activity)
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise LearningConflict("Another course activity started first") from exc
+        self.db.refresh(activity)
+        return self._activity_out(activity)
+
+    def skip_optional_link_check(self, course_id: UUID, activity_id: UUID, owner_id: int) -> dict:
+        self._owned_course(course_id, owner_id)
+        activity = self._owned_activity(course_id, activity_id, owner_id, lock=True)
+        if (
+            activity.activity_type != "OPTIONAL_PREREQUISITE_CHECK"
+            or activity.reason_text != P8_OPTIONAL_LINK_CHECK_REASON
+        ):
+            raise LearningNotFound(str(activity_id))
+        if self._session_for_activity(activity.id) is not None:
+            raise LearningConflict("The fixed check has started; finish or resume that assessment")
+        activity.status = ActivityStatus.COMPLETED.value
+        self.db.commit()
+        self.db.refresh(activity)
+        return self._activity_out(activity)
 
     def resume_diagnostic(self, course_id: UUID, owner_id: int) -> Optional[dict]:
         lock = self._local_lifecycle_lock(course_id, owner_id)
@@ -1067,6 +1166,33 @@ class LearningService:
         item = self._grading_review_item(report_id)
         return item
 
+    def _authorized_source_course_ids(self, course: Course | None, owner_id: int) -> list[UUID]:
+        """Current course plus the one valid, exact-version direct source link."""
+        if course is None:
+            return []
+        allowed = [course.id]
+        if (
+            course.status != CourseStatus.PUBLISHED.value
+            or course.link_revoked_at is not None
+            or course.linked_course_id is None
+            or course.linked_version_id is None
+        ):
+            return allowed
+        linked = self.db.query(Course.id).filter_by(
+            id=course.linked_course_id,
+            owner_id=owner_id,
+            status=CourseStatus.PUBLISHED.value,
+        ).first()
+        version = self.db.query(CourseVersion.id).filter_by(
+            id=course.linked_version_id,
+            course_id=course.linked_course_id,
+            owner_id=owner_id,
+            status="READY",
+        ).first()
+        if linked is not None and version is not None:
+            allowed.append(course.linked_course_id)
+        return allowed
+
     def _grading_review_item(self, report_id: UUID) -> dict:
         row = (
             self.db.query(GradingIssueReport, AnswerSubmission, AssessmentQuestion, AssessmentSession, LearningActivity, Question, QuestionAttempt, GradingJudgment)
@@ -1095,16 +1221,22 @@ class LearningService:
         if row is None:
             raise GradingReviewNotFound(str(report_id))
         report, answer, aq, _session, _activity, question, attempt, judgment = row
+        review_course = self.db.query(Course).filter_by(
+            id=report.course_id, owner_id=report.owner_id
+        ).first()
+        source_course_ids = self._authorized_source_course_ids(review_course, report.owner_id)
         sources = (
-            self.db.query(Chunk)
+            self.db.query(Chunk, Document.filename, Course.id, Course.title)
             .join(QuestionSource, QuestionSource.chunk_id == Chunk.id)
             .join(Document, Document.id == Chunk.document_id)
+            .join(Course, Course.id == Chunk.course_id)
             .filter(
                 QuestionSource.question_id == question.id,
-                Chunk.course_id == report.course_id,
+                Chunk.course_id.in_(source_course_ids),
                 Chunk.owner_id == report.owner_id,
-                Document.course_id == report.course_id,
+                Document.course_id.in_(source_course_ids),
                 Document.owner_id == report.owner_id,
+                Course.owner_id == report.owner_id,
             )
             .order_by(Chunk.id)
             .all()
@@ -1141,9 +1273,25 @@ class LearningService:
             "original_rubric_score": judgment.rubric_score,
             "original_evidence_correctness": judgment.evidence_correctness,
             "sources": [
-                {"chunk_id": source.id, "heading_path": source.heading_path, "text": source.text}
-                for source in sources
+                {
+                    "chunk_id": source.id,
+                    "source_course_id": source_course_id,
+                    "source_course_title": source_course_title,
+                    "filename": filename,
+                    "page_start": source.page_start,
+                    "page_end": source.page_end,
+                    "heading_path": source.heading_path,
+                    "text": source.text,
+                }
+                for source, filename, source_course_id, source_course_title in sources
             ],
+            "linked_sources_unavailable": bool(
+                review_course is not None and review_course.link_revoked_at and review_course.linked_course_title_snapshot
+            ),
+            "linked_source_course_title": (
+                review_course.linked_course_title_snapshot
+                if review_course is not None and review_course.link_revoked_at else None
+            ),
             "corrections": [
                 {
                     "version": correction.version,
@@ -1575,6 +1723,10 @@ class LearningService:
         )
         if activity is None:
             raise LearningNotFound(str(session.id))
+        course = self.db.query(Course).filter_by(id=course_id, owner_id=owner_id).first()
+        if course is None:
+            raise LearningNotFound(str(session.id))
+        source_course_ids = self._authorized_source_course_ids(course, owner_id)
         items = (
             self.db.query(AssessmentQuestion, Question)
             .join(Question, Question.id == AssessmentQuestion.question_id)
@@ -1652,14 +1804,15 @@ class LearningService:
                     .join(Document, Document.id == Chunk.document_id)
                     .filter(
                         QuestionSource.question_id == question.id,
-                        Chunk.course_id == course_id,
+                        Chunk.course_id.in_(source_course_ids),
                         Chunk.owner_id == owner_id,
-                        Document.course_id == course_id,
+                        Document.course_id.in_(source_course_ids),
                         Document.owner_id == owner_id,
                     )
                     .order_by(QuestionSource.chunk_id)
                     .all()
                 ]
+                authorized_source_ids = set(source_ids)
                 criteria = correction.criteria_met if correction is not None else judgment.criteria_met if judgment else None
                 rubric_details = question.rubric_details or []
                 rubric_feedback = (
@@ -1668,8 +1821,11 @@ class LearningService:
                             "criterion": detail["text"],
                             "met": bool(criteria[index]),
                             "expected_reasoning": detail["expected_reasoning"],
-                            "source_chunk_ids": [UUID(item) if isinstance(item, str) else item
-                                                 for item in detail["source_chunk_ids"]],
+                            "source_chunk_ids": [
+                                UUID(item) if isinstance(item, str) else item
+                                for item in detail["source_chunk_ids"]
+                                if (UUID(item) if isinstance(item, str) else item) in authorized_source_ids
+                            ],
                         }
                         for index, detail in enumerate(rubric_details)
                         if criteria is not None and index < len(criteria)
@@ -1684,8 +1840,11 @@ class LearningService:
                             "criterion": detail["text"],
                             "met": bool(judgment.criteria_met[index]),
                             "expected_reasoning": detail["expected_reasoning"],
-                            "source_chunk_ids": [UUID(item) if isinstance(item, str) else item
-                                                 for item in detail["source_chunk_ids"]],
+                            "source_chunk_ids": [
+                                UUID(item) if isinstance(item, str) else item
+                                for item in detail["source_chunk_ids"]
+                                if (UUID(item) if isinstance(item, str) else item) in authorized_source_ids
+                            ],
                         }
                         for index, detail in enumerate(rubric_details)
                         if index < len(judgment.criteria_met)
@@ -1782,6 +1941,8 @@ class LearningService:
             "decision_id": activity.decision_id,
             "lesson_id": activity.lesson_id,
             "assessment_type": session.assessment_type,
+            "linked_sources_unavailable": bool(course.link_revoked_at and course.linked_course_title_snapshot),
+            "linked_source_course_title": course.linked_course_title_snapshot if course.link_revoked_at else None,
             "submission_state": session.status,
             "grading_state": grading_state,
             "submitted_at": session.submitted_at,

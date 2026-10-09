@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import List
 from uuid import UUID
 
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.modules.abuse.models import AIProviderCall, AIUsageDaily
@@ -37,6 +38,11 @@ from app.modules.auth.models import User
 from app.modules.chat.models import ChatMessage, ChatSession
 from app.modules.content.models import ArticleReading
 from app.modules.courses.models import Course
+from app.modules.courses.p8_models import (
+    CourseSubject,
+    CrossCourseConceptMatch,
+    P8_OPTIONAL_LINK_CHECK_REASON,
+)
 from app.modules.curriculum.models import (
     AssessmentBlueprint,
     Concept,
@@ -62,6 +68,7 @@ from app.modules.preparation.models import (
     QuestionSource,
 )
 from app.modules.learning.models import (
+    ActivityStatus,
     AnswerSubmission,
     AssessmentQuestion,
     AssessmentSession,
@@ -148,6 +155,201 @@ class PrivacyService:
         db = self.db
         if not course_ids:
             return
+        deleting_match_ids = select(CrossCourseConceptMatch.id).filter(
+            CrossCourseConceptMatch.owner_id == owner_id,
+            or_(
+                CrossCourseConceptMatch.current_course_id.in_(course_ids),
+                CrossCourseConceptMatch.linked_course_id.in_(course_ids),
+            ),
+        )
+        dependent_match_ids = select(CrossCourseConceptMatch.id).filter(
+            CrossCourseConceptMatch.owner_id == owner_id,
+            CrossCourseConceptMatch.linked_course_id.in_(course_ids),
+        )
+        dependent_match_activity_ids = {
+            row[0] for row in db.query(LearningActivity.id).filter(
+                LearningActivity.owner_id == owner_id,
+                LearningActivity.course_id.notin_(course_ids),
+                LearningActivity.linked_match_id.in_(dependent_match_ids),
+            ).all()
+        }
+        db.query(LearningActivity).filter(
+            LearningActivity.owner_id == owner_id,
+            LearningActivity.linked_match_id.in_(deleting_match_ids),
+        ).update({LearningActivity.linked_match_id: None}, synchronize_session=False)
+        dependent_courses = (
+            db.query(Course)
+            .filter(
+                Course.owner_id == owner_id,
+                Course.linked_course_id.in_(course_ids),
+                Course.id.notin_(course_ids),
+            )
+            .with_for_update()
+            .all()
+        )
+        dependent_course_ids = [course.id for course in dependent_courses]
+        if dependent_courses:
+            now = datetime.now(timezone.utc)
+            for dependent in dependent_courses:
+                dependent.linked_course_title_snapshot = dependent.linked_course_title_snapshot or (
+                    db.query(Course.title).filter_by(id=dependent.linked_course_id, owner_id=owner_id).scalar()
+                )
+                dependent.linked_course_id = None
+                dependent.linked_version_id = None
+                dependent.link_revoked_at = now
+                dependent.link_revision += 1
+            db.query(CrossCourseConceptMatch).filter(
+                CrossCourseConceptMatch.owner_id == owner_id,
+                CrossCourseConceptMatch.linked_course_id.in_(course_ids),
+            ).delete(synchronize_session=False)
+
+            linked_chunk_ids = [row[0] for row in db.query(Chunk.id).filter(
+                Chunk.owner_id == owner_id, Chunk.course_id.in_(course_ids)
+            ).all()]
+            dependent_preparations = db.query(ActivityPreparation).filter(
+                ActivityPreparation.owner_id == owner_id,
+                ActivityPreparation.course_id.in_(dependent_course_ids),
+                ActivityPreparation.link_dependency_fingerprint != "",
+            ).all()
+            assessment_activity_ids = select(AssessmentSession.activity_id).join(
+                LearningActivity, LearningActivity.id == AssessmentSession.activity_id
+            ).filter(
+                LearningActivity.owner_id == owner_id,
+                LearningActivity.course_id.in_(dependent_course_ids),
+            )
+            linked_activity_ids = dependent_match_activity_ids | {
+                preparation.activity_id
+                for preparation in dependent_preparations
+                if preparation.activity_id is not None
+            }
+            started_activity_ids = {
+                row[0] for row in db.query(LearningActivity.id).filter(
+                    LearningActivity.owner_id == owner_id,
+                    LearningActivity.course_id.in_(dependent_course_ids),
+                    or_(
+                        LearningActivity.status.in_([
+                            ActivityStatus.IN_PROGRESS.value,
+                            ActivityStatus.AWAITING_ASSESSMENT.value,
+                            ActivityStatus.AWAITING_GRADING.value,
+                        ]),
+                        and_(
+                            LearningActivity.status == ActivityStatus.COMPLETED.value,
+                            or_(
+                                LearningActivity.activity_type != "OPTIONAL_PREREQUISITE_CHECK",
+                                LearningActivity.reason_text != P8_OPTIONAL_LINK_CHECK_REASON,
+                            ),
+                        ),
+                        LearningActivity.reading_position > 0,
+                        LearningActivity.reading_completed_at.isnot(None),
+                        LearningActivity.id.in_(assessment_activity_ids),
+                    ),
+                ).all()
+            }
+            keep_preparation_ids = {
+                row.id for row in dependent_preparations if row.activity_id in started_activity_ids
+            }
+            invalidate_preparation_ids = {
+                row.id for row in dependent_preparations if row.id not in keep_preparation_ids
+            }
+            unstarted_link_activity_ids = linked_activity_ids - started_activity_ids
+            if unstarted_link_activity_ids:
+                invalidate_preparation_ids.update(
+                    row[0]
+                    for row in db.query(ActivityPreparation.id).filter(
+                        ActivityPreparation.owner_id == owner_id,
+                        ActivityPreparation.activity_id.in_(unstarted_link_activity_ids),
+                    ).all()
+                )
+            started_artifact_ids = {
+                row.content_artifact_id for row in dependent_preparations
+                if row.id in keep_preparation_ids and row.content_artifact_id is not None
+            }
+            if invalidate_preparation_ids:
+                db.query(PreparedActivityQuestion).filter(
+                    PreparedActivityQuestion.preparation_id.in_(invalidate_preparation_ids)
+                ).delete(synchronize_session=False)
+                db.query(ActivityPreparation).filter(
+                    ActivityPreparation.id.in_(invalidate_preparation_ids)
+                ).delete(synchronize_session=False)
+            if linked_chunk_ids:
+                revoked_question_ids = [
+                    row[0]
+                    for row in db.query(Question.id)
+                    .join(QuestionSource, QuestionSource.question_id == Question.id)
+                    .filter(
+                        QuestionSource.chunk_id.in_(linked_chunk_ids),
+                        Question.owner_id == owner_id,
+                        Question.course_id.in_(dependent_course_ids),
+                    )
+                    .distinct()
+                    .all()
+                ]
+                if revoked_question_ids:
+                    db.query(Question).filter(
+                        Question.owner_id == owner_id,
+                        Question.id.in_(revoked_question_ids),
+                    ).update(
+                        {Question.source_revoked_at: now},
+                        synchronize_session=False,
+                    )
+                db.query(QuestionSource).filter(
+                    QuestionSource.chunk_id.in_(linked_chunk_ids),
+                    QuestionSource.question_id.in_(
+                        db.query(Question.id).filter(
+                            Question.owner_id == owner_id,
+                            Question.course_id.in_(dependent_course_ids),
+                        )
+                    ),
+                ).delete(synchronize_session=False)
+            if unstarted_link_activity_ids:
+                # These activities have no fixed assessment or learner
+                # evidence. Their linked preparation has been invalidated,
+                # so remove stale activity rows that could otherwise be resumed.
+                db.query(LearningActivity).filter(
+                    LearningActivity.owner_id == owner_id,
+                    LearningActivity.course_id.in_(dependent_course_ids),
+                    LearningActivity.id.in_(unstarted_link_activity_ids),
+                ).delete(synchronize_session=False)
+            unstarted_artifact_ids = [
+                row[0] for row in db.query(LessonContentArtifact.id).filter(
+                    LessonContentArtifact.owner_id == owner_id,
+                    LessonContentArtifact.course_id.in_(dependent_course_ids),
+                    LessonContentArtifact.link_dependency_fingerprint != "",
+                    ~LessonContentArtifact.id.in_(started_artifact_ids or [UUID(int=0)]),
+                ).all()
+            ]
+            if unstarted_artifact_ids:
+                db.query(LessonContentCitation).filter(
+                    LessonContentCitation.artifact_id.in_(unstarted_artifact_ids)
+                ).delete(synchronize_session=False)
+                db.query(LessonContentArtifact).filter(
+                    LessonContentArtifact.id.in_(unstarted_artifact_ids)
+                ).delete(synchronize_session=False)
+            if linked_chunk_ids:
+                # Keep fixed started activities and their saved text/questions;
+                # remove references to passages that are being deleted. The
+                # source viewer will then report those passages unavailable.
+                db.query(LessonContentCitation).filter(
+                    LessonContentCitation.chunk_id.in_(linked_chunk_ids),
+                    LessonContentCitation.artifact_id.in_(
+                        db.query(LessonContentArtifact.id).filter(
+                            LessonContentArtifact.owner_id == owner_id,
+                            LessonContentArtifact.course_id.in_(dependent_course_ids),
+                        )
+                    ),
+                ).delete(synchronize_session=False)
+        else:
+            db.query(CrossCourseConceptMatch).filter(
+                CrossCourseConceptMatch.owner_id == owner_id,
+                CrossCourseConceptMatch.linked_course_id.in_(course_ids),
+            ).delete(synchronize_session=False)
+        db.query(CrossCourseConceptMatch).filter(
+            CrossCourseConceptMatch.owner_id == owner_id,
+            or_(
+                CrossCourseConceptMatch.current_course_id.in_(course_ids),
+                CrossCourseConceptMatch.linked_course_id.in_(course_ids),
+            ),
+        ).delete(synchronize_session=False)
         cleanup_ids = self._schedule_course_storage(course_ids, owner_id)
         self._cleanup_task_ids.extend(cleanup_ids)
         preparation_ids = [
@@ -314,6 +516,10 @@ class PrivacyService:
         db.query(ProcessingJob).filter(ProcessingJob.course_id.in_(course_ids)).delete(synchronize_session=False)
 
         db.query(Course).filter(Course.id.in_(course_ids)).delete(synchronize_session=False)
+        db.query(CourseSubject).filter(
+            CourseSubject.owner_id == owner_id,
+            ~CourseSubject.id.in_(db.query(Course.subject_id).filter(Course.owner_id == owner_id, Course.subject_id.isnot(None))),
+        ).delete(synchronize_session=False)
 
     _cleanup_task_ids: list[UUID]
 

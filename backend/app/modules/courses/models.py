@@ -65,6 +65,16 @@ class Course(Base):
     # codebase already lives.
     active_version_id = Column(Uuid, nullable=True)
 
+    # P8 relationships are explicit and directional. A linked version is
+    # pinned at course creation; it is never inferred from a shared subject.
+    subject_id = Column(Uuid, ForeignKey("course_subjects.id", ondelete="SET NULL"), nullable=True, index=True)
+    linked_course_id = Column(Uuid, ForeignKey("courses.id", ondelete="SET NULL"), nullable=True, index=True)
+    linked_version_id = Column(Uuid, ForeignKey("course_versions.id", ondelete="SET NULL"), nullable=True)
+    linked_course_title_snapshot = Column(String(200), nullable=True)
+    linked_version_number = Column(Integer, nullable=True)
+    link_revision = Column(Integer, nullable=False, default=0, server_default="0")
+    link_revoked_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -80,3 +90,8 @@ class Course(Base):
     @property
     def sources_are_finalized(self) -> bool:
         return self.sources_finalized_at is not None
+
+
+# Keep additive P8 tables registered whenever the canonical Course model is
+# imported (including test metadata creation and privacy cleanup paths).
+from app.modules.courses.p8_models import CourseSubject, CrossCourseConceptMatch  # noqa: E402,F401

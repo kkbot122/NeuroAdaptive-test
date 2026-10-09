@@ -7,17 +7,18 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
-from sqlalchemy import update
+from sqlalchemy import and_, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.abuse.service import AbuseControlService
 from app.modules.courses.models import Course, CourseStatus
+from app.modules.courses.p8_models import CrossCourseConceptMatch, P8_OPTIONAL_LINK_CHECK_REASON
 from app.modules.curriculum.models import Concept, ConceptSource, CourseVersion, Lesson, LessonConcept, Module
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
-from app.modules.learning.models import ActivityStatus, LearningActivity
+from app.modules.learning.models import ActivityStatus, AssessmentSession, LearningActivity
 from app.modules.learning.activity_types import (
     P2_TEACHING_ACTIVITY_TYPES,
     P4_TEACHING_ACTIVITY_TYPES,
@@ -258,19 +259,64 @@ class ActivityPreparationService:
         )
 
     def _lesson_source_chunks(
-        self, concept_ids: list[UUID], course_id: UUID, owner_id: int
+        self, concept_ids: list[UUID], course_id: UUID, owner_id: int,
+        *, include_uncertain_link_sources: bool = False, selected_link_match_id: UUID | None = None,
     ) -> tuple[list[Chunk], dict[UUID, set[UUID]]]:
+        course = self.db.query(Course).filter_by(id=course_id, owner_id=owner_id).first()
+        linked_course_id = None
+        linked_concept_to_current: dict[UUID, UUID] = {}
+        if (
+            course is not None and course.status == CourseStatus.PUBLISHED.value
+            and course.linked_course_id is not None and course.linked_version_id is not None
+            and course.link_revoked_at is None
+        ):
+            from app.modules.curriculum.models import CourseVersion
+
+            linked_version = self.db.query(CourseVersion.id).filter(
+                CourseVersion.id == course.linked_version_id,
+                CourseVersion.course_id == course.linked_course_id,
+                CourseVersion.owner_id == owner_id,
+                CourseVersion.status == "READY",
+                self.db.query(Course.id).filter(
+                    Course.id == course.linked_course_id,
+                    Course.owner_id == owner_id,
+                    Course.status == CourseStatus.PUBLISHED.value,
+                ).exists(),
+            ).scalar()
+            if linked_version is not None:
+                allowed_statuses = ["RELIABLE"] + (["UNCERTAIN"] if include_uncertain_link_sources else [])
+                query = self.db.query(CrossCourseConceptMatch).filter(
+                    CrossCourseConceptMatch.owner_id == owner_id,
+                    CrossCourseConceptMatch.current_course_id == course.id,
+                    CrossCourseConceptMatch.current_version_id == course.active_version_id,
+                    CrossCourseConceptMatch.current_concept_id.in_(concept_ids),
+                    CrossCourseConceptMatch.linked_course_id == course.linked_course_id,
+                    CrossCourseConceptMatch.linked_version_id == linked_version,
+                    CrossCourseConceptMatch.status.in_(allowed_statuses),
+                )
+                if selected_link_match_id is not None:
+                    query = query.filter(CrossCourseConceptMatch.id == selected_link_match_id)
+                matches = query.order_by(CrossCourseConceptMatch.id).all()
+                linked_course_id = course.linked_course_id
+                linked_concept_to_current = {row.linked_concept_id: row.current_concept_id for row in matches}
+
+        all_concept_ids = [*concept_ids, *linked_concept_to_current]
+        allowed_course_ids = [course_id] + ([linked_course_id] if linked_course_id else [])
         rows = (
             self.db.query(ConceptSource, Chunk)
+            .join(Concept, Concept.id == ConceptSource.concept_id)
             .join(Chunk, Chunk.id == ConceptSource.chunk_id)
             .join(Document, Document.id == Chunk.document_id)
             .filter(
-                ConceptSource.concept_id.in_(concept_ids),
-                ConceptSource.course_id == course_id,
+                ConceptSource.concept_id.in_(all_concept_ids),
+                ConceptSource.course_id.in_(allowed_course_ids),
                 ConceptSource.owner_id == owner_id,
-                Chunk.course_id == course_id,
+                Concept.owner_id == owner_id,
+                Concept.course_id == ConceptSource.course_id,
+                Concept.course_version_id.in_([course.active_version_id, linked_version] if linked_course_id else [course.active_version_id]),
+                Chunk.course_id.in_(allowed_course_ids),
                 Chunk.owner_id == owner_id,
-                Document.course_id == course_id,
+                Document.course_id.in_(allowed_course_ids),
                 Document.owner_id == owner_id,
             )
             .order_by(ConceptSource.concept_id, Chunk.position, Chunk.id)
@@ -279,8 +325,14 @@ class ActivityPreparationService:
         chunks_by_id: dict[UUID, Chunk] = {}
         concept_sources: dict[UUID, list[UUID]] = {cid: [] for cid in concept_ids}
         for source, chunk in rows:
+            current_concept_id = (
+                source.concept_id if source.course_id == course_id
+                else linked_concept_to_current.get(source.concept_id)
+            )
+            if current_concept_id is None:
+                continue
             chunks_by_id[chunk.id] = chunk
-            concept_sources.setdefault(source.concept_id, []).append(chunk.id)
+            concept_sources.setdefault(current_concept_id, []).append(chunk.id)
         if any(not concept_sources.get(cid) for cid in concept_ids):
             raise PreparationFailure("INSUFFICIENT_SOURCE_PROVENANCE")
 
@@ -343,6 +395,9 @@ class ActivityPreparationService:
             "schema": CONTENT_SCHEMA_VERSION,
             "validation": VALIDATION_POLICY_VERSION,
         }
+        link_dependency_fingerprint = self._link_dependency_fingerprint(version.course_id)
+        if link_dependency_fingerprint:
+            key_data["linked_course_dependency"] = link_dependency_fingerprint
         if activity_purpose in P4_TEACHING_ACTIVITY_TYPES:
             key_data["prompt"] = REMEDIATION_CONTENT_PROMPT_VERSION
             key_data["schema"] = REMEDIATION_CONTENT_SCHEMA_VERSION
@@ -462,15 +517,54 @@ class ActivityPreparationService:
         speculative: bool,
         activity_purpose: str,
         target_concept_ids: list[UUID],
+        link_dependency_fingerprint: str = "",
     ) -> str:
         targets_hash = _sha256(json.dumps(sorted(str(item) for item in target_concept_ids)))[:16]
         if speculative:
-            return f"lookahead:{version_id}:{lesson_id}:{activity_purpose}:{targets_hash}:{fmt}"
+            return f"lookahead:{version_id}:{lesson_id}:{activity_purpose}:{targets_hash}:{fmt}" + (f":link:{link_dependency_fingerprint}" if link_dependency_fingerprint else "")
         if activity_id is None:
-            return f"published-first:{version_id}:{lesson_id}:{activity_purpose}:{targets_hash}:default"
+            return f"published-first:{version_id}:{lesson_id}:{activity_purpose}:{targets_hash}:default" + (f":link:{link_dependency_fingerprint}" if link_dependency_fingerprint else "")
         if fmt == "__activity_default__":
-            return f"activity:{activity_id}:{activity_purpose}:{targets_hash}:default"
-        return f"activity:{activity_id}:{activity_purpose}:{targets_hash}:format:{fmt}"
+            return f"activity:{activity_id}:{activity_purpose}:{targets_hash}:default" + (f":link:{link_dependency_fingerprint}" if link_dependency_fingerprint else "")
+        return f"activity:{activity_id}:{activity_purpose}:{targets_hash}:format:{fmt}" + (f":link:{link_dependency_fingerprint}" if link_dependency_fingerprint else "")
+
+    def _link_dependency_fingerprint(
+        self, course_id: UUID, *, selected_link_match_id: UUID | None = None
+    ) -> str:
+        course = self.db.query(Course).filter_by(id=course_id).first()
+        if course is None:
+            return ""
+        if not (course.linked_course_id or course.link_revoked_at or course.link_revision):
+            return ""
+        linked_fingerprint = None
+        if course.linked_version_id is not None:
+            linked_fingerprint = self.db.query(CourseVersion.source_fingerprint).filter_by(
+                id=course.linked_version_id,
+                course_id=course.linked_course_id,
+                owner_id=course.owner_id,
+            ).scalar()
+        from app.modules.courses.p8_models import CrossCourseConceptMatch
+
+        matches = self.db.query(CrossCourseConceptMatch).filter_by(
+            current_course_id=course.id,
+            current_version_id=course.active_version_id,
+        ).order_by(
+            CrossCourseConceptMatch.current_concept_id,
+            CrossCourseConceptMatch.linked_concept_id,
+        ).all() if course.active_version_id is not None else []
+        payload = {
+            "course_id": str(course.id),
+            "link_revision": course.link_revision,
+            "linked_course_id": str(course.linked_course_id) if course.linked_course_id else None,
+            "linked_version_id": str(course.linked_version_id) if course.linked_version_id else None,
+            "selected_link_match_id": str(selected_link_match_id) if selected_link_match_id else None,
+            "linked_source_fingerprint": linked_fingerprint,
+            "matches": [
+                [str(row.current_concept_id), str(row.linked_concept_id), row.status, row.provenance]
+                for row in matches
+            ],
+        }
+        return _sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
     def _find_preparation(
         self,
@@ -636,6 +730,15 @@ class ActivityPreparationService:
         if not activity_includes_teaching(activity.activity_type):
             raise PreparationConflict("This activity has no prepared lesson content")
         version = self._owned_version(course, activity)
+        if course.link_revoked_at is not None:
+            saved_preparation = self._find_preparation(
+                activity_id, fmt, activity_purpose=activity.activity_type,
+                target_concept_ids=[UUID(item) if isinstance(item, str) else item for item in activity.target_concept_ids],
+            )
+            if saved_preparation is not None and saved_preparation.content_artifact_id is not None:
+                saved_artifact = self.db.get(LessonContentArtifact, saved_preparation.content_artifact_id)
+                if saved_artifact is not None:
+                    return saved_artifact, None
         if activity.lesson_id is None:
             if activity.activity_type not in P4_TEACHING_ACTIVITY_TYPES:
                 raise PreparationConflict("This teaching activity has no selected lesson")
@@ -741,6 +844,14 @@ class ActivityPreparationService:
         actual_format = activity.presentation_format if presentation_format == "__activity_default__" else presentation_format
         key_format = "__activity_default__" if include_assessment else actual_format
         target_ids = [concept.id for concept in concepts]
+        selected_link_match_id = (
+            activity.linked_match_id
+            if activity is not None and activity.reason_text == P8_OPTIONAL_LINK_CHECK_REASON
+            else None
+        )
+        link_dependency_fingerprint = self._link_dependency_fingerprint(
+            course.id, selected_link_match_id=selected_link_match_id
+        )
         preparation_key = self._prep_key(
             activity.id if activity else None,
             version.id,
@@ -749,6 +860,7 @@ class ActivityPreparationService:
             speculative,
             activity_purpose,
             target_ids,
+            link_dependency_fingerprint,
         )
         with self._lock(preparation_key, course.owner_id):
             preparation = (
@@ -783,6 +895,7 @@ class ActivityPreparationService:
                         row
                         for row in legacy_preparations
                         if sorted(str(item) for item in (row.target_concept_ids or [])) == target_set
+                        and row.link_dependency_fingerprint == link_dependency_fingerprint
                     ),
                     None,
                 )
@@ -796,6 +909,7 @@ class ActivityPreparationService:
                         False,
                         activity_purpose,
                         target_ids,
+                        link_dependency_fingerprint,
                     )
                     published = (
                         self.db.query(ActivityPreparation)
@@ -839,6 +953,7 @@ class ActivityPreparationService:
                     if (
                         published is not None
                         and published.activity_id is None
+                    and published.link_dependency_fingerprint == link_dependency_fingerprint
                         and published.course_id == course.id
                         and published.course_version_id == version.id
                         and published.lesson_id == lesson.id
@@ -873,6 +988,7 @@ class ActivityPreparationService:
                     lesson_id=lesson.id if lesson is not None else None,
                     activity_purpose=activity_purpose,
                     target_concept_ids=sorted(str(item) for item in target_ids),
+                    link_dependency_fingerprint=link_dependency_fingerprint,
                     presentation_format=actual_format,
                     include_assessment=include_assessment,
                     is_speculative=speculative,
@@ -1175,8 +1291,21 @@ class ActivityPreparationService:
             return preparation
         try:
             activity, course, version, lesson, concepts = self._validate_job_context(preparation)
+            activity_row = self.db.query(LearningActivity).filter_by(
+                id=preparation.activity_id, course_id=preparation.course_id,
+                owner_id=owner_id,
+            ).first() if preparation.activity_id is not None else None
+            include_uncertain_link_sources = bool(
+                activity_row is not None
+                and activity_row.reason_text == P8_OPTIONAL_LINK_CHECK_REASON
+            )
             chunks, chunks_by_concept = self._lesson_source_chunks(
-                [concept.id for concept in concepts], course.id, owner_id
+                [concept.id for concept in concepts], course.id, owner_id,
+                include_uncertain_link_sources=include_uncertain_link_sources,
+                selected_link_match_id=(
+                    activity_row.linked_match_id
+                    if include_uncertain_link_sources and activity_row is not None else None
+                ),
             )
             if activity_includes_teaching(preparation.activity_purpose):
                 artifact = self._find_content_artifact(
@@ -1237,13 +1366,38 @@ class ActivityPreparationService:
             ).first()
             if activity is None:
                 raise PreparationFailure("STALE_ACTIVITY")
+            if activity.activity_type == "OPTIONAL_PREREQUISITE_CHECK" and activity.status == ActivityStatus.COMPLETED.value:
+                raise PreparationFailure("OPTIONAL_CHECK_SKIPPED")
+            if activity.reason_text == P8_OPTIONAL_LINK_CHECK_REASON:
+                target_ids = [UUID(item) if isinstance(item, str) else item for item in activity.target_concept_ids]
+                selected_match = self.db.query(CrossCourseConceptMatch).filter(
+                    CrossCourseConceptMatch.id == activity.linked_match_id,
+                    CrossCourseConceptMatch.owner_id == activity.owner_id,
+                    CrossCourseConceptMatch.current_course_id == course.id,
+                    CrossCourseConceptMatch.current_version_id == preparation.course_version_id,
+                    CrossCourseConceptMatch.current_concept_id.in_(target_ids),
+                    CrossCourseConceptMatch.linked_course_id == course.linked_course_id,
+                    CrossCourseConceptMatch.linked_version_id == course.linked_version_id,
+                    CrossCourseConceptMatch.status == "UNCERTAIN",
+                ).first()
+                if selected_match is None or not (selected_match.provenance or {}).get("source_support"):
+                    raise PreparationFailure("STALE_LINK_MATCH")
         else:
             activity = None
+        selected_link_match_id = (
+            activity.linked_match_id
+            if activity is not None and activity.reason_text == P8_OPTIONAL_LINK_CHECK_REASON
+            else None
+        )
         if (
             course.status != CourseStatus.PUBLISHED.value
             or course.active_version_id != preparation.course_version_id
         ):
             raise PreparationFailure("STALE_COURSE_VERSION")
+        if preparation.link_dependency_fingerprint != self._link_dependency_fingerprint(
+            course.id, selected_link_match_id=selected_link_match_id
+        ):
+            raise PreparationFailure("STALE_LINK_DEPENDENCY")
         if self._source_fingerprint(course.id) != (
             self.db.query(CourseVersion.source_fingerprint)
             .filter(CourseVersion.id == preparation.course_version_id, CourseVersion.owner_id == preparation.owner_id)
@@ -1343,6 +1497,15 @@ class ActivityPreparationService:
             return False
         if not source_ids or len(source_ids) != len(artifact.source_chunk_ids):
             return False
+        course = self.db.query(Course).filter_by(id=artifact.course_id, owner_id=artifact.owner_id).first()
+        dependency_current = artifact.link_dependency_fingerprint == self._link_dependency_fingerprint(artifact.course_id)
+        if not dependency_current and not (
+            course is not None and course.link_revoked_at is not None and self._artifact_is_started(artifact.id)
+        ):
+            return False
+        allowed_course_ids = [artifact.course_id]
+        if course is not None and course.linked_course_id and course.linked_version_id and course.link_revoked_at is None:
+            allowed_course_ids.append(course.linked_course_id)
         citation_ids = {
             row[0]
             for row in self.db.query(LessonContentCitation.chunk_id)
@@ -1355,14 +1518,46 @@ class ActivityPreparationService:
             .join(Document, Document.id == Chunk.document_id)
             .filter(
                 Chunk.id.in_(source_ids),
-                Chunk.course_id == artifact.course_id,
+                Chunk.course_id.in_(allowed_course_ids),
                 Chunk.owner_id == artifact.owner_id,
-                Document.course_id == artifact.course_id,
+                Document.course_id.in_(allowed_course_ids),
                 Document.owner_id == artifact.owner_id,
             )
             .all()
         }
-        return citation_ids == source_ids and owned_ids == source_ids
+        if dependency_current:
+            return citation_ids == source_ids and owned_ids == source_ids
+        # A started artifact remains playable after its earlier source is
+        # deleted. Its fixed text stays saved; deleted citation rows resolve
+        # to the source viewer's unavailable-passage response.
+        return citation_ids.issubset(source_ids) and owned_ids == citation_ids
+
+    def _artifact_is_started(self, artifact_id: UUID) -> bool:
+        started_statuses = [
+            ActivityStatus.IN_PROGRESS.value,
+            ActivityStatus.AWAITING_ASSESSMENT.value,
+            ActivityStatus.AWAITING_GRADING.value,
+        ]
+        return self.db.query(ActivityPreparation.id).join(
+            LearningActivity, LearningActivity.id == ActivityPreparation.activity_id
+        ).filter(
+            ActivityPreparation.content_artifact_id == artifact_id,
+            or_(
+                LearningActivity.status.in_(started_statuses),
+                and_(
+                    LearningActivity.status == ActivityStatus.COMPLETED.value,
+                    or_(
+                        LearningActivity.activity_type != "OPTIONAL_PREREQUISITE_CHECK",
+                        LearningActivity.reason_text != P8_OPTIONAL_LINK_CHECK_REASON,
+                    ),
+                ),
+                LearningActivity.reading_position > 0,
+                LearningActivity.reading_completed_at.isnot(None),
+                self.db.query(AssessmentSession.id).filter(
+                    AssessmentSession.activity_id == LearningActivity.id
+                ).exists(),
+            ),
+        ).first() is not None
 
     def _find_content_artifact(
         self,
@@ -1382,6 +1577,9 @@ class ActivityPreparationService:
             LessonContentArtifact.course_id == version.course_id,
             LessonContentArtifact.validation_status == "PASSED",
         ).first()
+        expected_link_fingerprint = self._link_dependency_fingerprint(version.course_id)
+        if artifact is not None and artifact.link_dependency_fingerprint != expected_link_fingerprint:
+            artifact = None
         if fmt == "diagram":
             # Earlier diagram artifacts have no checked connections. Their
             # text remains stored, but cannot satisfy the new graph contract.
@@ -1420,6 +1618,7 @@ class ActivityPreparationService:
                 ).first()
                 if (
                     legacy is not None
+                    and legacy.link_dependency_fingerprint == expected_link_fingerprint
                     and legacy.source_fingerprint == version.source_fingerprint
                     and legacy.curriculum_fingerprint == legacy_curriculum_fingerprint
                     and sorted(str(item) for item in (legacy.target_concept_ids or []))
@@ -1450,6 +1649,7 @@ class ActivityPreparationService:
             ).first()
             if (
                 legacy is not None
+                and legacy.link_dependency_fingerprint == expected_link_fingerprint
                 and legacy.source_fingerprint == version.source_fingerprint
                 and legacy.curriculum_fingerprint == legacy_curriculum_fingerprint
                 and sorted(str(item) for item in (legacy.target_concept_ids or []))
@@ -1495,6 +1695,7 @@ class ActivityPreparationService:
             ).first()
             if (
                 previous is not None
+                and previous.link_dependency_fingerprint == expected_link_fingerprint
                 and previous.source_fingerprint == version.source_fingerprint
                 and previous.curriculum_fingerprint == previous_curriculum_fingerprint
                 and sorted(str(item) for item in (previous.target_concept_ids or []))
@@ -1534,6 +1735,7 @@ class ActivityPreparationService:
             preparation.activity_purpose,
             preparation.activity_id,
         )
+        link_dependency_fingerprint = self._link_dependency_fingerprint(preparation.course_id)
         source_by_id = {chunk.id: chunk for chunk in chunks}
         gateway = self._budgeted_gateway(preparation, token)
         checker = GeminiEntailmentChecker(gateway, raise_on_error=True)
@@ -1600,6 +1802,7 @@ class ActivityPreparationService:
                     target_concept_ids=[str(concept.id) for concept in concepts],
                     source_fingerprint=source_fingerprint,
                     curriculum_fingerprint=curriculum_fingerprint,
+                    link_dependency_fingerprint=link_dependency_fingerprint,
                     presentation_format=preparation.presentation_format,
                     sections=sections,
                     source_chunk_ids=sorted({cid for section in sections.values() for statement in section for cid in statement["citation_chunk_ids"]}),
@@ -1891,6 +2094,7 @@ class ActivityPreparationService:
             "PREREQUISITE_REMEDIATION": settings.P4_REMEDIATION_QUESTION_COUNT_V1,
             "TARGETED_PRACTICE": settings.P4_TARGETED_PRACTICE_QUESTION_COUNT_V1,
             "CHALLENGE": settings.P4_CHALLENGE_QUESTION_COUNT_V1,
+            "OPTIONAL_PREREQUISITE_CHECK": settings.P4_TARGETED_PRACTICE_QUESTION_COUNT_V1,
         }
         if activity_purpose in p4_counts:
             count = p4_counts[activity_purpose]
@@ -1905,7 +2109,7 @@ class ActivityPreparationService:
     def _generate_questions(self, preparation, token, version, lesson, concepts, chunks, chunks_by_concept):
         activity_purpose = preparation.activity_purpose
         count = self._question_count_for(activity_purpose, len(concepts))
-        p4_activity = activity_purpose in {"PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE"}
+        p4_activity = activity_purpose in {"PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE", "OPTIONAL_PREREQUISITE_CHECK"}
         short_answer_count = min(settings.P5_SHORT_ANSWER_COUNT_V1, max(count - 1, 0))
         prompt_version = P5_QUESTION_PROMPT_VERSION
         schema_version = P5_QUESTION_SCHEMA_VERSION
@@ -2124,7 +2328,7 @@ class ActivityPreparationService:
                 f"{question.prompt}"
             )
             checks = []
-            if activity_purpose in {"PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE"}:
+            if activity_purpose in {"PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE", "OPTIONAL_PREREQUISITE_CHECK"}:
                 concept_name = concepts_by_id[question.concept_id].name
                 concept_definition = concepts_by_id[question.concept_id].definition
                 isolated_claim = (

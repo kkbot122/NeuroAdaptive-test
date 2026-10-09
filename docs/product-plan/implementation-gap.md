@@ -14,7 +14,7 @@ Paths below are relative to repository root.
 | Identity/dashboard | `frontend/auth.ts`; `frontend/app/(pages)/dashboard/page.tsx` | Retain Google flow; unify actions with saved learning state |
 | Setup/processing | `backend/app/modules/documents/service.py`; `jobs/service.py`; frontend `courses/[courseId]/workspace/page.tsx` | **P7 implemented locally:** pre-publication replacement/removal, source-revision worker fence, unchanged extraction reuse, derived-artifact invalidation, current outline rebuild/review, and published-source immutability; see [P7 contract](p7-sources-settings-contract.md) |
 | Review/publish | `curriculum/router.py` supports lesson renames and publication | Add module rename; optional grounded prerequisite warnings |
-| Subjects/links | Inspected `courses/models.py` has no subject/link fields | New ownership-scoped relationships and matching/evidence policy |
+| Subjects/links | P8 policy approved 2026-10-10; additive schema, exact-version direct link, source-backed match provenance, readiness reuse, optional check, stale/deletion fences, setup and source attribution are implemented locally | **Local implementation complete; migration not applied to the existing app DB and hosted behavior is unverified.** Setup layout was inspected at desktop and narrow widths, but the current app backend cannot populate the new catalog until upgraded. Matching uses a conservative deterministic definition/source rule; accuracy is not validated. See [P8 contract](p8-linked-courses-contract.md) |
 | Curriculum | `curriculum/service.py` extracts concepts, builds/validates versions, creates blueprints | Reuse; blueprints are not generated lesson assessments |
 | Diagnostic | P1 persists/resumes fixed question ID/version/order sets and distinguishes saved answers from grading; small graphs may yield fewer questions than the PDF's stated minimum | Later define skip/retry policy; do not restore historical minimum counts as guarantees |
 | Lesson assessment | P1 activity sessions reuse existing questions for the saved course version and target concepts | **P2/P5 implemented locally:** prepared lesson and P4 activity sets retain immutable mixed MCQ/short-answer IDs, versions, order, and attribution; diagnostics and existing MCQ sets remain compatible |
@@ -55,8 +55,9 @@ Module paths without full prefixes above refer to `backend/app/modules/`.
 
 P1–P5 assessment, result, rubric, report, and review contracts have local additive
 migrations and generated OpenAPI types. P7 adds its own additive migration and generated
-contracts. Linked-course retrieval remains P8. Hosted compatibility/configuration remain
-unverified. This is an inspection snapshot, not a new exhaustive audit.
+contracts. P8 adds an additive migration and generated OpenAPI types locally; apply it
+through the normal controlled migration process before serving the new API. Hosted
+compatibility/configuration remain unverified. This is an inspection snapshot, not a new exhaustive audit.
 
 ## P0 foundation status — 2026-10-07
 

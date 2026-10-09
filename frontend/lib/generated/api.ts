@@ -148,6 +148,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/courses/subjects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Subjects */
+        get: operations["list_subjects_api_v1_courses_subjects_get"];
+        put?: never;
+        /** Create Subject */
+        post: operations["create_subject_api_v1_courses_subjects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/courses/{course_id}": {
         parameters: {
             query?: never;
@@ -264,6 +282,23 @@ export interface paths {
         put?: never;
         /** Complete Reading */
         post: operations["complete_reading_api_v1_courses__course_id__activities__activity_id__reading_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/activities/{activity_id}/skip-optional-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Skip Optional Linked Check */
+        post: operations["skip_optional_linked_check_api_v1_courses__course_id__activities__activity_id__skip_optional_check_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -676,6 +711,40 @@ export interface paths {
         get: operations["get_lesson_content_api_v1_courses__course_id__lessons__lesson_id__content_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/linked-matches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Linked Matches */
+        get: operations["list_linked_matches_api_v1_courses__course_id__linked_matches_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/linked-matches/{match_id}/optional-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Optional Linked Check */
+        post: operations["start_optional_linked_check_api_v1_courses__course_id__linked_matches__match_id__optional_check_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1748,6 +1817,13 @@ export interface components {
             id: string;
             /** Lesson Id */
             lesson_id?: string | null;
+            /** Linked Source Course Title */
+            linked_source_course_title?: string | null;
+            /**
+             * Linked Sources Unavailable
+             * @default false
+             */
+            linked_sources_unavailable: boolean;
             /** Questions */
             questions: components["schemas"]["AssessmentQuestionOut"][];
             /** Submission State */
@@ -1860,10 +1936,24 @@ export interface components {
             filename: string;
             /** Heading Path */
             heading_path: string | null;
+            /**
+             * Is Linked Source
+             * @default false
+             */
+            is_linked_source: boolean;
             /** Page End */
             page_end: number | null;
             /** Page Start */
             page_start: number | null;
+            /**
+             * Source Course Id
+             * Format: uuid
+             */
+            source_course_id: string;
+            /** Source Course Title */
+            source_course_title: string;
+            /** Source Version Id */
+            source_version_id?: string | null;
             /** Text */
             text: string;
         };
@@ -1925,10 +2015,16 @@ export interface components {
         };
         /** CourseCreate */
         CourseCreate: {
+            /** Builds On Course Id */
+            builds_on_course_id?: string | null;
             /** Goal */
             goal?: string | null;
+            /** New Subject Name */
+            new_subject_name?: string | null;
             /** Starting Confidence */
             starting_confidence?: number | null;
+            /** Subject Id */
+            subject_id?: string | null;
             /** Title */
             title: string;
         };
@@ -1936,8 +2032,24 @@ export interface components {
         CourseOut: {
             /** Active Version Id */
             active_version_id?: string | null;
+            /** Builds On Course Id */
+            builds_on_course_id?: string | null;
+            /** Builds On Course Title */
+            builds_on_course_title?: string | null;
+            /**
+             * Builds On Sources Available
+             * @default false
+             */
+            builds_on_sources_available: boolean;
+            /** Builds On Version Number */
+            builds_on_version_number?: number | null;
             /** Created At */
             created_at: string | null;
+            /**
+             * Eligible As Earlier Course
+             * @default false
+             */
+            eligible_as_earlier_course: boolean;
             /** Goal */
             goal: string | null;
             /**
@@ -1948,6 +2060,16 @@ export interface components {
             latest_job?: components["schemas"]["JobSummary"] | null;
             /** Latest Review Version Id */
             latest_review_version_id?: string | null;
+            /**
+             * Link Revision
+             * @default 0
+             */
+            link_revision: number;
+            /**
+             * Reliable Linked Match Count
+             * @default 0
+             */
+            reliable_linked_match_count: number;
             /**
              * Source Count
              * @default 0
@@ -1964,15 +2086,48 @@ export interface components {
             starting_confidence: number | null;
             /** Status */
             status: string;
+            /** Subject Id */
+            subject_id?: string | null;
+            /** Subject Name */
+            subject_name?: string | null;
             /** Title */
             title: string;
+            /**
+             * Uncertain Linked Match Count
+             * @default 0
+             */
+            uncertain_linked_match_count: number;
+            /**
+             * Unsupported Linked Match Count
+             * @default 0
+             */
+            unsupported_linked_match_count: number;
+        };
+        /** CourseSubjectCreate */
+        CourseSubjectCreate: {
+            /** Name */
+            name: string;
+        };
+        /** CourseSubjectOut */
+        CourseSubjectOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
         };
         /** CourseUpdate */
         CourseUpdate: {
+            /** Builds On Course Id */
+            builds_on_course_id?: string | null;
             /** Goal */
             goal?: string | null;
             /** Starting Confidence */
             starting_confidence?: number | null;
+            /** Subject Id */
+            subject_id?: string | null;
             /** Title */
             title?: string | null;
         };
@@ -2267,6 +2422,13 @@ export interface components {
             latest_effective_correctness: number;
             /** Latest Effective Criteria Met */
             latest_effective_criteria_met: boolean[];
+            /** Linked Source Course Title */
+            linked_source_course_title?: string | null;
+            /**
+             * Linked Sources Unavailable
+             * @default false
+             */
+            linked_sources_unavailable: boolean;
             /** Original Criteria Met */
             original_criteria_met: boolean[];
             /** Original Evidence Correctness */
@@ -2318,8 +2480,21 @@ export interface components {
              * Format: uuid
              */
             chunk_id: string;
+            /** Filename */
+            filename: string;
             /** Heading Path */
             heading_path: string | null;
+            /** Page End */
+            page_end: number | null;
+            /** Page Start */
+            page_start: number | null;
+            /**
+             * Source Course Id
+             * Format: uuid
+             */
+            source_course_id: string;
+            /** Source Course Title */
+            source_course_title: string;
             /** Text */
             text: string;
         };
@@ -2412,6 +2587,11 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Is Optional Linked Check
+             * @default false
+             */
+            is_optional_linked_check: boolean;
             /** Lesson Id */
             lesson_id: string | null;
             preparation?: components["schemas"]["PreparationOut"] | null;
@@ -2517,6 +2697,32 @@ export interface components {
             lesson_id: string;
             /** Title */
             title: string;
+        };
+        /** LinkedConceptMatchOut */
+        LinkedConceptMatchOut: {
+            /**
+             * Current Concept Id
+             * Format: uuid
+             */
+            current_concept_id: string;
+            /** Current Concept Name */
+            current_concept_name: string;
+            /** Has Source Support */
+            has_source_support: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Linked Concept Id
+             * Format: uuid
+             */
+            linked_concept_id: string;
+            /** Linked Concept Name */
+            linked_concept_name: string;
+            /** Status */
+            status: string;
         };
         /** MasteryReportRow */
         MasteryReportRow: {
@@ -2826,6 +3032,11 @@ export interface components {
             document_id: string;
             /** Heading Path */
             heading_path: string | null;
+            /**
+             * Is Linked Source
+             * @default false
+             */
+            is_linked_source: boolean;
             /** Page End */
             page_end: number | null;
             /** Page Start */
@@ -2834,6 +3045,15 @@ export interface components {
             score: number;
             /** Source */
             source: string;
+            /**
+             * Source Course Id
+             * Format: uuid
+             */
+            source_course_id: string;
+            /** Source Course Title */
+            source_course_title: string;
+            /** Source Version Id */
+            source_version_id?: string | null;
             /** Text */
             text: string;
         };
@@ -3437,6 +3657,74 @@ export interface operations {
             };
         };
     };
+    list_subjects_api_v1_courses_subjects_get: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseSubjectOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_subject_api_v1_courses_subjects_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CourseSubjectCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseSubjectOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_course_api_v1_courses__course_id__get: {
         parameters: {
             query?: never;
@@ -3768,6 +4056,41 @@ export interface operations {
         };
     };
     complete_reading_api_v1_courses__course_id__activities__activity_id__reading_complete_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningActivityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    skip_optional_linked_check_api_v1_courses__course_id__activities__activity_id__skip_optional_check_post: {
         parameters: {
             query?: never;
             header: {
@@ -4636,6 +4959,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TutorFailureOut"];
+                };
+            };
+        };
+    };
+    list_linked_matches_api_v1_courses__course_id__linked_matches_get: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkedConceptMatchOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_optional_linked_check_api_v1_courses__course_id__linked_matches__match_id__optional_check_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                match_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningActivityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

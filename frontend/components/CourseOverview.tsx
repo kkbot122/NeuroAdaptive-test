@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { components } from "@/lib/generated/api";
@@ -12,6 +12,7 @@ type Structure = components["schemas"]["StructureOut"];
 type LearningState = components["schemas"]["LearningStateOut"];
 type Graph = components["schemas"]["GraphOut"];
 type Activity = components["schemas"]["LearningActivityOut"];
+type LinkedMatch = components["schemas"]["LinkedConceptMatchOut"];
 
 const BANDS = ["Not assessed", "Needs attention", "Developing", "Proficient", "Mastered"] as const;
 
@@ -21,6 +22,9 @@ function bandClass(band: string): string {
 }
 
 function activityName(activity: Activity, lessons: Map<string, string>, conceptNames: Map<string, string>): string {
+  if (activity.is_optional_linked_check) {
+    return `Optional prerequisite check: ${conceptNames.get(activity.target_concept_ids[0]) || "possible earlier knowledge"}`;
+  }
   if (activity.activity_type === "PREREQUISITE_REMEDIATION") {
     return `Review ${conceptNames.get(activity.target_concept_ids[0]) || "a selected concept"}`;
   }
@@ -53,6 +57,10 @@ export function CourseOverview({ course, structure, learningState, graph }: {
   const [tab, setTab] = useState<"outline" | "concepts">("outline");
   const [continuing, setContinuing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [linkedMatches, setLinkedMatches] = useState<LinkedMatch[]>([]);
+  const [linkedMatchesLoaded, setLinkedMatchesLoaded] = useState(false);
+  const [linkedMatchError, setLinkedMatchError] = useState<string | null>(null);
+  const [startingLinkedCheck, setStartingLinkedCheck] = useState<string | null>(null);
   const conceptNames = useMemo(() => new Map(graph.concepts.map((concept) => [concept.id, concept.name])), [graph.concepts]);
   const lessonNames = useMemo(() => new Map(structure.modules.flatMap((module) => module.lessons.map((lesson) => [lesson.id, lesson.title] as const))), [structure.modules]);
   const understanding = useMemo(() => new Map(learningState.concept_understanding.map((row) => [row.concept_id, row])), [learningState.concept_understanding]);
@@ -62,6 +70,46 @@ export function CourseOverview({ course, structure, learningState, graph }: {
   const knownConceptCount = Math.max(graph.concepts.length, 1);
   const coverage = learningState.lesson_coverage;
   const coveragePercent = coverage.lessons_total ? Math.round(coverage.lessons_covered / coverage.lessons_total * 100) : 0;
+
+  useEffect(() => {
+    setLinkedMatches([]);
+    setLinkedMatchesLoaded(false);
+    setLinkedMatchError(null);
+    if (!course.builds_on_course_id || (course.uncertain_linked_match_count < 1 && course.unsupported_linked_match_count < 1)) return;
+    const controller = new AbortController();
+    void fetch(`/api/v1/courses/${course.id}/linked-matches`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Linked concept checks could not be loaded.");
+        const matches: LinkedMatch[] = await response.json();
+        if (!controller.signal.aborted) {
+          setLinkedMatches(matches.filter((match) => match.status === "UNCERTAIN" || (match.status === "UNSUPPORTED" && !match.has_source_support)));
+          setLinkedMatchesLoaded(true);
+        }
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) setLinkedMatchError(cause instanceof Error ? cause.message : "Linked concept checks could not be loaded.");
+      });
+    return () => controller.abort();
+  }, [course.builds_on_course_id, course.id, course.uncertain_linked_match_count, course.unsupported_linked_match_count]);
+
+  const startLinkedCheck = async (match: LinkedMatch) => {
+    if (startingLinkedCheck || active) return;
+    setStartingLinkedCheck(match.id);
+    setLinkedMatchError(null);
+    try {
+      const response = await fetch(`/api/v1/courses/${course.id}/linked-matches/${match.id}/optional-check`, { method: "POST" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail || "This optional check could not be prepared.");
+      const activity = payload as Activity;
+      const href = selectedActivityHref(course.id, activity, structure);
+      if (!href) throw new Error(activity.unavailable_reason || "This optional check could not be opened.");
+      router.push(href);
+    } catch (cause) {
+      setLinkedMatchError(cause instanceof Error ? cause.message : "This optional check could not be prepared.");
+    } finally {
+      setStartingLinkedCheck(null);
+    }
+  };
 
   const continueStudying = async () => {
     if (continuing) return;
@@ -99,9 +147,28 @@ export function CourseOverview({ course, structure, learningState, graph }: {
         <header className="nl-course-overview-heading">
           <h1>{course.title}</h1>
           {course.goal && <p>{course.goal}</p>}
+          {(course.subject_name || course.builds_on_course_title) && <div className="nl-course-overview-relationship" aria-label="Course relationships">
+            {course.subject_name && <span>Subject: <strong>{course.subject_name}</strong></span>}
+            {course.builds_on_course_title && <span>Builds on: <strong>{course.builds_on_course_title}</strong>{course.builds_on_sources_available && course.builds_on_version_number ? ` · Published version ${course.builds_on_version_number}` : " · Earlier sources are unavailable"}</span>}
+          </div>}
+          {course.builds_on_sources_available && course.reliable_linked_match_count > 0 && <p className="mt-3 max-w-3xl border-2 border-black bg-[#fffbe0] p-3 text-sm">
+            For {course.reliable_linked_match_count} reliably matched concept{course.reliable_linked_match_count === 1 ? "" : "s"}, corrected evidence from {course.builds_on_course_title} can inform prerequisite readiness when this course has no graded evidence yet. Mastery and attempts shown here remain attributed to this course.
+          </p>}
         </header>
 
         {error && <div role="alert" className="border-2 border-red-800 bg-red-50 p-4 text-red-950"><p>{error}</p><button type="button" className="nl-button mt-3" onClick={() => void continueStudying()} disabled={continuing}>Try again</button></div>}
+
+        {course.builds_on_sources_available && (course.uncertain_linked_match_count > 0 || course.unsupported_linked_match_count > 0) && <section className="nl-card" aria-label="Earlier-course concept matches">
+          <h2 className="text-xl font-bold">Earlier-course concept matches</h2>
+          <p className="mt-2 text-sm text-zinc-700">Possible matches have not been treated as equivalent. When both source sets support a possible match, an optional check can test the current course concept. Skipping records no negative evidence.</p>
+          {linkedMatchError && <p className="mt-3 text-sm text-red-800" role="alert">{linkedMatchError}</p>}
+          {linkedMatches.length > 0 ? <ul className="mt-4 grid gap-3">{linkedMatches.map((match) => <li key={match.id} className="border-2 border-black bg-white p-4">
+            {match.status === "UNCERTAIN" ? <>
+              <p><strong>{match.current_concept_name}</strong> may build on <strong>{match.linked_concept_name}</strong> from {course.builds_on_course_title}.</p>
+              {match.has_source_support ? <button type="button" className="nl-button mt-3" disabled={Boolean(active) || Boolean(startingLinkedCheck)} onClick={() => void startLinkedCheck(match)}>{startingLinkedCheck === match.id ? "Preparing check…" : active ? "Finish the current activity first" : "Take optional check"}</button> : <p className="mt-2 text-sm text-zinc-700">There is no usable explanation in both source sets, so no check is available. You can continue with this course.</p>}
+            </> : <p><strong>{match.current_concept_name}</strong> and <strong>{match.linked_concept_name}</strong> could not be compared because there is no usable supporting material in both courses. No earlier evidence is reused for this match; you can continue with this course.</p>}
+          </li>)}</ul> : <p className="mt-3 text-sm text-zinc-700" role="status">{linkedMatchError ? "Retry by refreshing the overview." : linkedMatchesLoaded ? "No optional checks or missing-source limitations were found. You can continue studying." : "Loading possible concept matches…"}</p>}
+        </section>}
 
         {active ? (
           <section className="nl-course-overview-hero" aria-label="Current activity">

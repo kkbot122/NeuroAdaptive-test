@@ -122,6 +122,28 @@ def get_activity(
 
 
 @router.post(
+    "/courses/{course_id}/linked-matches/{match_id}/optional-check",
+    response_model=LearningActivityOut,
+    response_model_exclude_none=True,
+)
+def start_optional_linked_check(
+    course_id: UUID,
+    match_id: UUID,
+    user: User = Depends(get_current_user),
+    service: LearningService = Depends(_service),
+    preparation: ActivityPreparationService = Depends(_preparation_service),
+):
+    try:
+        if preparation is None:
+            raise PreparationConflict("Preparation is unavailable")
+        activity = service.create_optional_linked_check(course_id, user.id, match_id)
+        preparation.request_activity(course_id, activity["id"], user.id)
+        return service.get_activity(course_id, activity["id"], user.id)
+    except (LearningNotFound, LearningConflict, PreparationNotFound, PreparationConflict) as exc:
+        _raise_learning_error(exc)
+
+
+@router.post(
     "/courses/{course_id}/activities/{activity_id}/preparation/retry",
     response_model=LearningActivityOut,
     response_model_exclude_none=True,
@@ -195,6 +217,23 @@ def complete_reading(
 ):
     try:
         return service.complete_reading(course_id, activity_id, user.id)
+    except (LearningNotFound, LearningConflict) as exc:
+        _raise_learning_error(exc)
+
+
+@router.post(
+    "/courses/{course_id}/activities/{activity_id}/skip-optional-check",
+    response_model=LearningActivityOut,
+    response_model_exclude_none=True,
+)
+def skip_optional_linked_check(
+    course_id: UUID,
+    activity_id: UUID,
+    user: User = Depends(get_current_user),
+    service: LearningService = Depends(_service),
+):
+    try:
+        return service.skip_optional_link_check(course_id, activity_id, user.id)
     except (LearningNotFound, LearningConflict) as exc:
         _raise_learning_error(exc)
 

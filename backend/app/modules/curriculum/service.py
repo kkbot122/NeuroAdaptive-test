@@ -345,6 +345,9 @@ class CurriculumService:
         course.status = "PUBLISHED"
         version.activated_at = datetime.now(timezone.utc)
         try:
+            from app.modules.courses.matching import build_link_matches
+
+            build_link_matches(self.db, course, version)
             self.db.commit()
         except Exception:
             self.db.rollback()

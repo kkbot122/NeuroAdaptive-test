@@ -56,6 +56,10 @@ def retrieve(
             "char_end": r.char_end,
             "score": r.score,
             "source": r.source,
+            "source_course_id": str(r.source_course_id),
+            "source_course_title": r.source_course_title,
+            "source_version_id": str(r.source_version_id) if r.source_version_id else None,
+            "is_linked_source": r.is_linked_source,
         }
         for r in results
     ]
@@ -82,4 +86,8 @@ def get_chunk(
         "heading_path": chunk.heading_path,
         "page_start": chunk.page_start,
         "page_end": chunk.page_end,
+        "source_course_id": str(chunk.source_course_id),
+        "source_course_title": chunk.source_course_title,
+        "source_version_id": str(chunk.source_version_id) if chunk.source_version_id else None,
+        "is_linked_source": chunk.is_linked_source,
     }
