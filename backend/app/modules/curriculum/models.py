@@ -80,6 +80,7 @@ class CourseVersion(Base):
     # (e.g. a hash of sorted document checksums), so it's possible to tell
     # whether a stale version was built from sources that have since changed.
     source_fingerprint = Column(String(64), nullable=True)
+    source_revision = Column(Integer, nullable=False, default=0, server_default="0")
 
     # Populated by CurriculumService.validate(): a list of plain-language
     # validation failure reasons. Empty when status is READY.

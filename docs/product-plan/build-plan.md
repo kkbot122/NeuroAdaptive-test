@@ -25,15 +25,16 @@ numeric and operational details remain open.
 | P3 | Results, evidence, progress, and next-activity integration | P0, P2; approved display policy | **Implemented locally.** Submitted results expose supported feedback and reproducible concept changes; reading affects coverage only; Continue resumes or persists one selected activity and requests P2 preparation when supported. See [P3 contract](p3-results-progress-contract.md). Hosted behavior is not verified. |
 | P4 | Remediation, targeted practice, and challenge experiences | P3; eligibility policy | **Implemented locally.** Evidence-based concept remediation, lesson-free practice/challenge MCQs, per-question challenge attribution, distinct screens, and saved result/Continue lifecycle; see [P4 contract](p4-adaptive-activities-contract.md). Hosted behavior is not verified. |
 | P5 | Short-answer grading and authorized review | P2–P3; approved rubric/access/retention policy | **Implemented and verified locally.** Grounded mixed assessments, durable bounded grading recovery, source-backed rubric feedback, idempotent reports, paged separately authorized review, and correction-aware evidence; see [P5 contract](p5-short-answer-review-contract.md). Not deployed. |
-| P6 | Course overview and workspace integration | P3–P5 | Outline inspection cannot launch alternatives; tutor/sources open alongside teaching/results; tutor unavailable during assessment; format and position preserved |
-| P7 | Setup/review/recovery and account UX | P1; replacement/retention contracts | Renames persist; diagnostic skip/retry; replacement rebuilds dependencies; minimal tracking preserves learning; deletion covers new records/files |
+| P6 | Course overview and workspace integration | P3–P5 | **Accepted existing experience.** Outline inspection cannot launch alternatives; tutor/sources open alongside teaching/results; tutor unavailable during assessment; format and position preserved |
+| P7 | Pre-publication source changes, settings, and privacy | Accepted creation/review/diagnostic/recovery flows; P1; source/deletion contracts | Replace/remove sources before publish; retain unchanged extraction; invalidate and rebuild changed-source dependencies; re-review the current outline; persist tracking/presentation settings; delete owned records with tracked storage recovery |
 | P8 | Subjects and explicitly linked earlier courses | P3; cross-course/matching policy | Unit 2 can use supported Unit 1 evidence/source links; uncertain match offers optional check; standalone path works; foreign courses inaccessible |
 | P9 | Completion, full polish, and acceptance evidence | P4–P8; completion policy | Coverage differs from mastery; sufficient evidence leads to summary and optional guided practice; no unfinished advertised action |
 
 The P1–P5 assessment, results, and review contracts are local repository checkpoints.
-P6 adds the full course overview and side-panel integration; later checkpoints remain
-outstanding. Finalize full layout/styling after the state contracts are stable; include
-responsive, empty, loading, and recovery states.
+The existing P6 course overview, side-panel, creation, outline review, diagnostic, and
+recovery experiences are accepted. P7 extends their source controls and adds the Settings
+page without redesigning those flows. P8–P9 remain outstanding. Include responsive,
+empty, loading, and recovery states in later acceptance work.
 
 ## First milestone: P0–P3 together
 

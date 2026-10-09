@@ -76,7 +76,11 @@ export default function WorkspacePage() {
   const [isSavingRename, setIsSavingRename] = useState(false);
 
   const [uploading, setUploading] = useState(false);
+  const [removingDocumentId, setRemovingDocumentId] = useState<string | null>(null);
+  const [sourceChangeNotice, setSourceChangeNotice] = useState<string | null>(null);
+  const [sourceChangeKind, setSourceChangeKind] = useState<"changed" | "unchanged" | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replacementDocumentIdRef = useRef<string | null>(null);
 
   // Fetch Structure for Review. The structure response has no concept
   // names (curriculum/router.py's _version_out only returns concept_id per
@@ -231,7 +235,13 @@ export default function WorkspacePage() {
         const latestJob: components["schemas"]["JobOut"] | null = await jobRes.json();
         if (latestJob) {
           setJob(latestJob);
-          if ((latestJob.status === "RUNNING" || latestJob.status === "PENDING") && !latestJob.retry_available) {
+          if (currentCourse.status === "PROCESSING" && latestJob.source_revision !== currentCourse.source_revision) {
+            // Recover the narrow crash window between committing a source
+            // replacement and creating its new durable processing job.
+            setStructure(null);
+            setActiveTab("upload");
+            void startProcessingRequest();
+          } else if ((latestJob.status === "RUNNING" || latestJob.status === "PENDING") && !latestJob.retry_available) {
             setIsGenerating(true);
             pollJob(latestJob.id);
           } else if (latestJob.retry_available || latestJob.status === "PAUSED" || latestJob.status === "FAILED") {
@@ -243,7 +253,7 @@ export default function WorkspacePage() {
             fetchStructure();
             setActiveTab("outline");
           }
-        } else if (autoStart && currentDocuments.length > 0 && !autoStartAttemptedRef.current) {
+        } else if ((autoStart || currentCourse.status === "PROCESSING") && currentDocuments.length > 0 && !autoStartAttemptedRef.current) {
           autoStartAttemptedRef.current = true;
           void startProcessingRequest();
         }
@@ -272,20 +282,90 @@ export default function WorkspacePage() {
 
   // Upload Document
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
+    if (!e.target.files || e.target.files.length === 0) {
+      replacementDocumentIdRef.current = null;
+      return;
+    }
     const file = e.target.files[0];
-    
+    const replacementDocumentId = replacementDocumentIdRef.current;
+    const replacing = replacementDocumentId ? documents.find((doc) => doc.id === replacementDocumentId) : null;
+    replacementDocumentIdRef.current = null;
     setUploading(true);
+    setGenerateError(null);
     try {
-      await uploadCourseDocument(courseId, file);
+      const result = await uploadCourseDocument(courseId, file, replacementDocumentId || undefined, replacing?.role || "STUDY");
       
       const newDocs = await fetch(`/api/v1/courses/${courseId}/documents`).then(r => r.json());
       setDocuments(newDocs);
+      if (result.source_changed) {
+        setSourceChangeKind("changed");
+        setStructure(null);
+        setActiveTab("upload");
+        setSourceChangeNotice(result.replaced_filename || replacing
+          ? `Replaced ${result.replaced_filename || replacing?.filename} with ${file.name}.`
+          : `Added ${file.name}.`);
+        setJob(null);
+        if (result.rebuild_job_id) {
+          const jobResponse = await fetch(`/api/v1/jobs/${result.rebuild_job_id}`);
+          if (jobResponse.ok) {
+            const jobData: components["schemas"]["JobOut"] = await jobResponse.json();
+            setJob(jobData);
+            setIsGenerating(jobData.status === "PENDING" || jobData.status === "RUNNING");
+            if (jobData.status === "PENDING" || jobData.status === "RUNNING") pollJob(jobData.id);
+          }
+        } else {
+          setIsGenerating(false);
+        }
+        if (result.cleanup_pending) setSourceChangeNotice((notice) => `${notice} Cleanup of the retired file has been queued.`);
+      } else if (replacing) {
+        setSourceChangeKind("unchanged");
+        setSourceChangeNotice(`${file.name} matches the existing source. ${replacing.filename} and its saved extraction were kept.`);
+      }
     } catch (err) {
       console.error(err);
-      setGenerateError("The source could not be uploaded. Check the file type and try again.");
+      setGenerateError(err instanceof Error ? err.message : "The source could not be uploaded. Check the file type and try again.");
     } finally {
       setUploading(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleRemoveSource = async (documentId: string, filename: string) => {
+    if (removingDocumentId) return;
+    setRemovingDocumentId(documentId);
+    setGenerateError(null);
+    try {
+      const response = await fetch(`/api/v1/courses/${courseId}/documents/${documentId}`, { method: "DELETE" });
+      const payload: components["schemas"]["DocumentMutationOut"] | null = await response.json().catch(() => null);
+      if (!response.ok || !payload) {
+        const detail = (payload as unknown as { detail?: unknown } | null)?.detail;
+        throw new Error(typeof detail === "string" ? detail : "This source could not be removed.");
+      }
+      const currentDocuments: components["schemas"]["DocumentOut"][] = await fetch(`/api/v1/courses/${courseId}/documents`).then((r) => r.json());
+      setDocuments(currentDocuments);
+      if (payload.source_changed) {
+        setSourceChangeKind("changed");
+        setStructure(null);
+        setActiveTab("upload");
+        setSourceChangeNotice(`Removed ${filename}.`);
+        setJob(null);
+        if (payload.rebuild_job_id) {
+          const jobResponse = await fetch(`/api/v1/jobs/${payload.rebuild_job_id}`);
+          if (jobResponse.ok) {
+            const jobData: components["schemas"]["JobOut"] = await jobResponse.json();
+            setJob(jobData);
+            setIsGenerating(jobData.status === "PENDING" || jobData.status === "RUNNING");
+            if (jobData.status === "PENDING" || jobData.status === "RUNNING") pollJob(jobData.id);
+          }
+        } else {
+          setIsGenerating(false);
+        }
+        if (payload.cleanup_pending) setSourceChangeNotice((notice) => `${notice} Cleanup of the retired file has been queued.`);
+      }
+    } catch (error) {
+      setGenerateError(error instanceof Error ? error.message : "This source could not be removed.");
+    } finally {
+      setRemovingDocumentId(null);
     }
   };
 
@@ -368,19 +448,29 @@ export default function WorkspacePage() {
       <Upload aria-hidden="true" />
       <h2>Upload source material</h2>
       <p>Choose PDF, Markdown, or text files to build this course from.</p>
-      <input type="file" ref={fileInputRef} onChange={handleUpload} className="sr-only" accept=".pdf,.md,.txt" />
-      <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="nl-processing-button nl-processing-primary">
+      <button onClick={() => { replacementDocumentIdRef.current = null; fileInputRef.current?.click(); }} disabled={uploading} className="nl-processing-button nl-processing-primary">
         {uploading ? <><Loader2 className="nl-processing-spin" /> Uploading…</> : "Select a file"}
       </button>
-      {documents.length > 0 && <ul className="nl-processing-documents" aria-label="Uploaded source files">
-        {documents.map((doc) => <li key={doc.id}><File aria-hidden="true" /><span>{doc.filename}</span></li>)}
-      </ul>}
+      {renderSourceControls()}
       {documents.length > 0 && <button onClick={handleGenerate} disabled={isGenerating} className="nl-processing-button nl-processing-primary">
         {isGenerating ? "Starting processing…" : "Prepare course"}<ArrowRight aria-hidden="true" />
       </button>}
       {generateError && <p className="nl-processing-error" role="alert">{generateError}</p>}
     </section>
   );
+
+  const renderSourceControls = () => documents.length > 0 && <section className="nl-processing-source-controls" aria-label="Course source files">
+    <h3>Course source files</h3>
+    <ul>{documents.map((doc) => <li key={doc.id}>
+      <span><File aria-hidden="true" />{doc.filename}</span>
+      <span className="nl-processing-source-actions">
+        <button type="button" onClick={() => { replacementDocumentIdRef.current = doc.id; fileInputRef.current?.click(); }} disabled={uploading || removingDocumentId !== null} aria-label={`Replace ${doc.filename}`}>Replace</button>
+        <button type="button" onClick={() => void handleRemoveSource(doc.id, doc.filename)} disabled={uploading || removingDocumentId !== null} aria-label={`Remove ${doc.filename}`}>
+          {removingDocumentId === doc.id ? "Removing…" : "Remove"}
+        </button>
+      </span>
+    </li>)}</ul>
+  </section>;
 
   const renderProcessingTab = () => {
     const activeStage = job?.current_stage;
@@ -390,7 +480,9 @@ export default function WorkspacePage() {
     const canRetry = Boolean(job?.retry_available);
     const currentJobStage = activeStage ? formatStageName(activeStage) : null;
 
-    return <div className="nl-processing-grid">
+    return <>
+      {renderSourceControls()}
+      <div className="nl-processing-grid">
       <section className="nl-processing-box" aria-label="Course processing stages">
         {stages.length > 0 ? <ol className="nl-processing-stages">
           {stages.map((stage) => {
@@ -435,7 +527,8 @@ export default function WorkspacePage() {
         <Link href="/dashboard" className="nl-processing-button nl-processing-wide">Back to dashboard</Link>
         <p className="nl-processing-note">Your outline is built from the files you uploaded. Lesson content and questions are prepared as you begin studying.</p>
       </aside>
-    </div>;
+      </div>
+    </>;
   };
 
   const renderOutlineTab = () => (
@@ -473,6 +566,7 @@ export default function WorkspacePage() {
 
       <aside className="nl-processing-ready">
         <h2>Ready to publish?</h2>
+        {renderSourceControls()}
         <div className="nl-processing-stats" aria-label="Outline counts">
           <div><b>{structure?.modules.length || 0}</b><span>modules</span></div>
           <div><b>{structure?.modules.reduce((total, module) => total + module.lessons.length, 0) || 0}</b><span>lessons</span></div>
@@ -520,6 +614,16 @@ export default function WorkspacePage() {
           ? "Processing stopped. Your uploaded sources and completed stages are still saved."
           : "You can leave safely. Processing progress is saved, and your dashboard shows the course status.")
         : "Upload source material to build this course outline.";
+  const sourceRebuildStatus = sourceChangeKind !== "changed" ? ""
+    : documents.length === 0 ? "Add a source to prepare a new outline."
+      : job?.status === "READY" ? "The updated outline is ready for review."
+        : job?.status === "FAILED" || job?.status === "PAUSED" || job?.retry_available
+          ? "The rebuild stopped. Review the status below and retry processing."
+          : job?.status === "PENDING" ? "The rebuild is queued."
+            : job?.status === "RUNNING"
+              ? `Rebuilding${job.current_stage ? ` · ${formatStageName(job.current_stage)}` : ""}.`
+              : course?.status === "PROCESSING" ? "The current outline is stale while rebuild status is being recovered."
+                : "The source set is saved. Prepare the course to build its outline.";
 
   return <div className="nl-processing-shell">
     <CourseSidebar name={learnerName} />
@@ -530,6 +634,8 @@ export default function WorkspacePage() {
         <p>{pageLead}</p>
         {course?.title && <span className="nl-processing-course-name">{course.title}</span>}
       </header>}
+      <input type="file" ref={fileInputRef} onChange={handleUpload} className="sr-only" accept=".pdf,.md,.txt" />
+      {sourceChangeNotice && <p className="nl-processing-source-notice" role="status">{sourceChangeNotice}{sourceRebuildStatus ? ` ${sourceRebuildStatus}` : ""}</p>}
       <StateWrapper
         isLoading={isLoading}
         isError={isError}

@@ -3,6 +3,7 @@ CurriculumService tests: activation gating, and the full generate_version
 pipeline exercised end to end against fake gateways (no network).
 """
 from unittest.mock import patch
+from datetime import datetime, timezone
 
 import pytest
 
@@ -15,6 +16,7 @@ from app.modules.curriculum.service import (
 )
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
+from app.modules.jobs.models import ProcessingJob
 from app.services.embedding.fake import FakeEmbeddingGateway
 from app.services.generation.fake import FakeGenerationGateway
 
@@ -60,6 +62,20 @@ def one_concept_gateway(name="Deadlock", importance=0.9):
         f'{{"concepts": [{{"name": "{name}", "definition": "def", '
         f'"importance": {importance}, "bloom_level": "understand"}}]}}'
     )
+
+
+def make_reviewable(db_session, course, version):
+    """Bind a direct service-generated version to the durable ready-job gate."""
+    job = ProcessingJob(
+        course_id=course.id, owner_id=course.owner_id,
+        source_revision=course.source_revision, status="READY",
+    )
+    db_session.add(job)
+    db_session.flush()
+    version.processing_job_id = job.id
+    course.sources_finalized_at = datetime.now(timezone.utc)
+    course.status = "REVIEW_READY"
+    db_session.commit()
 
 
 class TestGenerateVersionHappyPath:
@@ -156,6 +172,7 @@ class TestActivationGating:
         version = service.generate_version(course.id, owner.id)
         assert version.status == CourseVersionStatus.READY.value
 
+        make_reviewable(db_session, course, version)
         service.activate_version(course.id, owner.id, version.id)
         db_session.refresh(course)
 
@@ -172,27 +189,21 @@ class TestActivationGating:
 
         assert course.active_version_id is None
 
-    def test_failed_commit_leaves_the_previous_version_active(self, db_session, owner, course):
-        """Simulates a failure immediately before the pointer swap commits;
-        the previously active version must remain active afterward."""
+    def test_failed_commit_leaves_the_course_unpublished(self, db_session, owner, course):
+        """A failed first publication must leave the active pointer unset."""
         add_chunks(db_session, course, owner, [("Intro", ["text"])])
         service = CurriculumService(db_session, one_concept_gateway(), FakeEmbeddingGateway())
 
-        v1 = service.generate_version(course.id, owner.id)
-        service.activate_version(course.id, owner.id, v1.id)
-        db_session.refresh(course)
-        assert course.active_version_id == v1.id
-
-        v2 = service.generate_version(course.id, owner.id)
-        assert v2.status == CourseVersionStatus.READY.value
+        version = service.generate_version(course.id, owner.id)
+        make_reviewable(db_session, course, version)
 
         with patch.object(db_session, "commit", side_effect=RuntimeError("simulated failure")):
             with pytest.raises(RuntimeError):
-                service.activate_version(course.id, owner.id, v2.id)
+                service.activate_version(course.id, owner.id, version.id)
 
         db_session.rollback()
         refreshed = db_session.query(Course).filter(Course.id == course.id).first()
-        assert refreshed.active_version_id == v1.id
+        assert refreshed.active_version_id is None
 
     def test_nonexistent_version_id_is_not_found(self, db_session, owner, course):
         import uuid
@@ -240,6 +251,7 @@ class TestRegeneration:
         service = CurriculumService(db_session, one_concept_gateway("Deadlock"), FakeEmbeddingGateway())
 
         v1 = service.generate_version(course.id, owner.id)
+        make_reviewable(db_session, course, v1)
         service.activate_version(course.id, owner.id, v1.id)
 
         # Same concept name -> same canonical_key -> carried.
@@ -255,6 +267,7 @@ class TestRegeneration:
         add_chunks(db_session, course, owner, [("Intro", ["text"])])
         service_v1 = CurriculumService(db_session, one_concept_gateway("Deadlock"), FakeEmbeddingGateway())
         v1 = service_v1.generate_version(course.id, owner.id)
+        make_reviewable(db_session, course, v1)
         service_v1.activate_version(course.id, owner.id, v1.id)
 
         # A different concept name/definition/embedding -> should not match v1's.

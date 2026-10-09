@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from typing import Literal
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -30,7 +31,32 @@ class ConsentUpdate(BaseModel):
     tracking_consent: str = Field(pattern="^(full|minimal)$")
 
 
-@router.patch("/me/consent")
+class ConsentOut(BaseModel):
+    tracking_consent: Literal["full", "minimal"]
+
+
+class SettingsUpdate(BaseModel):
+    tracking_consent: Literal["full", "minimal"]
+    default_presentation_format: Literal["detailed", "concise", "worked_example", "analogy"]
+    tutor_panel_open: bool
+
+
+class SettingsOut(SettingsUpdate):
+    pass
+
+
+class PreferencesResetOut(BaseModel):
+    default_presentation_format: Literal["detailed", "concise", "worked_example", "analogy"]
+    tutor_panel_open: bool
+    presentation_affinity_rows_removed: int
+
+
+class AccountDeletionOut(BaseModel):
+    status: Literal["deleted", "cleanup_pending"]
+    pending_storage_cleanups: int = Field(ge=0)
+
+
+@router.patch("/me/consent", response_model=ConsentOut)
 def update_consent(
     body: ConsentUpdate,
     user: User = Depends(get_current_user),
@@ -42,28 +68,57 @@ def update_consent(
     core learning loop depends on -- declining it never breaks upload,
     generation, study, assessment, or recommendation.
     """
-    user.tracking_consent = body.tracking_consent
-    db.commit()
-    return {"tracking_consent": user.tracking_consent}
+    consent = PrivacyService(db).update_tracking_consent(user.id, body.tracking_consent)
+    return {"tracking_consent": consent}
 
 
-@router.delete("/me", status_code=202)
+@router.get("/me/settings", response_model=SettingsOut)
+def read_settings(user: User = Depends(get_current_user)):
+    return {
+        "tracking_consent": user.tracking_consent,
+        "default_presentation_format": user.default_presentation_format,
+        "tutor_panel_open": user.tutor_panel_open,
+    }
+
+
+@router.patch("/me/settings", response_model=SettingsOut)
+def update_settings(
+    body: SettingsUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return PrivacyService(db).update_settings(
+        user.id,
+        tracking_consent=body.tracking_consent,
+        default_presentation_format=body.default_presentation_format,
+        tutor_panel_open=body.tutor_panel_open,
+    )
+
+
+@router.post("/me/preferences/reset", response_model=PreferencesResetOut)
+def reset_preferences(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return PrivacyService(db).reset_presentation_preferences(user.id)
+
+
+@router.delete("/me", status_code=202, response_model=AccountDeletionOut)
 def delete_my_account(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    Cascades to every course, document, chunk, curriculum/mastery/
-    adaptation/tutor record, and legacy record this user owns, then the
-    user row itself -- see privacy/service.py's PrivacyService for exactly
-    what that covers and what it deliberately does not touch (audit logs).
-    Deletion is immediate and synchronous (no background-job
-    infrastructure exists to defer it), which is a stricter guarantee than
-    a scheduled one, not a weaker one.
+    Removes owned database records synchronously and records every private
+    storage target in the durable cleanup queue before removing its owner or
+    source row. The response reports pending file cleanup honestly.
     """
     write_audit_log(
         db, actor_user_id=user.id, action="account_deletion_requested",
         target_type="user", target_id=user.id,
     )
-    PrivacyService(db).delete_account(user.id)
-    return {"status": "deleted"}
+    pending = PrivacyService(db).delete_account(user.id)
+    return {
+        "status": "cleanup_pending" if pending else "deleted",
+        "pending_storage_cleanups": pending,
+    }

@@ -17,6 +17,7 @@ from app.modules.adaptation.models import AdaptationDecision
 from app.modules.adaptation.service import AdaptationNotFound, AdaptationService
 from app.modules.courses.models import Course, CourseStatus
 from app.modules.courses.service import CourseNotFound, CourseService
+from app.modules.auth.models import User
 from app.modules.curriculum.models import Concept, CourseVersion, Lesson, LessonConcept, Module
 from app.modules.documents.chunk_models import Chunk
 from app.modules.documents.models import Document
@@ -533,6 +534,13 @@ class LearningService:
             raise LearningConflict(str(exc) or "No activity is available") from exc
 
         selected = recommendation.recommended
+        preferences = self.db.query(User).filter(User.id == owner_id).first()
+        selected_format = selected.get("presentation_format") or "detailed"
+        if preferences is not None and activity_includes_teaching(selected["activity_type"]):
+            # The saved user default chooses the initial rendering format for
+            # a new teaching activity. It does not alter candidate scoring,
+            # activity selection, or any resumed activity's saved format.
+            selected_format = preferences.default_presentation_format
         activity = LearningActivity(
             owner_id=owner_id,
             course_id=course_id,
@@ -543,7 +551,7 @@ class LearningService:
             lesson_id=UUID(selected["lesson_id"]) if selected["lesson_id"] else None,
             reason_text=selected["reason"],
             status=ActivityStatus.READY.value,
-            presentation_format=selected.get("presentation_format") or "detailed",
+            presentation_format=selected_format,
         )
         self.db.add(activity)
         try:

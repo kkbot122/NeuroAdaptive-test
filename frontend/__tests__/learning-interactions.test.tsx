@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test, { afterEach, before } from "node:test";
 import { JSDOM } from "jsdom";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
-import { PathParamsContext, SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
+import { PathnameContext, PathParamsContext, SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
+import { SessionContext } from "next-auth/react";
 import type { components } from "../lib/generated/api";
 import { studyWorkspaceIdentity, updateWorkspaceState } from "../lib/study-workspace-state.mjs";
 
@@ -20,6 +21,8 @@ let DiagnosticIntro: typeof import("../components/DiagnosticIntro").DiagnosticIn
 let EmptyLessonContentState: typeof import("../components/EmptyLessonContentState").EmptyLessonContentState;
 let AdaptiveActivityPage: typeof import("../app/(pages)/courses/[courseId]/activities/[activityId]/page").default;
 let StudyLessonPage: typeof import("../app/(pages)/courses/[courseId]/study/[lessonId]/page").default;
+let WorkspacePage: typeof import("../app/(pages)/courses/[courseId]/workspace/page").default;
+let uploadCourseDocument: typeof import("../lib/upload-course-document").uploadCourseDocument;
 
 before(async () => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
@@ -41,6 +44,8 @@ before(async () => {
   ({ EmptyLessonContentState } = await import("../components/EmptyLessonContentState"));
   ({ default: AdaptiveActivityPage } = await import("../app/(pages)/courses/[courseId]/activities/[activityId]/page"));
   ({ default: StudyLessonPage } = await import("../app/(pages)/courses/[courseId]/study/[lessonId]/page"));
+  ({ default: WorkspacePage } = await import("../app/(pages)/courses/[courseId]/workspace/page"));
+  ({ uploadCourseDocument } = await import("../lib/upload-course-document"));
 });
 
 afterEach(() => {
@@ -219,6 +224,84 @@ function sidePanelProps(overrides = {}) {
   };
 }
 
+test("the source replacement input stays mounted in processing and outline review", async () => {
+  const course = {
+    id: "course-1", title: "Distributed Systems", status: "PROCESSING", created_at: null, goal: null,
+    source_count: 1, source_revision: 3, sources_finalized_at: "2026-10-08T12:00:00Z", starting_confidence: null,
+  };
+  const document = {
+    id: "document-1", course_id: "course-1", filename: "consistency.txt", role: "STUDY", source_kind: "UPLOAD",
+    status: "EXTRACTED", size_bytes: 120, page_count: null, needs_input_reason: null, created_at: null,
+  };
+  const job = {
+    id: "job-1", course_id: "course-1", status: "PAUSED", current_stage: "EXTRACTING",
+    error_category: "PROVIDER_UNAVAILABLE", error_detail: "Processing is paused.", retry_available: true, retry_count: 0, source_revision: 3, stages: [],
+  };
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/courses/course-1")) return new Response(JSON.stringify(course));
+    if (url.endsWith("/courses/course-1/documents")) return new Response(JSON.stringify([document]));
+    if (url.endsWith("/courses/course-1/jobs/latest")) return new Response(JSON.stringify(job));
+    if (url.endsWith("/jobs/job-1")) return new Response(JSON.stringify(job));
+    if (url.endsWith("/courses/course-1/structure")) return new Response(JSON.stringify({ version_id: "version-1", modules: [] }));
+    if (url.endsWith("/courses/course-1/graph")) return new Response(JSON.stringify({ concepts: [] }));
+    throw new Error(`Unexpected request: ${url}`);
+  };
+  const router = { back() {}, forward() {}, refresh() {}, push() {}, replace() {}, prefetch() {} };
+  const session = { user: { name: "Learner", email: "learner@example.test" }, expires: "2099-01-01T00:00:00.000Z" };
+  const mountWorkspace = () => render(<AppRouterContext.Provider value={router}>
+      <PathnameContext.Provider value="/courses/course-1/workspace">
+        <PathParamsContext.Provider value={{ courseId: "course-1" }}>
+          <SessionContext.Provider value={{ data: session, status: "authenticated", update: async () => session }}>
+            <WorkspacePage />
+          </SessionContext.Provider>
+        </PathParamsContext.Provider>
+      </PathnameContext.Provider>
+    </AppRouterContext.Provider>);
+
+  const view = mountWorkspace();
+  const replace = await screen.findByRole("button", { name: "Replace consistency.txt" });
+  const fileInput = view.container.querySelector<HTMLInputElement>('input[type="file"]');
+  assert.ok(fileInput, "the hidden replacement input remains mounted outside the setup views");
+  let inputClicks = 0;
+  fileInput.click = () => { inputClicks += 1; };
+  fireEvent.click(replace);
+  assert.equal(inputClicks, 1);
+
+  view.unmount();
+  job.status = "READY";
+  const outline = mountWorkspace();
+  const outlineReplace = await screen.findByRole("button", { name: "Replace consistency.txt" });
+  const outlineInput = outline.container.querySelector<HTMLInputElement>('input[type="file"]');
+  assert.ok(outlineInput, "the same hidden input remains mounted during outline review");
+  let outlineInputClicks = 0;
+  outlineInput.click = () => { outlineInputClicks += 1; };
+  fireEvent.click(outlineReplace);
+  assert.equal(outlineInputClicks, 1);
+});
+
+test("source replacement keeps the selected document role through local upload fallback", async () => {
+  const sentBodies: BodyInit[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/documents/upload-intents")) return new Response(JSON.stringify({
+      type: "https://neurolearn.internal/problems/storage-not-configured",
+    }), { status: 503 });
+    if (url.endsWith("/documents")) {
+      if (init?.body) sentBodies.push(init.body);
+      return new Response(JSON.stringify({ source_changed: true, cleanup_pending: true }));
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  await uploadCourseDocument("course-1", new File(["syllabus replacement text"], "plan.txt", { type: "text/plain" }), "syllabus-1", "SYLLABUS");
+
+  assert.equal(sentBodies.length, 1);
+  assert.ok(sentBodies[0] instanceof FormData);
+  assert.equal((sentBodies[0] as FormData).get("role"), "SYLLABUS");
+  assert.equal((sentBodies[0] as FormData).get("replaces_document_id"), "syllabus-1");
+});
+
 test("an open assessment locks the rendered tutor panel and blocks submit events", async () => {
   let tutorRequests = 0;
   globalThis.fetch = async (input, init) => {
@@ -329,18 +412,95 @@ test("submitted results still obey an assessment lock elsewhere in the account",
   assert.equal((screen.getByRole("textbox", { name: "Ask the tutor" }) as HTMLInputElement).disabled, true);
 });
 
+test("selecting a cited passage opens a panel collapsed by the saved preference", async () => {
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/me/settings")) return new Response(JSON.stringify({ tutor_panel_open: false }));
+    if (url.includes("/tutor/history")) return new Response(JSON.stringify({
+      conversation_id: "test-conversation-id", available: false, turns: [], has_more: false,
+    }));
+    if (url.endsWith("/chunks/chunk-1")) return new Response(JSON.stringify({
+      id: "chunk-1", filename: "course-notes.txt", text: "The cited passage is visible.",
+      page_start: null, page_end: null, heading_path: "Unit 1",
+    }));
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  const view = render(<LearningSidePanel {...sidePanelProps()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open tutor and sources" }));
+  await screen.findByRole("tab", { name: /Tutor/ });
+
+  view.rerender(<LearningSidePanel {...sidePanelProps({ initialSourceChunkId: "chunk-1" })} />);
+
+  assert.equal((await screen.findByRole("tab", { name: /Sources/ })).getAttribute("aria-selected"), "true");
+  await screen.findByText("The cited passage is visible.");
+  assert.ok(screen.getByRole("heading", { name: "course-notes.txt" }));
+});
+
+test("a late closed-panel preference cannot hide a citation selected by the learner", async () => {
+  let resolveSettings: (response: Response) => void = () => {};
+  const settings = new Promise<Response>((resolve) => { resolveSettings = resolve; });
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/me/settings")) return settings;
+    if (url.includes("/tutor/history")) return new Response(JSON.stringify({
+      conversation_id: "test-conversation-id", available: false, turns: [], has_more: false,
+    }));
+    if (url.endsWith("/chunks/chunk-1")) return new Response(JSON.stringify({
+      id: "chunk-1", filename: "course-notes.txt", text: "The selected citation stays visible.",
+      page_start: null, page_end: null, heading_path: "Unit 1",
+    }));
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  const view = render(<LearningSidePanel {...sidePanelProps()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Close tutor and sources panel" }));
+  assert.ok(await screen.findByRole("button", { name: "Open tutor and sources" }));
+  view.rerender(<LearningSidePanel {...sidePanelProps({ initialSourceChunkId: "chunk-1" })} />);
+  await screen.findByText("The selected citation stays visible.");
+  resolveSettings(new Response(JSON.stringify({ tutor_panel_open: false })));
+  await waitFor(() => assert.equal((screen.getByRole("tab", { name: /Sources/ })).getAttribute("aria-selected"), "true"));
+  assert.ok(screen.getByText("The selected citation stays visible."));
+});
+
+test("closing the panel and reopening the same citation emits a fresh open request", async () => {
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/me/settings")) return new Response(JSON.stringify({ tutor_panel_open: false }));
+    if (url.includes("/tutor/history")) return new Response(JSON.stringify({
+      conversation_id: "test-conversation-id", available: false, turns: [], has_more: false,
+    }));
+    if (url.endsWith("/chunks/chunk-1")) return new Response(JSON.stringify({
+      id: "chunk-1", filename: "course-notes.txt", text: "The same citation opens again.",
+      page_start: null, page_end: null, heading_path: "Unit 1",
+    }));
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  const view = render(<LearningSidePanel {...sidePanelProps({ initialSourceChunkId: "chunk-1", sourceOpenRequestId: 1 })} />);
+  await screen.findByText("The same citation opens again.");
+  fireEvent.click(screen.getByRole("button", { name: "Close tutor and sources panel" }));
+  assert.ok(await screen.findByRole("button", { name: "Open tutor and sources" }));
+
+  view.rerender(<LearningSidePanel {...sidePanelProps({ initialSourceChunkId: "chunk-1", sourceOpenRequestId: 2 })} />);
+
+  assert.equal((await screen.findByRole("tab", { name: /Sources/ })).getAttribute("aria-selected"), "true");
+  assert.ok(screen.getByText("The same citation opens again."));
+});
+
 test("late history from a previous activity cannot replace the current conversation", async () => {
   let release: (response: Response) => void = () => {};
   const late = new Promise<Response>((resolve) => { release = resolve; });
-  let reads = 0;
-  globalThis.fetch = async () => {
-    reads += 1;
-    if (reads === 1) return late;
+  let historyReads = 0;
+  globalThis.fetch = async (input) => {
+    if (String(input).endsWith("/api/v1/me/settings")) return new Response(JSON.stringify({ tutor_panel_open: true }));
+    historyReads += 1;
+    if (historyReads === 1) return late;
     return new Response(JSON.stringify({ conversation_id: "test-conversation-id", available: true, has_more: false,
       turns: [{ id: "new-turn", question: "New activity question", answer_markdown: "Current activity answer", citations: [], grounding_mode: "source_only" }] }));
   };
   const view = render(<LearningSidePanel {...sidePanelProps()} />);
-  await waitFor(() => assert.equal(reads, 1));
+  await waitFor(() => assert.equal(historyReads, 1));
   view.rerender(<LearningSidePanel {...sidePanelProps({ conversationStorageKey: "activity-2" })} />);
   await screen.findByText("Current activity answer");
   release(new Response(JSON.stringify({ conversation_id: "test-conversation-id", available: true, has_more: false,
@@ -499,6 +659,7 @@ test("diagnostic introduction follows the starting-point reference without fake 
     created_at: null,
     goal: null,
     source_count: 3,
+    source_revision: 0,
     sources_finalized_at: null,
     starting_confidence: null,
   };
@@ -539,6 +700,7 @@ test("diagnostic session is created only after the learner explicitly starts it"
     created_at: null,
     goal: null,
     source_count: 3,
+    source_revision: 0,
     sources_finalized_at: null,
     starting_confidence: null,
   };

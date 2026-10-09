@@ -12,7 +12,7 @@ Paths below are relative to repository root.
 | Area | Present / code evidence | Required change |
 | --- | --- | --- |
 | Identity/dashboard | `frontend/auth.ts`; `frontend/app/(pages)/dashboard/page.tsx` | Retain Google flow; unify actions with saved learning state |
-| Setup/processing | `backend/app/modules/documents/service.py`; `jobs/service.py`; frontend `courses/[courseId]/workspace/page.tsx` | Reuse pipeline; pre-publication replacement with dependent-artifact invalidation/revalidation |
+| Setup/processing | `backend/app/modules/documents/service.py`; `jobs/service.py`; frontend `courses/[courseId]/workspace/page.tsx` | **P7 implemented locally:** pre-publication replacement/removal, source-revision worker fence, unchanged extraction reuse, derived-artifact invalidation, current outline rebuild/review, and published-source immutability; see [P7 contract](p7-sources-settings-contract.md) |
 | Review/publish | `curriculum/router.py` supports lesson renames and publication | Add module rename; optional grounded prerequisite warnings |
 | Subjects/links | Inspected `courses/models.py` has no subject/link fields | New ownership-scoped relationships and matching/evidence policy |
 | Curriculum | `curriculum/service.py` extracts concepts, builds/validates versions, creates blueprints | Reuse; blueprints are not generated lesson assessments |
@@ -25,7 +25,7 @@ Paths below are relative to repository root.
 | Teaching/tutor | `tutor/service.py`; study/tutor/source pages | Consistent teaching structure; contextual side panels; assessment restriction |
 | Presentation | Study page sends learner-button success before assessment | Replace learning-effectiveness signal with attributed graded outcomes |
 | Progress/resume | P1 persists reading position, fixed assessment questions/answers, activity/session states, and lesson coverage; P3 derives concept comparisons at the saved submission time | P9 still needs agreed course-completion/retention criteria; no second progress store |
-| Account controls | `identity/router.py`, `privacy/service.py`; existing profile UI | P5 report/judgment/correction records follow approved account/course deletion; broader account settings remain P7 |
+| Account controls | `identity/router.py`, `privacy/service.py`; `frontend/app/(pages)/settings/page.tsx` | **P7 implemented locally:** persisted settings and consent, independent presentation reset, sign-out, typed deletion, and durable private-file cleanup; see [P7 contract](p7-sources-settings-contract.md) |
 | Legacy experience | `chat/router.py`, `content/router.py`, profile use learning-style data | Decide navigation placement; don't present it as the new course adaptation |
 
 Additional deployment gaps:
@@ -53,9 +53,9 @@ Module paths without full prefixes above refer to `backend/app/modules/`.
 
 ## Contract/dependency warning
 
-P1–P5 assessment, result, rubric, report, and review contracts now have local additive
-migrations and generated OpenAPI types. Linked-course retrieval remains P8; source
-replacement remains a later setup/recovery task. Hosted compatibility/configuration remain
+P1–P5 assessment, result, rubric, report, and review contracts have local additive
+migrations and generated OpenAPI types. P7 adds its own additive migration and generated
+contracts. Linked-course retrieval remains P8. Hosted compatibility/configuration remain
 unverified. This is an inspection snapshot, not a new exhaustive audit.
 
 ## P0 foundation status — 2026-10-07

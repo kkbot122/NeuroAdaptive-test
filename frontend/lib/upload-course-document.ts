@@ -1,6 +1,10 @@
 import type { components } from "@/lib/generated/api";
 
 type UploadIntent = components["schemas"]["UploadIntentOut"];
+export type UploadMutation = Pick<components["schemas"]["DocumentMutationOut"], "source_changed" | "cleanup_pending"> & {
+  replaced_filename: string | null;
+  rebuild_job_id: string | null;
+};
 
 function problemMessage(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
@@ -8,7 +12,12 @@ function problemMessage(body: unknown): string | null {
   return typeof detail === "string" ? detail : null;
 }
 
-export async function uploadCourseDocument(courseId: string, file: File): Promise<void> {
+export async function uploadCourseDocument(
+  courseId: string,
+  file: File,
+  replacesDocumentId?: string,
+  role = "STUDY",
+): Promise<UploadMutation> {
   const bytes = await file.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const checksum = Array.from(new Uint8Array(digest))
@@ -22,6 +31,8 @@ export async function uploadCourseDocument(courseId: string, file: File): Promis
       size_bytes: file.size,
       checksum_sha256: checksum,
       content_type: file.type || null,
+      role,
+      replaces_document_id: replacesDocumentId,
     }),
   });
 
@@ -36,8 +47,17 @@ export async function uploadCourseDocument(courseId: string, file: File): Promis
     const finalized = await fetch(`/api/v1/courses/${courseId}/documents/finalize/${intent.intent_id}`, {
       method: "POST",
     });
-    if (!finalized.ok) throw new Error("The uploaded source could not be finalized.");
-    return;
+    if (!finalized.ok) {
+      const body: unknown = await finalized.json().catch(() => null);
+      throw new Error(problemMessage(body) || "The uploaded source could not be finalized.");
+    }
+    const result = await finalized.json() as Partial<UploadMutation>;
+    return {
+      source_changed: result.source_changed === true,
+      replaced_filename: typeof result.replaced_filename === "string" ? result.replaced_filename : null,
+      cleanup_pending: result.cleanup_pending === true,
+      rebuild_job_id: typeof result.rebuild_job_id === "string" ? result.rebuild_job_id : null,
+    };
   }
 
   const failure: unknown = await intentResponse.json().catch(() => null);
@@ -54,12 +74,22 @@ export async function uploadCourseDocument(courseId: string, file: File): Promis
   // multipart endpoint. This is the same fallback used by the course workspace.
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("role", role);
+  if (replacesDocumentId) formData.append("replaces_document_id", replacesDocumentId);
   const legacyResponse = await fetch(`/api/v1/courses/${courseId}/documents`, {
     method: "POST",
     body: formData,
   });
+  const legacyPayload: unknown = await legacyResponse.json().catch(() => null);
   if (!legacyResponse.ok) {
-    const legacyFailure: unknown = await legacyResponse.json().catch(() => null);
+    const legacyFailure: unknown = legacyPayload;
     throw new Error(problemMessage(legacyFailure) || "The source could not be uploaded.");
   }
+  const result = legacyPayload as Partial<UploadMutation> | null;
+  return {
+    source_changed: result?.source_changed === true,
+    replaced_filename: typeof result?.replaced_filename === "string" ? result.replaced_filename : null,
+    cleanup_pending: result?.cleanup_pending === true,
+    rebuild_job_id: typeof result?.rebuild_job_id === "string" ? result.rebuild_job_id : null,
+  };
 }

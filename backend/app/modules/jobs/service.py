@@ -165,10 +165,13 @@ class JobService:
         course = self.db.query(Course).filter(Course.id == course_id, Course.owner_id == owner_id).with_for_update().first()
         if course is None:
             raise JobNotFound(str(course_id))
+        if course.status == CourseStatus.PUBLISHED.value or course.active_version_id is not None:
+            raise JobNotRetryable("Published course sources cannot be reprocessed")
         if self.has_active_job_for_course(course_id):
             raise JobAlreadyActive()
         job = ProcessingJob(
-            course_id=course_id, owner_id=owner_id, status=JobStatus.PENDING.value
+            course_id=course_id, owner_id=owner_id, source_revision=course.source_revision,
+            status=JobStatus.PENDING.value,
         )
         self.db.add(job)
         try:
@@ -201,7 +204,9 @@ class JobService:
 
     def prepare_retry(self, job_id: UUID, owner_id: int) -> ProcessingJob:
         job = self.get_owned(job_id, owner_id)
-        self.db.query(Course).filter(Course.id == job.course_id, Course.owner_id == owner_id).with_for_update().one()
+        course = self.db.query(Course).filter(Course.id == job.course_id, Course.owner_id == owner_id).with_for_update().first()
+        if course is None or course.status == CourseStatus.PUBLISHED.value or course.source_revision != job.source_revision:
+            raise JobNotRetryable("The course source set changed; use the current preparation job")
         self.db.refresh(job)
         expiry = job.lease_expires_at
         if expiry is not None and expiry.tzinfo is None:
@@ -255,7 +260,8 @@ class JobService:
                 # No blind success: the next artifact transaction checks ownership.
 
     def run(self, job_id: UUID, owner_id: int) -> ProcessingJob:
-        self.get_owned(job_id, owner_id)
+        owned_job = self.get_owned(job_id, owner_id)
+        source_revision = owned_job.source_revision
         token = uuid4()
         now = _now()
         claimed = self.db.execute(update(ProcessingJob).where(
@@ -270,11 +276,23 @@ class JobService:
             return self.get_owned(job_id, owner_id)  # duplicate/terminal delivery is inert
 
         def fence(session, *args):
-            # Conditional UPDATE locks ownership for the entire artifact
-            # transaction. Renewal and takeover serialize on this same row;
-            # after takeover, even a slow old provider result cannot commit.
+            # Lock the course row as well as the lease. Source replacement,
+            # publication, and account/course deletion serialize against this
+            # update. A stale worker must roll back every artifact write.
+            course_result = session.connection().execute(update(Course).where(
+                Course.id == owned_job.course_id,
+                Course.owner_id == owner_id,
+                Course.source_revision == source_revision,
+                Course.active_version_id.is_(None),
+                Course.status != CourseStatus.PUBLISHED.value,
+            ).values(updated_at=Course.updated_at))
+            if course_result.rowcount != 1:
+                raise LeaseLost()
             result = session.connection().execute(update(ProcessingJob).where(
-                ProcessingJob.id == job_id, ProcessingJob.lease_token == token).values(
+                ProcessingJob.id == job_id, ProcessingJob.lease_token == token,
+                ProcessingJob.source_revision == source_revision,
+                ProcessingJob.status == JobStatus.RUNNING.value,
+            ).values(
                 lease_expires_at=_now() + timedelta(seconds=settings.JOB_LEASE_SECONDS_V1)))
             if result.rowcount != 1:
                 raise LeaseLost()
@@ -469,6 +487,13 @@ class JobService:
         documents = self._documents(job)
         page_count = 0
         for document in documents:
+            cached_chunks = self.db.query(Chunk).filter(
+                Chunk.document_id == document.id,
+                Chunk.extraction_version == EXTRACTION_VERSION,
+            ).count()
+            if document.status == DocumentStatus.EXTRACTED.value and cached_chunks:
+                page_count += document.page_count or 0
+                continue
             document.status = DocumentStatus.EXTRACTING.value
             self.db.commit()
 
@@ -511,6 +536,13 @@ class JobService:
         documents = self._documents(job)
         output_count = 0
         for document in documents:
+            cached_chunks = self.db.query(Chunk).filter(
+                Chunk.document_id == document.id,
+                Chunk.extraction_version == EXTRACTION_VERSION,
+            ).count()
+            if document.status == DocumentStatus.EXTRACTED.value and cached_chunks:
+                output_count += cached_chunks
+                continue
             raw = self.documents.read_bytes(document)
             extracted = extract(raw, document.filename)
             proposed_chunks = chunk_document(extracted)

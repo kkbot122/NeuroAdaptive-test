@@ -94,11 +94,13 @@ class CurriculumService:
             raise CurriculumNotFound(str(course_id))
 
         processing_retry_count = 0
+        source_revision = course.source_revision
         if processing_job_id is not None:
             from app.modules.jobs.models import ProcessingJob
             job = self.db.query(ProcessingJob).filter_by(id=processing_job_id, course_id=course_id, owner_id=owner_id).first()
             if job is None:
                 raise CurriculumNotFound(str(processing_job_id))
+            source_revision = job.source_revision
             processing_retry_count = job.retry_count
             existing = self.db.query(CourseVersion).filter_by(processing_job_id=processing_job_id,
                 course_id=course_id, owner_id=owner_id).order_by(CourseVersion.processing_retry_count.desc()).first()
@@ -143,6 +145,7 @@ class CurriculumService:
             version_number=version_number,
             status=CourseVersionStatus.DRAFT.value,
             source_fingerprint=self._source_fingerprint(course_id),
+            source_revision=source_revision,
             validation_errors=[],
         )
         # Build provider inputs in memory before the fenced write transaction.
@@ -308,7 +311,7 @@ class CurriculumService:
         previously active version untouched.
         """
         try:
-            course = self.courses.get_owned(course_id, owner_id)
+            course = self.courses.get_owned(course_id, owner_id, lock=True)
         except CourseNotFound:
             raise CurriculumNotFound(str(course_id))
 
@@ -321,6 +324,22 @@ class CurriculumService:
             raise CurriculumNotFound(str(version_id))
         if version.status != CourseVersionStatus.READY.value:
             raise VersionNotReady(version.status)
+        if course.status != "REVIEW_READY" or course.active_version_id is not None:
+            raise VersionNotReady("source rebuild is incomplete or the outline is no longer current")
+        latest = self.get_review_version(course_id, owner_id)
+        if latest is None or version.id != latest.id:
+            raise VersionNotReady("only the current outline can be published")
+        if version.source_revision != course.source_revision or version.source_fingerprint != self._source_fingerprint(course_id):
+            raise VersionNotReady("the outline was built from an older source set")
+        from app.modules.jobs.models import ProcessingJob
+        current_job = self.db.query(ProcessingJob).filter(
+            ProcessingJob.course_id == course_id,
+            ProcessingJob.owner_id == owner_id,
+            ProcessingJob.source_revision == course.source_revision,
+        ).order_by(ProcessingJob.created_at.desc()).first()
+        if (current_job is None or current_job.status != "READY"
+                or version.processing_job_id != current_job.id):
+            raise VersionNotReady("source rebuilding is not complete")
 
         course.active_version_id = version.id
         course.status = "PUBLISHED"
@@ -369,10 +388,12 @@ class CurriculumService:
         must show the latest attempt even if it failed validation, not only
         an already-active one.
         """
-        self._get_owned_course(course_id, owner_id)
+        course = self._get_owned_course(course_id, owner_id)
         return (
             self.db.query(CourseVersion)
-            .filter(CourseVersion.course_id == course_id)
+            .filter(CourseVersion.course_id == course_id,
+                    CourseVersion.owner_id == owner_id,
+                    CourseVersion.source_revision == course.source_revision)
             .order_by(CourseVersion.version_number.desc())
             .first()
         )
@@ -410,12 +431,19 @@ class CurriculumService:
 
     def rename_lesson(self, course_id: UUID, owner_id: int, lesson_id: UUID, title: str) -> Lesson:
         """The outline review gate's simplest edit: PUT .../structure."""
-        self._get_owned_course(course_id, owner_id)
+        try:
+            course = self.courses.get_owned(course_id, owner_id, lock=True)
+        except CourseNotFound:
+            raise CurriculumNotFound(str(course_id))
+        latest = self.get_review_version(course_id, owner_id)
+        if course.status != "REVIEW_READY" or latest is None or latest.source_revision != course.source_revision:
+            raise VersionNotReady("the current outline is still rebuilding")
         lesson = (
             self.db.query(Lesson)
             .join(Module, Lesson.module_id == Module.id)
             .join(CourseVersion, Module.course_version_id == CourseVersion.id)
-            .filter(Lesson.id == lesson_id, CourseVersion.course_id == course_id)
+            .filter(Lesson.id == lesson_id, CourseVersion.course_id == course_id,
+                    CourseVersion.id == latest.id, CourseVersion.source_revision == course.source_revision)
             .first()
         )
         if lesson is None:

@@ -563,6 +563,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/courses/{course_id}/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Document */
+        delete: operations["remove_document_api_v1_courses__course_id__documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/courses/{course_id}/finalize-sources": {
         parameters: {
             query?: never;
@@ -1107,13 +1124,9 @@ export interface paths {
         post?: never;
         /**
          * Delete My Account
-         * @description Cascades to every course, document, chunk, curriculum/mastery/
-         *     adaptation/tutor record, and legacy record this user owns, then the
-         *     user row itself -- see privacy/service.py's PrivacyService for exactly
-         *     what that covers and what it deliberately does not touch (audit logs).
-         *     Deletion is immediate and synchronous (no background-job
-         *     infrastructure exists to defer it), which is a stricter guarantee than
-         *     a scheduled one, not a weaker one.
+         * @description Removes owned database records synchronously and records every private
+         *     storage target in the durable cleanup queue before removing its owner or
+         *     source row. The response reports pending file cleanup honestly.
          */
         delete: operations["delete_my_account_api_v1_me_delete"];
         options?: never;
@@ -1142,6 +1155,41 @@ export interface paths {
          *     generation, study, assessment, or recommendation.
          */
         patch: operations["update_consent_api_v1_me_consent_patch"];
+        trace?: never;
+    };
+    "/api/v1/me/preferences/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Preferences */
+        post: operations["reset_preferences_api_v1_me_preferences_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Settings */
+        get: operations["read_settings_api_v1_me_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Settings */
+        patch: operations["update_settings_api_v1_me_settings_patch"];
         trace?: never;
     };
     "/api/v1/presentation-affinity/outcome": {
@@ -1547,6 +1595,16 @@ export interface components {
             /** Unfinished Attempts */
             unfinished_attempts: number;
         };
+        /** AccountDeletionOut */
+        AccountDeletionOut: {
+            /** Pending Storage Cleanups */
+            pending_storage_cleanups: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "deleted" | "cleanup_pending";
+        };
         /** ActivityContentResponseOut */
         ActivityContentResponseOut: {
             content?: components["schemas"]["PreparedLessonContentOut"] | null;
@@ -1761,6 +1819,8 @@ export interface components {
              * Format: binary
              */
             file: string;
+            /** Replaces Document Id */
+            replaces_document_id?: string | null;
             /**
              * Role
              * @default STUDY
@@ -1850,6 +1910,14 @@ export interface components {
             /** Description */
             description: string;
         };
+        /** ConsentOut */
+        ConsentOut: {
+            /**
+             * Tracking Consent
+             * @enum {string}
+             */
+            tracking_consent: "full" | "minimal";
+        };
         /** ConsentUpdate */
         ConsentUpdate: {
             /** Tracking Consent */
@@ -1885,6 +1953,11 @@ export interface components {
              * @default 0
              */
             source_count: number;
+            /**
+             * Source Revision
+             * @default 0
+             */
+            source_revision: number;
             /** Sources Finalized At */
             sources_finalized_at: string | null;
             /** Starting Confidence */
@@ -1907,6 +1980,49 @@ export interface components {
         DiagnosticRequest: {
             /** Max Questions */
             max_questions?: number | null;
+        };
+        /** DocumentMutationOut */
+        DocumentMutationOut: {
+            /**
+             * Cleanup Pending
+             * @default false
+             */
+            cleanup_pending: boolean;
+            /**
+             * Course Id
+             * Format: uuid
+             */
+            course_id: string;
+            /** Created At */
+            created_at: string | null;
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Needs Input Reason */
+            needs_input_reason: string | null;
+            /** Page Count */
+            page_count: number | null;
+            /** Rebuild Job Id */
+            rebuild_job_id?: string | null;
+            /** Replaced Filename */
+            replaced_filename?: string | null;
+            /** Role */
+            role: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Source Changed
+             * @default false
+             */
+            source_changed: boolean;
+            /** Source Kind */
+            source_kind: string;
+            /** Status */
+            status: string;
         };
         /** DocumentOut */
         DocumentOut: {
@@ -2249,6 +2365,11 @@ export interface components {
             retry_available: boolean;
             /** Retry Count */
             retry_count: number;
+            /**
+             * Source Revision
+             * @default 0
+             */
+            source_revision: number;
             /** Stages */
             stages: components["schemas"]["StageOut"][];
             /** Status */
@@ -2437,6 +2558,18 @@ export interface components {
             text: string;
             /** Title */
             title?: string | null;
+        };
+        /** PreferencesResetOut */
+        PreferencesResetOut: {
+            /**
+             * Default Presentation Format
+             * @enum {string}
+             */
+            default_presentation_format: "detailed" | "concise" | "worked_example" | "analogy";
+            /** Presentation Affinity Rows Removed */
+            presentation_affinity_rows_removed: number;
+            /** Tutor Panel Open */
+            tutor_panel_open: boolean;
         };
         /** PreparationOut */
         PreparationOut: {
@@ -2715,6 +2848,36 @@ export interface components {
             /** Source Chunk Ids */
             source_chunk_ids: string[];
         };
+        /** SettingsOut */
+        SettingsOut: {
+            /**
+             * Default Presentation Format
+             * @enum {string}
+             */
+            default_presentation_format: "detailed" | "concise" | "worked_example" | "analogy";
+            /**
+             * Tracking Consent
+             * @enum {string}
+             */
+            tracking_consent: "full" | "minimal";
+            /** Tutor Panel Open */
+            tutor_panel_open: boolean;
+        };
+        /** SettingsUpdate */
+        SettingsUpdate: {
+            /**
+             * Default Presentation Format
+             * @enum {string}
+             */
+            default_presentation_format: "detailed" | "concise" | "worked_example" | "analogy";
+            /**
+             * Tracking Consent
+             * @enum {string}
+             */
+            tracking_consent: "full" | "minimal";
+            /** Tutor Panel Open */
+            tutor_panel_open: boolean;
+        };
         /** StageOut */
         StageOut: {
             /** Attempts */
@@ -2876,6 +3039,8 @@ export interface components {
             content_type?: string | null;
             /** Filename */
             filename: string;
+            /** Replaces Document Id */
+            replaces_document_id?: string | null;
             /**
              * Role
              * @default STUDY
@@ -4105,7 +4270,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DocumentOut"];
+                    "application/json": components["schemas"]["DocumentMutationOut"];
                 };
             };
             /** @description Created */
@@ -4114,7 +4279,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DocumentOut"];
+                    "application/json": components["schemas"]["DocumentMutationOut"];
                 };
             };
             /** @description Validation Error */
@@ -4149,7 +4314,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DocumentOut"];
+                    "application/json": components["schemas"]["DocumentMutationOut"];
                 };
             };
             /** @description Validation Error */
@@ -4187,7 +4352,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DocumentOut"];
+                    "application/json": components["schemas"]["DocumentMutationOut"];
                 };
             };
             /** @description Created */
@@ -4196,7 +4361,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DocumentOut"];
+                    "application/json": components["schemas"]["DocumentMutationOut"];
                 };
             };
             /** @description Validation Error */
@@ -4235,6 +4400,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UploadIntentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_document_api_v1_courses__course_id__documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentMutationOut"];
                 };
             };
             /** @description Validation Error */
@@ -5296,7 +5496,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AccountDeletionOut"];
                 };
             };
             /** @description Validation Error */
@@ -5332,7 +5532,107 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConsentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_preferences_api_v1_me_preferences_reset_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferencesResetOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_settings_api_v1_me_settings_get: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_settings_api_v1_me_settings_patch: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsOut"];
                 };
             };
             /** @description Validation Error */

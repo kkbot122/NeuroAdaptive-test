@@ -20,6 +20,27 @@ export interface LearningEvent {
   payload?: Record<string, unknown>;
 }
 
+async function trackingEnabled(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  try {
+    const cached = window.localStorage.getItem("neurolearn:tracking-consent");
+    if (cached === "minimal") return false;
+    if (cached === "full") return true;
+
+    // Resolve first-use consent before constructing or sending an optional
+    // event. Required progress/resume writes use their own learning APIs.
+    const response = await fetch("/api/v1/me/settings", { cache: "no-store" });
+    if (!response.ok) return false;
+    const settings = await response.json() as { tracking_consent?: unknown };
+    if (settings.tracking_consent !== "full" && settings.tracking_consent !== "minimal") return false;
+    window.localStorage.setItem("neurolearn:tracking-consent", settings.tracking_consent);
+    return settings.tracking_consent === "full";
+  } catch {
+    // Optional collection fails closed if consent cannot be checked.
+    return false;
+  }
+}
+
 /**
  * Send one or more events. Returns whether they were accepted.
  *
@@ -30,6 +51,7 @@ export async function sendLearningEvents(
   events: LearningEvent[],
 ): Promise<boolean> {
   if (events.length === 0) return true;
+  if (!(await trackingEnabled())) return true;
 
   try {
     const response = await fetch("/api/events", {

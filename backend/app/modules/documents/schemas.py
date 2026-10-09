@@ -20,3 +20,10 @@ class UploadIntentOut(BaseModel):
     upload_url: str
     required_headers: dict[str, str]
     expires_at: datetime
+
+
+class DocumentMutationOut(DocumentOut):
+    source_changed: bool = False
+    replaced_filename: Optional[str] = None
+    cleanup_pending: bool = False
+    rebuild_job_id: Optional[UUID] = None

@@ -23,6 +23,7 @@ class JobSummary(BaseModel):
 
 class JobOut(JobSummary):
     course_id: UUID
+    source_revision: int = 0
     retry_available: bool = False
     retry_count: int
     error_detail: Optional[str]

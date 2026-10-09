@@ -1,8 +1,8 @@
 # NeuroLearn product plan
 
-Status: agreed product direction. P0 repository configuration and P1–P5 learning
-contracts are implemented locally; hosted deployment and runtime pass conditions have
-not been demonstrated. Date: 2026-10-08.
+Status: agreed product direction. P0 repository configuration and P1–P7 learning,
+source, settings, and privacy contracts are implemented locally; hosted deployment and
+runtime pass conditions have not been demonstrated. Date: 2026-10-09.
 
 ## Read in this order
 
@@ -16,6 +16,7 @@ not been demonstrated. Date: 2026-10-08.
 | [p3-results-progress-contract.md](p3-results-progress-contract.md) | How do submitted results, concept evidence, and the next activity connect? |
 | [p4-adaptive-activities-contract.md](p4-adaptive-activities-contract.md) | How do remediation, targeted practice, and challenge use saved recommendations? |
 | [p5-short-answer-review-contract.md](p5-short-answer-review-contract.md) | How are grounded short answers graded, recovered, reported, and corrected? |
+| [p7-sources-settings-contract.md](p7-sources-settings-contract.md) | How do pre-publication source changes, presentation preferences, tracking consent, and deletion recovery work? |
 | [implementation-gap.md](implementation-gap.md) | What can we reuse, and what is missing? |
 | [build-plan.md](build-plan.md) | What should we implement first, and how do we demonstrate it? |
 

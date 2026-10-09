@@ -110,12 +110,22 @@ class TestUploadValidation:
         assert ".." not in document.storage_path
         assert document.filename == "escape.txt"
 
-    def test_upload_refused_after_sources_finalized(self, client, owner, course):
+    def test_upload_after_sources_finalized_rebuilds_before_publication(self, client, owner, course):
+        from app.main import app
+        from app.modules.documents.router import _job_dispatcher
+
+        class DeferredDispatcher:
+            def enqueue(self, job_id, owner_id):
+                return None
+
+        app.dependency_overrides[_job_dispatcher] = DeferredDispatcher
         client.post(
             f"/api/v1/courses/{course['id']}/finalize-sources", headers=auth_headers(owner.email)
         )
         response = upload(client, owner.email, course["id"])
-        assert response.status_code == 409
+        assert response.status_code == 201
+        assert response.json()["source_changed"] is True
+        assert response.json()["rebuild_job_id"]
 
 
 class TestMagicByteRejection:
@@ -463,18 +473,19 @@ class TestLatestJobRecovery:
         assert response.status_code == 404
 
 
-class TestConcurrentProcessingIsRejected:
+class TestConcurrentProcessingIsIdempotent:
     """
     Reproduces live: a UI double/triple-click (no loading feedback on the
     button) sent overlapping POST .../process requests for the same
     course. Both passed the "does this chunk id already exist" check
     before either had committed, then both tried to INSERT the same
-    deterministic chunk id -- a real IntegrityError. The fix rejects a
-    second call outright while one is already active, rather than letting
-    two pipeline runs race.
+    deterministic chunk id -- a real IntegrityError. A duplicate with the
+    current source revision returns the existing job rather than creating
+    another pipeline.
     """
 
-    def test_a_second_process_call_while_one_is_active_is_rejected(self, client, owner, course, db_session):
+    def test_a_second_process_call_while_one_is_active_reuses_the_job(self, client, owner, course, db_session):
+        from app.modules.courses.models import Course
         from app.modules.jobs.models import JobStatus, ProcessingJob
 
         upload(client, owner.email, course["id"])
@@ -484,15 +495,17 @@ class TestConcurrentProcessingIsRejected:
         # guard that closes the race, regardless of how "active" was reached.
         from uuid import UUID as _UUID
 
-        db_session.add(ProcessingJob(course_id=_UUID(course["id"]), owner_id=owner.id, status=JobStatus.RUNNING.value))
+        course_row = db_session.query(Course).filter_by(id=_UUID(course["id"])).one()
+        job = ProcessingJob(course_id=course_row.id, owner_id=owner.id,
+                            source_revision=course_row.source_revision, status=JobStatus.RUNNING.value)
+        db_session.add(job)
         db_session.commit()
 
         response = client.post(
             f"/api/v1/courses/{course['id']}/process", headers=auth_headers(owner.email)
         )
-        assert response.status_code == 409
-        assert response.headers["content-type"] == "application/problem+json"
-        assert "already" in response.json()["detail"].lower()
+        assert response.status_code == 202
+        assert response.json()["id"] == str(job.id)
 
     def test_a_process_call_after_the_previous_job_finished_is_allowed(self, client, owner, course, db_session):
         from app.modules.jobs.models import JobStatus, ProcessingJob

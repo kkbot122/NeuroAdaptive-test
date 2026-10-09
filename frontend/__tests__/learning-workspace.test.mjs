@@ -129,6 +129,13 @@ test("format and source/tutor panels keep saved course activity context", () => 
   assert.match(sidePanel, /chunk\.page_start/);
   assert.match(sidePanel, /chunk\.heading_path/);
   assert.doesNotMatch(sidePanel, /dangerouslySetInnerHTML/);
+  for (const page of [study, activity, assessment]) {
+    assert.match(page, /setSourceOpenRequestId\(\(requestId\) => requestId \+ 1\)/);
+    assert.match(page, /sourceOpenRequestId=\{sourceOpenRequestId\}/);
+  }
+  assert.match(study, /onOpenSource=\{openSource\}/);
+  assert.match(activity, /onOpenSource=\{openSource\}/);
+  assert.match(assessment, /onClick=\{\(\) => openSource\(chunkId\)\}/);
   assert.match(study, /conversationStorageKey=\{activityId \? `course:\$\{courseId\}:activity:\$\{activityId\}`/);
 });
 

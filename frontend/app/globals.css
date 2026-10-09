@@ -661,6 +661,61 @@ a { color: inherit; }
 .nl-reviewer-empty p, .nl-reviewer-deny p { margin: 0 0 18px; color: var(--nl-muted); }
 .nl-reviewer-detail-empty { color: var(--nl-muted); }
 
+/* Settings follow the document's two-column shell and bordered control cards. */
+.nl-settings-main { width: min(820px, 100%); min-width: 0; margin: 0 auto; padding: 36px 32px 110px; }
+.nl-settings-main > h1 { margin: 0 0 6px; font-size: 2rem; }
+.nl-settings-lead { margin: 0 0 28px; color: var(--nl-muted); }
+.nl-settings-main form { margin: 0; }
+.nl-settings-set { margin-bottom: 24px; border: var(--nl-border); background: var(--nl-paper); }
+.nl-settings-set > h2 { margin: 0; border-bottom: var(--nl-border); padding: 16px 24px; font-size: 1.1rem; }
+.nl-settings-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: var(--nl-border); padding: 18px 24px; }
+.nl-settings-row:last-child { border-bottom: 0; }
+.nl-settings-row > div { min-width: 0; }
+.nl-settings-row b { display: block; font-family: var(--nl-display); }
+.nl-settings-row p { max-width: 52ch; margin: 0; color: var(--nl-muted); font-size: .92rem; }
+.nl-settings-row.is-required { background: #f7f7f7; }
+.nl-settings-hint { color: var(--nl-muted); font-size: .9rem; }
+.nl-settings-select { min-width: 170px; border: var(--nl-border); border-radius: 0; background: white; padding: 8px 12px; }
+.nl-settings-switch { position: relative; width: 56px; height: 30px; flex: none; }
+.nl-settings-switch input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; cursor: pointer; opacity: 0; }
+.nl-settings-switch > span { position: absolute; inset: 0; border: var(--nl-border); background: white; pointer-events: none; transition: background .1s; }
+.nl-settings-switch > span::after { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: var(--nl-ink); content: ""; transition: transform .1s; }
+.nl-settings-switch input:checked + span { background: var(--nl-mint); }
+.nl-settings-switch input:checked + span::after { transform: translateX(26px); }
+.nl-settings-switch input:focus-visible + span { outline: 3px solid var(--nl-violet); outline-offset: 3px; }
+.nl-settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.nl-settings-reset-row { border-top: var(--nl-border); background: #f7f7f7; padding: 16px 24px; }
+.nl-settings-save-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 0 0 32px; }
+.nl-settings-danger { border-color: var(--nl-ink); }
+.nl-settings-danger > h2 { background: var(--nl-coral); }
+.nl-settings-confirm { border-top: var(--nl-border); background: #fff1ef; padding: 18px 24px; }
+.nl-settings-confirm-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+.nl-settings-confirm-controls input { width: min(220px, 100%); }
+.nl-settings-notice, .nl-settings-error, .nl-settings-error-inline { border: var(--nl-border); padding: 10px 14px; }
+.nl-settings-notice { margin: 0 24px 16px; background: white; font-size: .9rem; }
+.nl-settings-error { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 20px; background: #fff1ef; color: #741d16; }
+.nl-settings-error p { margin: 0; }
+.nl-settings-error-inline { margin: 12px 0 0; background: #fff1ef; color: #741d16; }
+.nl-panel-collapsed { min-height: 0; height: auto; padding: 14px; }
+.nl-panel-open, .nl-panel-close { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; background: transparent; padding: 9px 12px; font-weight: 700; }
+.nl-panel-open { width: 100%; min-height: 48px; border: var(--nl-border); background: white; box-shadow: 3px 3px 0 var(--nl-ink); }
+.nl-panel-close { flex: none; border-left: var(--nl-border); }
+
+@media (max-width: 860px) {
+  .nl-settings-main { padding-top: 32px; }
+}
+@media (max-width: 640px) {
+  .nl-settings-main { padding: 24px 18px 100px; }
+  .nl-settings-row { flex-direction: column; gap: 12px; padding: 16px 22px; }
+  .nl-settings-select { width: 100%; }
+  .nl-settings-reset-row { flex-direction: row; }
+  .nl-settings-save-row > .nl-button { width: 100%; }
+  .nl-settings-notice { margin-right: 16px; margin-left: 16px; }
+  .nl-settings-confirm { padding: 16px; }
+  .nl-settings-confirm-controls input, .nl-settings-confirm-controls .nl-button { width: 100%; }
+  .nl-panel-collapsed { height: auto; min-height: 0; }
+}
+
 @media (max-width: 900px) {
   .nl-reviewer-wrap { grid-template-columns: minmax(0, 1fr); }
   .nl-reviewer-queue { border-right: 0; border-bottom: var(--nl-border); }

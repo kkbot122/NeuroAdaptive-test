@@ -74,5 +74,12 @@ class S3PrivateStorage:
         except (BotoCoreError, ClientError):
             raise StorageUnavailable() from None
 
+    def delete(self, key: str) -> None:
+        """Delete a private object; deleting an already absent key is safe."""
+        try:
+            self.client.delete_object(Bucket=settings.STORAGE_BUCKET, Key=key)
+        except (BotoCoreError, ClientError):
+            raise StorageUnavailable() from None
+
     def create_download_url(self, key: str) -> str:
         return self.client.generate_presigned_url("get_object", Params={"Bucket": settings.STORAGE_BUCKET, "Key": key}, ExpiresIn=settings.STORAGE_SIGNED_URL_TTL_SECONDS_V1)

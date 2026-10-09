@@ -156,6 +156,8 @@ def update_structure(
         version = service.get_review_version(course_id, user.id)
     except CurriculumNotFound:
         raise HTTPException(status_code=404, detail="Course or lesson not found")
+    except VersionNotReady as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
     if version is None:
         raise HTTPException(status_code=404, detail="No course structure has been generated yet.")
@@ -194,6 +196,9 @@ def publish_structure(
         if target_version_id is None:
             latest = service.get_review_version(course_id, user.id)
             if latest is None:
+                course = service._get_owned_course(course_id, user.id)
+                if course.status == "PROCESSING":
+                    raise VersionNotReady("source rebuilding is not complete")
                 raise HTTPException(
                     status_code=404, detail="No course structure has been generated yet."
                 )

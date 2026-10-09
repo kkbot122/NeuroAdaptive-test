@@ -47,10 +47,14 @@ class Course(Base):
 
     status = Column(String(32), nullable=False, default=CourseStatus.DRAFT.value, index=True)
 
-    # Set once the source set is finalized. Documents are immutable thereafter
-    # (frozen-scope.md: "Course documents become immutable once the course is
-    # created").
+    # Marks that source preparation began. Before publication the owner may
+    # still replace or remove material; those changes advance source_revision.
     sources_finalized_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Monotonic fence for pre-publication source replacement. Jobs and review
+    # versions record this value so an older worker or outline cannot publish
+    # after the source set changes.
+    source_revision = Column(Integer, nullable=False, default=0, server_default="0")
 
     # The only field a curriculum publish action changes on this row, and
     # only via CurriculumService.activate_version() after validation passes.
@@ -71,4 +75,8 @@ class Course(Base):
 
     @property
     def sources_are_immutable(self) -> bool:
+        return self.status == CourseStatus.PUBLISHED.value or self.active_version_id is not None
+
+    @property
+    def sources_are_finalized(self) -> bool:
         return self.sources_finalized_at is not None

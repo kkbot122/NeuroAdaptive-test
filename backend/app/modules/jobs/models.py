@@ -15,6 +15,7 @@ class JobStatus(str, enum.Enum):
     NEEDS_INPUT = "NEEDS_INPUT"
     FAILED = "FAILED"
     PAUSED = "PAUSED"  # provider quota/availability; awaiting manual retry
+    CANCELLED = "CANCELLED"  # source set changed or the owning course was removed
 
 
 class StageStatus(str, enum.Enum):
@@ -73,6 +74,7 @@ class ProcessingJob(Base):
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     course_id = Column(Uuid, ForeignKey("courses.id"), nullable=False, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    source_revision = Column(Integer, nullable=False, default=0, server_default="0")
 
     status = Column(String(32), nullable=False, default=JobStatus.PENDING.value, index=True)
     lease_token = Column(Uuid, nullable=True)

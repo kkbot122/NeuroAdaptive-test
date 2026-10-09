@@ -10,6 +10,7 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -24,8 +25,11 @@ from app.modules.auth.models import User
 from app.modules.abuse.models import AIUsageDaily
 from app.modules.abuse.service import AbuseControlService
 from app.modules.documents.chunk_models import Chunk
-from app.modules.documents.models import Document
+from app.modules.documents.models import Document, StorageUploadIntent
+from app.modules.documents.service import DocumentService, UploadIntentNotFound
+from app.modules.documents.storage import ObjectInfo, S3PrivateStorage
 from app.modules.courses.models import Course, CourseStatus
+from app.modules.courses.service import CourseNotFound
 from app.modules.curriculum.models import (
     Concept,
     ConceptSource,
@@ -48,6 +52,7 @@ from app.modules.learning.models import (
 from app.modules.learning import service as learning_service_module
 from app.modules.learning.service import LearningService
 from app.modules.mastery.models import MasteryEvent, Question, QuestionAttempt, QuestionConcept
+from app.modules.privacy.service import PrivacyService
 from app.core.problem_details import ProblemDetailException
 from app.modules.preparation.models import (
     ActivityPreparation,
@@ -831,3 +836,100 @@ def test_postgresql_daily_ai_budget_reservations_are_atomic(postgres_schema_engi
     with session_factory() as db:
         usage = db.query(AIUsageDaily).filter_by(owner_id=owner_id).one()
         assert usage.call_count == budget
+
+
+def test_postgresql_source_finalization_and_course_deletion_serialize_without_lock_inversion(
+    postgres_schema_engine, monkeypatch,
+):
+    from app.modules.privacy import tasks
+
+    Base.metadata.create_all(postgres_schema_engine)
+    session_factory = sessionmaker(bind=postgres_schema_engine, expire_on_commit=False)
+    content = b"A replacement source used to verify course, intent, and document lock ordering."
+    checksum = hashlib.sha256(content).hexdigest()
+    monkeypatch.setattr(S3PrivateStorage, "__init__", lambda _self: None)
+    monkeypatch.setattr(S3PrivateStorage, "inspect", lambda _self, _key: ObjectInfo(len(content)))
+    monkeypatch.setattr(S3PrivateStorage, "checksum_sha256", lambda _self, _key: checksum)
+    monkeypatch.setattr(S3PrivateStorage, "read", lambda _self, _key: content)
+    monkeypatch.setattr(tasks.cleanup_storage_object, "apply_async", lambda **_kwargs: None)
+
+    with session_factory() as seed:
+        user = User(email=f"p7-race-{uuid.uuid4().hex}@example.test", full_name="P7 race", is_active=True)
+        seed.add(user)
+        seed.flush()
+        course = Course(owner_id=user.id, title="P7 finalization deletion race")
+        seed.add(course)
+        seed.flush()
+        original = Document(
+            course_id=course.id, owner_id=user.id, filename="old.txt", role="STUDY",
+            storage_path="private/p7-old.txt", storage_key="private/p7-old.txt",
+            size_bytes=12, checksum_sha256="a" * 64,
+        )
+        seed.add(original)
+        seed.flush()
+        intent = StorageUploadIntent(
+            course_id=course.id, owner_id=user.id, object_key=f"private/p7-candidate-{uuid.uuid4().hex}.txt",
+            filename="new.txt", role="STUDY", replaces_document_id=original.id,
+            expected_checksum_sha256=checksum, expected_size_bytes=len(content),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+        )
+        seed.add(intent)
+        seed.commit()
+        owner_id, course_id, intent_id = user.id, course.id, intent.id
+
+    ready = threading.Barrier(2)
+    lock_order: list[str] = []
+    lock_order_guard = threading.Lock()
+
+    def record_sql(connection, _cursor, statement, _parameters, _context, _executemany):
+        operation = connection.info.get("p7_source_delete_operation")
+        if operation != "finalize":
+            return
+        sql = statement.lower()
+        label = None
+        if "for update" in sql and " from courses " in f" {sql} ":
+            label = "course"
+        elif "for update" in sql and " from storage_upload_intents " in f" {sql} ":
+            label = "intent"
+        elif sql.lstrip().startswith("delete from documents"):
+            label = "document"
+        if label:
+            with lock_order_guard:
+                lock_order.append(label)
+
+    event.listen(postgres_schema_engine, "before_cursor_execute", record_sql)
+
+    def finalize():
+        with session_factory() as db:
+            db.connection().info["p7_source_delete_operation"] = "finalize"
+            ready.wait(timeout=10)
+            try:
+                return DocumentService(db).finalize_upload_result(course_id, intent_id, owner_id)
+            except (CourseNotFound, UploadIntentNotFound):
+                return None
+            finally:
+                db.connection().info.pop("p7_source_delete_operation", None)
+
+    def delete_course():
+        with session_factory() as db:
+            ready.wait(timeout=10)
+            PrivacyService(db).delete_owned_course(course_id, owner_id)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            finalize_future = pool.submit(finalize)
+            delete_future = pool.submit(delete_course)
+            finalize_future.result(timeout=20)
+            delete_future.result(timeout=20)
+    finally:
+        event.remove(postgres_schema_engine, "before_cursor_execute", record_sql)
+
+    assert lock_order and lock_order[0] == "course"
+    if "intent" in lock_order:
+        assert lock_order.index("course") < lock_order.index("intent")
+    if "document" in lock_order:
+        assert lock_order.index("intent") < lock_order.index("document")
+    with session_factory() as db:
+        assert db.query(Course).filter_by(id=course_id).first() is None
+        assert db.query(StorageUploadIntent).filter_by(id=intent_id).first() is None
+        assert db.query(Document).filter_by(course_id=course_id).count() == 0

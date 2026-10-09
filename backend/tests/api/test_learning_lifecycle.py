@@ -441,6 +441,59 @@ class TestActivityCoverageAndOwnership:
         assert response.status_code == 409
         assert db_session.query(AssessmentSession).count() == 0
 
+    def test_explicit_default_format_overrides_adaptive_format_for_new_teaching_and_resume_is_stable(
+        self, owner, db_session, fake_generation, fake_embeddings, published_course_with_lessons, monkeypatch
+    ):
+        from app.modules.adaptation.service import Recommendation
+
+        course, _version, concept_a, _concept_b, lesson = published_course_with_lessons
+        owner.default_presentation_format = "analogy"
+        decision = AdaptationDecision(
+            owner_id=owner.id,
+            course_id=course.id,
+            selected_activity_type="NEW_LESSON",
+            selected_concept_id=concept_a.id,
+            selected_lesson_id=lesson.id,
+            reason_text="A new teaching activity.",
+            candidates_considered=[],
+            policy_version="test-v1",
+            input_snapshot={},
+        )
+        db_session.add(decision)
+        db_session.flush()
+        recommendation = Recommendation(
+            decision_id=decision.id,
+            recommended={
+                "activity_type": "NEW_LESSON",
+                "concept_ids": [str(concept_a.id)],
+                "lesson_id": str(lesson.id),
+                "reason": "A new teaching activity.",
+                "score": 1.0,
+                # The adaptive format policy chose Concise; the explicit
+                # saved account default has precedence for a new activity.
+                "presentation_format": "concise",
+            },
+            alternatives=[],
+        )
+        service = LearningService(db_session, fake_generation, fake_embeddings)
+        monkeypatch.setattr(service.adaptation, "recommend_next", lambda *_args, **_kwargs: recommendation)
+
+        created = service.select_or_resume(course.id, owner.id)
+        activity = db_session.query(LearningActivity).filter_by(id=created["id"]).one()
+        assert created["activity_type"] == "NEW_LESSON"
+        assert created["decision_id"] == decision.id
+        assert created["presentation_format"] == "analogy"
+
+        activity.presentation_format = "worked_example"
+        activity.reading_position = 184
+        owner.default_presentation_format = "detailed"
+        db_session.commit()
+
+        resumed = service.select_or_resume(course.id, owner.id)
+        assert resumed["id"] == created["id"]
+        assert resumed["presentation_format"] == "worked_example"
+        assert resumed["reading_position"] == 184
+
     def test_reading_completion_changes_coverage_but_not_understanding(
         self, client, owner, db_session, published_course_with_lessons
     ):

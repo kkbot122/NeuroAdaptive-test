@@ -55,6 +55,11 @@ export default function StudyLessonPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [sourceToOpen, setSourceToOpen] = useState<string | null>(null);
+  const [sourceOpenRequestId, setSourceOpenRequestId] = useState(0);
+  const openSource = useCallback((chunkId: string) => {
+    setSourceToOpen(chunkId);
+    setSourceOpenRequestId((requestId) => requestId + 1);
+  }, []);
   const [isCompleting, setIsCompleting] = useState(false);
   const [quizReady, setQuizReady] = useState<{ identity: string; artifactId: string; ready: boolean } | null>(null);
   const saveTimer = useRef<number | null>(null);
@@ -364,7 +369,7 @@ export default function StudyLessonPage() {
             {isContentLoading && !displayedContent ? <EmptyLessonContentState preparation={preparation} isLoading />
               : displayedContent ? <div>
                 <PreparedLessonContent state={workspaceContent} identity={workspaceIdentity} courseId={courseId} format={format}
-                  activeSourceChunkId={sourceToOpen} onOpenSource={setSourceToOpen} onQuizReadyChange={updateQuizReady} />
+                  activeSourceChunkId={sourceToOpen} onOpenSource={openSource} onQuizReadyChange={updateQuizReady} />
                 {preparation?.status === "RUNNING" && !preparation.assessment_ready && <p className="mt-4 flex items-center gap-2 border-2 border-blue-800 bg-blue-50 p-3 text-sm" role="status"><LoaderCircle className="size-4 animate-spin" />Lesson saved. Questions are preparing ({preparation.progress}%).</p>}
               </div>
               : !contentError && <EmptyLessonContentState preparation={preparation} isLoading={isContentLoading} />}
@@ -388,6 +393,7 @@ export default function StudyLessonPage() {
         decisionId={activity?.decision_id}
         sourceIds={citedIds}
         initialSourceChunkId={sourceToOpen}
+        sourceOpenRequestId={sourceOpenRequestId}
         conversationStorageKey={activityId ? `course:${courseId}:activity:${activityId}` : `course:${courseId}:lesson:${lesson.id}`}
       />}
     </main>

@@ -61,9 +61,13 @@ Refresh/navigation must not generate replacement questions or new activities.
 | Disputed grading | Report grading issue | Question, answer, rubric, original judgment for authorized review |
 | Provider outage / AI allowance exhausted | Read saved content; retry generation when available | Course, validated artifacts, progress, pending answers |
 
-Before publication, replacement invalidates/rebuilds artifacts derived from the changed
-source while retaining other valid files. Old dependent work cannot appear as current
-content. Revalidate before publication.
+Before publication, the source list lets the owner replace or remove a file. The candidate
+replacement must validate and save before the original is retired; a failed candidate
+leaves the old file usable. A changed source invalidates its course outline and dependent
+concept/content/question artifacts, retains unchanged extraction results, and starts the
+existing asynchronous rebuild. The current outline must be reviewed again before publish.
+Show the changed filename and actual processing stage; old dependent work cannot appear as
+current content.
 
 Authorized reviewers receive reports through a small review workflow. Corrections retain
 original judgments and recompute affected evidence without another attempt. Reporting

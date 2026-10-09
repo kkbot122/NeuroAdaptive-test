@@ -63,6 +63,11 @@ export default function AdaptiveActivityPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [sourceToOpen, setSourceToOpen] = useState<string | null>(null);
+  const [sourceOpenRequestId, setSourceOpenRequestId] = useState(0);
+  const openSource = useCallback((chunkId: string) => {
+    setSourceToOpen(chunkId);
+    setSourceOpenRequestId((requestId) => requestId + 1);
+  }, []);
   const [starting, setStarting] = useState(false);
   const [saved, setSaved] = useState(true);
   const [readingPosition, setReadingPosition] = useState(0);
@@ -298,7 +303,7 @@ export default function AdaptiveActivityPage() {
           <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold">A focused explanation</h2><span className="text-sm text-zinc-700">Your reading place is saved.</span></div>
           <div className="mt-3 flex flex-wrap border-2 border-black" role="group" aria-label="Presentation format">{FORMATS.map((item) => <button key={item} type="button" aria-pressed={format === item} onClick={() => void switchFormat(item)} className={`border-r-2 border-black px-3 py-2 capitalize last:border-r-0 ${format === item ? "bg-[#FFD23F] text-black" : "bg-white hover:bg-zinc-100"}`}>{formatLabel(item)}</button>)}</div>
           {displayedContent ? <PreparedLessonContent state={contentState} identity={identity} courseId={courseId} format={format}
-            activeSourceChunkId={sourceToOpen} onOpenSource={setSourceToOpen} onQuizReadyChange={updateQuizReady} /> : contentLoading || isPreparing ? <p className="mt-4 flex items-center gap-3 border-2 border-dashed border-zinc-500 p-4 text-zinc-700" role="status"><LoaderCircle className="size-5 animate-spin" />{contentLoading ? `Loading saved ${formatLabel(format)} content…` : `Preparing saved explanation and questions… ${preparation?.progress ?? 0}%`}</p> : !hasFailure && <p className="mt-4 text-zinc-700">Saved teaching content is not available yet.</p>}
+            activeSourceChunkId={sourceToOpen} onOpenSource={openSource} onQuizReadyChange={updateQuizReady} /> : contentLoading || isPreparing ? <p className="mt-4 flex items-center gap-3 border-2 border-dashed border-zinc-500 p-4 text-zinc-700" role="status"><LoaderCircle className="size-5 animate-spin" />{contentLoading ? `Loading saved ${formatLabel(format)} content…` : `Preparing saved explanation and questions… ${preparation?.progress ?? 0}%`}</p> : !hasFailure && <p className="mt-4 text-zinc-700">Saved teaching content is not available yet.</p>}
         </section>}
 
         {isPreparing && isQuestionFirst && <section className="nl-card" role="status"><h2 className="flex items-center gap-2 text-lg font-bold"><LoaderCircle className="size-5 animate-spin" />Preparing fresh questions</h2><p className="mt-2 text-zinc-700">The selected activity is saved while questions are prepared. You can return to the course overview.</p><div className="nl-progress mt-4"><span style={{ width: `${preparation?.progress ?? 0}%` }} /></div></section>}
@@ -315,7 +320,7 @@ export default function AdaptiveActivityPage() {
         </footer>
       </article>
 
-      <LearningSidePanel courseId={courseId} contextLessonId={activity.lesson_id} decisionId={activity.decision_id} sourceIds={sourceIds} initialSourceChunkId={sourceToOpen} conversationStorageKey={`activity:${activity.id}`} />
+      <LearningSidePanel courseId={courseId} contextLessonId={activity.lesson_id} decisionId={activity.decision_id} sourceIds={sourceIds} initialSourceChunkId={sourceToOpen} sourceOpenRequestId={sourceOpenRequestId} conversationStorageKey={`activity:${activity.id}`} />
     </main>
   </div>;
 }

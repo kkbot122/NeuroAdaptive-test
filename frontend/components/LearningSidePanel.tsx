@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { components } from "@/lib/generated/api";
 import { MarkdownMessage } from "@/components/MarkdownMessage";
-import { LoaderCircle, Send } from "lucide-react";
+import { LoaderCircle, PanelRightClose, PanelRightOpen, Send } from "lucide-react";
 
 type Citation = components["schemas"]["CitationOut"];
 type Chunk = components["schemas"]["ChunkDetail"];
@@ -25,6 +25,7 @@ type LearningSidePanelProps = {
   decisionId?: string | null;
   sourceIds?: string[];
   initialSourceChunkId?: string | null;
+  sourceOpenRequestId?: number;
   conversationStorageKey: string;
   assessmentSubmitted?: boolean;
 };
@@ -44,10 +45,12 @@ export function LearningSidePanel({
   decisionId,
   sourceIds = [],
   initialSourceChunkId,
+  sourceOpenRequestId = 0,
   conversationStorageKey,
   assessmentSubmitted = false,
 }: LearningSidePanelProps) {
   const [tab, setTab] = useState<"tutor" | "sources">("tutor");
+  const [panelOpen, setPanelOpen] = useState(true);
   const [prompt, setPrompt] = useState("");
   const scope = JSON.stringify([courseId, contextLessonId ?? null, decisionId ?? null, conversationStorageKey]);
   const [conversation, setConversation] = useState<{ scope: string; id: string; turns: Turn[]; available: boolean; hasMore: boolean } | null>(null);
@@ -70,8 +73,23 @@ export function LearningSidePanel({
   const abortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
   const historyAbortRef = useRef<AbortController | null>(null);
+  const panelPreferenceTouchedRef = useRef(false);
   const busyRef = useRef(busy);
   busyRef.current = busy;
+
+  useEffect(() => {
+    panelPreferenceTouchedRef.current = false;
+    let current = true;
+    void fetch("/api/v1/me/settings", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : null)
+      .then((settings: { tutor_panel_open?: unknown } | null) => {
+        if (current && !panelPreferenceTouchedRef.current && typeof settings?.tutor_panel_open === "boolean") {
+          setPanelOpen(settings.tutor_panel_open);
+        }
+      })
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, [scope]);
 
   const loadHistory = useCallback(async (id: string, before?: string) => {
     const requestScope = scope;
@@ -131,9 +149,11 @@ export function LearningSidePanel({
 
   useEffect(() => {
     if (!initialSourceChunkId) return;
+    panelPreferenceTouchedRef.current = true;
+    setPanelOpen(true);
     setSelectedChunkId(initialSourceChunkId);
     setTab("sources");
-  }, [initialSourceChunkId, scope]);
+  }, [initialSourceChunkId, sourceOpenRequestId, scope]);
 
   useEffect(() => {
     if (tab !== "sources" || !selectedChunkId) return;
@@ -257,15 +277,30 @@ export function LearningSidePanel({
   }, [assessmentAccess, busy, contextLessonId, conversationId, courseId, decisionId, prompt, scope]);
 
   const openSource = (chunkId: string) => {
+    panelPreferenceTouchedRef.current = true;
+    setPanelOpen(true);
     setSelectedChunkId(chunkId);
     setTab("sources");
   };
+
+  if (!panelOpen) return <aside className="nl-panel nl-panel-collapsed" aria-label="Tutor and course sources">
+    <button type="button" className="nl-panel-open" onClick={() => {
+      panelPreferenceTouchedRef.current = true;
+      setPanelOpen(true);
+    }}>
+      <PanelRightOpen className="size-4" aria-hidden="true" />Open tutor and sources
+    </button>
+  </aside>;
 
   return (
     <aside className="nl-panel" aria-label="Tutor and course sources">
       <div className="nl-tabs" role="tablist" aria-label="Learning support">
         <button type="button" role="tab" aria-selected={tab === "tutor"} className="nl-tab" onClick={() => setTab("tutor")}>Tutor</button>
         <button type="button" role="tab" aria-selected={tab === "sources"} className="nl-tab" onClick={() => setTab("sources")}>Sources <span>({referencedIds.length})</span></button>
+        <button type="button" className="nl-panel-close" aria-label="Close tutor and sources panel" onClick={() => {
+          panelPreferenceTouchedRef.current = true;
+          setPanelOpen(false);
+        }}><PanelRightClose className="size-4" aria-hidden="true" /></button>
       </div>
 
       {tab === "tutor" ? (

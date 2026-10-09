@@ -318,6 +318,29 @@
         "title": "AIUsageTotalsOut",
         "type": "object"
       },
+      "AccountDeletionOut": {
+        "properties": {
+          "pending_storage_cleanups": {
+            "minimum": 0.0,
+            "title": "Pending Storage Cleanups",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "deleted",
+              "cleanup_pending"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "pending_storage_cleanups"
+        ],
+        "title": "AccountDeletionOut",
+        "type": "object"
+      },
       "ActivityContentResponseOut": {
         "properties": {
           "content": {
@@ -932,6 +955,18 @@
             "title": "File",
             "type": "string"
           },
+          "replaces_document_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Document Id"
+          },
           "role": {
             "default": "STUDY",
             "title": "Role",
@@ -1133,6 +1168,23 @@
         "title": "ConditionIn",
         "type": "object"
       },
+      "ConsentOut": {
+        "properties": {
+          "tracking_consent": {
+            "enum": [
+              "full",
+              "minimal"
+            ],
+            "title": "Tracking Consent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tracking_consent"
+        ],
+        "title": "ConsentOut",
+        "type": "object"
+      },
       "ConsentUpdate": {
         "properties": {
           "tracking_consent": {
@@ -1256,6 +1308,11 @@
             "title": "Source Count",
             "type": "integer"
           },
+          "source_revision": {
+            "default": 0,
+            "title": "Source Revision",
+            "type": "integer"
+          },
           "sources_finalized_at": {
             "anyOf": [
               {
@@ -1362,6 +1419,121 @@
           }
         },
         "title": "DiagnosticRequest",
+        "type": "object"
+      },
+      "DocumentMutationOut": {
+        "properties": {
+          "cleanup_pending": {
+            "default": false,
+            "title": "Cleanup Pending",
+            "type": "boolean"
+          },
+          "course_id": {
+            "format": "uuid",
+            "title": "Course Id",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "needs_input_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Input Reason"
+          },
+          "page_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Count"
+          },
+          "rebuild_job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rebuild Job Id"
+          },
+          "replaced_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced Filename"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "source_changed": {
+            "default": false,
+            "title": "Source Changed",
+            "type": "boolean"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "course_id",
+          "filename",
+          "role",
+          "source_kind",
+          "status",
+          "size_bytes",
+          "page_count",
+          "needs_input_reason",
+          "created_at"
+        ],
+        "title": "DocumentMutationOut",
         "type": "object"
       },
       "DocumentOut": {
@@ -2150,6 +2322,11 @@
             "title": "Retry Count",
             "type": "integer"
           },
+          "source_revision": {
+            "default": 0,
+            "title": "Source Revision",
+            "type": "integer"
+          },
           "stages": {
             "items": {
               "$ref": "#/components/schemas/StageOut"
@@ -2706,6 +2883,35 @@
           "text"
         ],
         "title": "PasteTextIn",
+        "type": "object"
+      },
+      "PreferencesResetOut": {
+        "properties": {
+          "default_presentation_format": {
+            "enum": [
+              "detailed",
+              "concise",
+              "worked_example",
+              "analogy"
+            ],
+            "title": "Default Presentation Format",
+            "type": "string"
+          },
+          "presentation_affinity_rows_removed": {
+            "title": "Presentation Affinity Rows Removed",
+            "type": "integer"
+          },
+          "tutor_panel_open": {
+            "title": "Tutor Panel Open",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "default_presentation_format",
+          "tutor_panel_open",
+          "presentation_affinity_rows_removed"
+        ],
+        "title": "PreferencesResetOut",
         "type": "object"
       },
       "PreparationOut": {
@@ -3543,6 +3749,72 @@
         "title": "RubricFeedbackOut",
         "type": "object"
       },
+      "SettingsOut": {
+        "properties": {
+          "default_presentation_format": {
+            "enum": [
+              "detailed",
+              "concise",
+              "worked_example",
+              "analogy"
+            ],
+            "title": "Default Presentation Format",
+            "type": "string"
+          },
+          "tracking_consent": {
+            "enum": [
+              "full",
+              "minimal"
+            ],
+            "title": "Tracking Consent",
+            "type": "string"
+          },
+          "tutor_panel_open": {
+            "title": "Tutor Panel Open",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tracking_consent",
+          "default_presentation_format",
+          "tutor_panel_open"
+        ],
+        "title": "SettingsOut",
+        "type": "object"
+      },
+      "SettingsUpdate": {
+        "properties": {
+          "default_presentation_format": {
+            "enum": [
+              "detailed",
+              "concise",
+              "worked_example",
+              "analogy"
+            ],
+            "title": "Default Presentation Format",
+            "type": "string"
+          },
+          "tracking_consent": {
+            "enum": [
+              "full",
+              "minimal"
+            ],
+            "title": "Tracking Consent",
+            "type": "string"
+          },
+          "tutor_panel_open": {
+            "title": "Tutor Panel Open",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tracking_consent",
+          "default_presentation_format",
+          "tutor_panel_open"
+        ],
+        "title": "SettingsUpdate",
+        "type": "object"
+      },
       "StageOut": {
         "properties": {
           "attempts": {
@@ -3985,6 +4257,18 @@
             "minLength": 1,
             "title": "Filename",
             "type": "string"
+          },
+          "replaces_document_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Document Id"
           },
           "role": {
             "default": "STUDY",
@@ -6384,7 +6668,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentOut"
+                  "$ref": "#/components/schemas/DocumentMutationOut"
                 }
               }
             },
@@ -6394,7 +6678,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentOut"
+                  "$ref": "#/components/schemas/DocumentMutationOut"
                 }
               }
             },
@@ -6465,7 +6749,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentOut"
+                  "$ref": "#/components/schemas/DocumentMutationOut"
                 }
               }
             },
@@ -6537,7 +6821,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentOut"
+                  "$ref": "#/components/schemas/DocumentMutationOut"
                 }
               }
             },
@@ -6547,7 +6831,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentOut"
+                  "$ref": "#/components/schemas/DocumentMutationOut"
                 }
               }
             },
@@ -6636,6 +6920,77 @@
           }
         },
         "summary": "Create Upload Intent",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/documents/{document_id}": {
+      "delete": {
+        "operationId": "remove_document_api_v1_courses__course_id__documents__document_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentMutationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Document",
         "tags": [
           "documents"
         ]
@@ -8589,7 +8944,7 @@
     },
     "/api/v1/me": {
       "delete": {
-        "description": "Cascades to every course, document, chunk, curriculum/mastery/\nadaptation/tutor record, and legacy record this user owns, then the\nuser row itself -- see privacy/service.py's PrivacyService for exactly\nwhat that covers and what it deliberately does not touch (audit logs).\nDeletion is immediate and synchronous (no background-job\ninfrastructure exists to defer it), which is a stricter guarantee than\na scheduled one, not a weaker one.",
+        "description": "Removes owned database records synchronously and records every private\nstorage target in the durable cleanup queue before removing its owner or\nsource row. The response reports pending file cleanup honestly.",
         "operationId": "delete_my_account_api_v1_me_delete",
         "parameters": [
           {
@@ -8615,7 +8970,9 @@
           "202": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -8723,7 +9080,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -8740,6 +9099,167 @@
           }
         },
         "summary": "Update Consent",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/me/preferences/reset": {
+      "post": {
+        "operationId": "reset_preferences_api_v1_me_preferences_reset_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferencesResetOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset Preferences",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/me/settings": {
+      "get": {
+        "operationId": "read_settings_api_v1_me_settings_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Settings",
+        "tags": [
+          "identity"
+        ]
+      },
+      "patch": {
+        "operationId": "update_settings_api_v1_me_settings_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Settings",
         "tags": [
           "identity"
         ]

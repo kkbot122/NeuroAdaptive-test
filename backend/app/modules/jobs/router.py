@@ -33,6 +33,7 @@ def _out(job) -> dict:
     return {
         "id": str(job.id),
         "course_id": str(job.course_id),
+        "source_revision": job.source_revision,
         "status": job.status,
         "current_stage": job.current_stage,
         "retry_available": interrupted or job.status in ("PAUSED", "FAILED", "NEEDS_INPUT"),
@@ -72,27 +73,23 @@ def start_processing(
     except CourseNotFound:
         raise HTTPException(status_code=404, detail="Course not found")
 
-    # Enforce quotas before committing a job. HTTP dispatches IDs only;
-    # extraction and provider calls run in the Celery worker.
-    AbuseControlService(db).enforce_course_regeneration_cap(course_id, user.id)
-
     # Concurrency guard: a UI double/triple-click (no loading feedback on
     # the button) sent two overlapping requests for the same course, which
     # raced on inserting the same deterministic chunk id and crashed with a
-    # real IntegrityError -- reproduced live. Reject the second call
-    # outright rather than letting two pipeline runs collide.
-    if service.has_active_job_for_course(course_id):
-        raise ProblemDetailException(
-            status_code=409,
-            type_="https://neurolearn.internal/problems/processing-already-running",
-            title="Processing Already In Progress",
-            detail="This course is already being processed. Wait for it to finish before starting another run.",
-        )
+    # real IntegrityError -- reproduced live. Reuse the current-revision
+    # active job so a duplicate request cannot start a second pipeline.
+    active = service.get_latest_for_course(course_id, user.id)
+    if active is not None and active.source_revision == course.source_revision and active.status in ("PENDING", "RUNNING"):
+        return _out(active)
+
+    # Enforce quotas before committing a new job. Duplicate requests above
+    # reuse the same durable job and do not spend another regeneration slot.
+    AbuseControlService(db).enforce_course_regeneration_cap(course_id, user.id)
 
     # Processing is the immutable-source boundary. This is intentionally in
     # the committed finalization boundary before dispatch: a worker can never observe a
     # mutable source set.
-    if not course.sources_are_immutable:
+    if not course.sources_are_finalized:
         courses.finalize_sources(course_id, user.id)
     try:
         job = service.create_for_course(course_id, user.id)

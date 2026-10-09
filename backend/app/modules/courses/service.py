@@ -69,6 +69,7 @@ class CourseService:
             "starting_confidence": course.starting_confidence,
             "status": course.status,
             "sources_finalized_at": course.sources_finalized_at,
+            "source_revision": course.source_revision,
             "source_count": self.db.query(Document).filter(Document.course_id == course.id).count(),
             "latest_job": None if latest_job is None else {
                 "id": str(latest_job.id),
@@ -149,13 +150,13 @@ class CourseService:
 
     def finalize_sources(self, course_id: UUID, owner_id: int) -> Course:
         """
-        Close the source set. Documents become immutable (frozen-scope.md:
-        a learner must create a new course to use different material).
+        Record that preparation began. The owner can still revise sources
+        until explicit publication; revisions invalidate the current outline.
         """
         from sqlalchemy.sql import func
 
         course = self.get_owned(course_id, owner_id, lock=True)
-        if course.sources_are_immutable:
+        if course.sources_are_finalized:
             raise SourcesImmutable(str(course_id))
         course.sources_finalized_at = func.now()
         course.status = CourseStatus.PROCESSING.value

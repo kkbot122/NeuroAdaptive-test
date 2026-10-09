@@ -7,7 +7,10 @@ celery_app = Celery(
     "neurolearn",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.modules.jobs.tasks", "app.modules.preparation.tasks", "app.modules.learning.tasks"],
+    include=[
+        "app.modules.jobs.tasks", "app.modules.preparation.tasks",
+        "app.modules.learning.tasks", "app.modules.privacy.tasks",
+    ],
 )
 celery_app.conf.update(
     task_serializer="json",
