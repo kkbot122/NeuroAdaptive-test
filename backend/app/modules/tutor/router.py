@@ -22,23 +22,28 @@ real; the granularity of the `token` event is coarser than the name
 suggests.
 """
 from app.services.providers import generation_gateway, embedding_gateway, vector_store
-from app.modules.tutor.schemas import LessonContentOut, TutorEvent
+from app.modules.tutor.schemas import LessonContentOut, TutorEvent, TutorHistoryOut, TutorFailureOut
 import json
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 
 from app.core.rate_limit import generation_slot
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.modules.abuse.service import AbuseControlService
+from app.services.ai_usage import ai_usage_scope
+from app.modules.abuse.models import AIProviderCall
+from app.modules.abuse.usage import usage_totals
 from app.modules.auth.models import User
+from app.modules.learning.models import AssessmentSession, AssessmentStatus, LearningActivity
 from app.modules.tutor.models import GroundingMode
-from app.modules.tutor.service import TutorNotFound, TutorService
+from app.modules.tutor.service import TutorNotFound, TutorService, TutorUnavailable
 from app.services.embedding.gemini import GeminiEmbeddingGateway
 from app.services.generation.gemini import GeminiGenerationGateway
 from app.services.vectorstore.pgvector_store import PgVectorStore
@@ -88,9 +93,52 @@ def _stream_events(result):
         {
             "message_id": str(result.message_id),
             "grounding_mode": result.grounding_mode,
-            "token_usage": {"note": "not tracked -- GenerationGateway does not report usage this phase"},
+            "token_usage": result.token_usage,
+            "operation_id": str(result.operation_id),
         },
     )
+
+
+def _tutor_available(db: Session, user_id: int) -> bool:
+    open_session = (
+        db.query(AssessmentSession.id)
+        .join(LearningActivity, AssessmentSession.activity_id == LearningActivity.id)
+        .filter(
+            LearningActivity.owner_id == user_id,
+            AssessmentSession.status == AssessmentStatus.OPEN.value,
+        )
+        .first()
+    )
+    return open_session is None
+
+
+def _ensure_tutor_available(db: Session, user_id: int) -> None:
+    if not _tutor_available(db, user_id):
+        raise HTTPException(status_code=409, detail="Tutor assistance is unavailable during an active assessment.")
+
+
+def _unavailable_response(exc: TutorUnavailable):
+    return JSONResponse(status_code=503, content={
+        "error_category": exc.category,
+        "detail": "The tutor could not verify an answer right now. Your conversation is saved; please try again.",
+    })
+
+
+@router.get("/courses/{course_id}/tutor/history", response_model=TutorHistoryOut)
+def tutor_history(
+    course_id: UUID, conversation_id: UUID, response: Response,
+    context_lesson_id: Optional[UUID] = None, decision_id: Optional[UUID] = None,
+    before: Optional[UUID] = None, user: User = Depends(get_current_user),
+    service: TutorService = Depends(_service), db: Session = Depends(get_db),
+):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        history = service.get_history(course_id, user.id, conversation_id, context_lesson_id, decision_id, before)
+    except TutorNotFound:
+        raise HTTPException(status_code=404, detail="Tutor conversation not found")
+    available = _tutor_available(db, user.id)
+    return {**history, "available": available, "turns": history["turns"] if available else [],
+            "has_more": history["has_more"] if available else False}
 
 
 class TutorStream(StreamingResponse):
@@ -98,7 +146,11 @@ class TutorStream(StreamingResponse):
 
 
 @router.post("/courses/{course_id}/tutor", response_class=TutorStream,
-             responses={200: {"model": TutorEvent, "description": "SSE frames: event name plus JSON data from TutorEvent. Full answer is validated before emission."}})
+             responses={
+                 200: {"model": TutorEvent, "description": "SSE frames: event name plus JSON data from TutorEvent. Full answer is validated before emission."},
+                 409: {"description": "Tutor assistance is unavailable while an assessment is open."},
+                 503: {"model": TutorFailureOut, "description": "Generation or verification is unavailable; no insufficient-evidence turn is saved."},
+             })
 def ask_tutor(
     course_id: UUID,
     body: TutorQuestionIn,
@@ -106,24 +158,35 @@ def ask_tutor(
     service: TutorService = Depends(_service),
     db: Session = Depends(get_db),
 ):
+    _ensure_tutor_available(db, user.id)
     AbuseControlService(db).enforce_generation_request_controls(user.id)
     try:
-        with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER):
+        with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER), ai_usage_scope(db, user.id, "tutor", course_id) as usage:
             result = service.ask(
                 course_id, user.id, body.question,
                 context_lesson_id=body.context_lesson_id, conversation_id=body.conversation_id,
                 decision_id=body.decision_id,
             )
+            result.token_usage = usage_totals(db.query(AIProviderCall).filter_by(owner_id=user.id, operation_id=usage.operation_id))
+            result.operation_id = usage.operation_id
     except TutorNotFound:
         raise HTTPException(status_code=404, detail="Course not found")
+    except TutorUnavailable as exc:
+        return _unavailable_response(exc)
 
+    _ensure_tutor_available(db, user.id)
     return StreamingResponse(_stream_events(result), media_type="text/event-stream")
 
 
 _VALID_FORMATS = {"concise", "detailed", "worked_example", "analogy", "diagram", "source_view", "quiz_first"}
 
 
-@router.get("/courses/{course_id}/lessons/{lesson_id}/content", response_model=LessonContentOut)
+@router.get(
+    "/courses/{course_id}/lessons/{lesson_id}/content",
+    response_model=LessonContentOut,
+    responses={409: {"description": "Tutor assistance is unavailable while an assessment is open."},
+               503: {"model": TutorFailureOut, "description": "Generation or verification is unavailable"}},
+)
 def get_lesson_content(
     course_id: UUID,
     lesson_id: UUID,
@@ -142,15 +205,19 @@ def get_lesson_content(
     fetched because it was the recommended next activity, so the resulting
     TutorMessage carries that provenance (Phase 7).
     """
+    _ensure_tutor_available(db, user.id)
     if format not in _VALID_FORMATS:
         raise HTTPException(status_code=422, detail=f"format must be one of {sorted(_VALID_FORMATS)}")
     AbuseControlService(db).enforce_generation_request_controls(user.id)
     try:
-        with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER):
+        with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER), ai_usage_scope(db, user.id, "lesson_content", course_id):
             result = service.generate_lesson_content(course_id, user.id, lesson_id, format, decision_id=decision_id)
     except TutorNotFound:
         raise HTTPException(status_code=404, detail="Course or lesson not found")
+    except TutorUnavailable as exc:
+        return _unavailable_response(exc)
 
+    _ensure_tutor_available(db, user.id)
     return {
         "content_markdown": result.answer_markdown,
         "citations": [

@@ -60,3 +60,7 @@ test-results/
 
 # Local manual-demo source material is not automatically a synthetic fixture.
 demo/
+
+# Local design references and manual test materials.
+/neuroLearn-UI/
+/test-materials/

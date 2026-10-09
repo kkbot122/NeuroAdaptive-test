@@ -1,25 +1,21 @@
-"""
-T5 durable abuse controls: per-user daily AI-call budget and per-course
-regeneration-frequency cap. Both are named, unvalidated defaults (AGENTS.md
-§1) -- generous enough not to interfere with normal use, not tuned against
-real usage data.
+"""Durable generation-attempt allowance and shared AI request admission.
 
-"Token budget" in the mandate's own words is approximated here as a call
-count, not a true token count: GenerationGateway (Phase 1) does not surface
-per-call token usage anywhere in this codebase, and extending that
-interface is a larger change than this phase's abuse controls need to make
-first. Documented as a stated simplification, not silently substituted.
+The 200-attempt UTC budget is a generation policy. Embedding calls and returned
+provider token metadata are itemized separately; token/cost estimates never
+replace the atomic admission counter.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import update
+from sqlalchemy import text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.core.problem_details import ProblemDetailException
 from app.core.rate_limit import check_rate_limit
+from app.core.config import settings
+from app.core.ai_limits import AICapacityUnavailable, check_shared_burst
 from app.modules.abuse.models import AIUsageDaily
 from app.modules.curriculum.models import CourseVersion
 
@@ -43,14 +39,38 @@ class AbuseControlService:
     def __init__(self, db: Session):
         self.db = db
 
-    def enforce_daily_budget(self, owner_id: int, budget: int = DAILY_AI_CALL_BUDGET) -> None:
+    def _budget_exempt(self, owner_id: int) -> bool:
+        emails = {email.strip().casefold() for email in settings.AI_BUDGET_EXEMPT_EMAILS.split(",") if email.strip()}
+        if not emails:
+            return False
+        email = self.db.execute(text("SELECT email FROM users WHERE id = :owner_id"), {"owner_id": owner_id}).scalar_one_or_none()
+        return email is not None and email.strip().casefold() in emails
+
+    def _raise_budget_exhausted(self, budget, used):
+        raise ProblemDetailException(
+            status_code=429, type_="https://neurolearn.internal/problems/daily-budget-exhausted",
+            title="Daily AI Budget Exhausted",
+            detail=f"You've used your {budget}-attempt daily generation budget. It resets at midnight UTC.",
+            extra={"reset_at": _next_utc_midnight_iso(), "budget": budget, "used": used},
+        )
+
+    def ensure_daily_budget_available(self, owner_id: int, budget: int = DAILY_AI_CALL_BUDGET) -> None:
+        row = self.db.query(AIUsageDaily).filter_by(owner_id=owner_id, usage_date=datetime.now(timezone.utc).date()).first()
+        if row is not None and row.call_count >= budget and not self._budget_exempt(owner_id):
+            self._raise_budget_exhausted(budget, row.call_count)
+
+    def enforce_daily_budget(self, owner_id: int, budget: int = DAILY_AI_CALL_BUDGET, *, commit: bool = True,
+                             usage_date: date | None = None) -> date:
         """Atomically reserves one daily AI-call slot or raises a 429.
 
-        The unique owner/date row is inserted idempotently, then a guarded
-        UPDATE performs the increment. Concurrent workers therefore cannot
-        overwrite one another or exceed the configured budget.
+        The unique owner/date row is inserted idempotently, then an UPDATE
+        performs the increment. Concurrent workers therefore cannot overwrite
+        one another. Explicitly configured developer accounts still increment
+        the counter, but do not have the daily threshold enforced.
         """
-        today = datetime.now(timezone.utc).date()
+        budget_exempt = self._budget_exempt(owner_id)
+
+        today = usage_date or datetime.now(timezone.utc).date()
         dialect = self.db.get_bind().dialect.name
         insert = {
             "postgresql": postgresql_insert,
@@ -64,13 +84,15 @@ class AbuseControlService:
             .values(owner_id=owner_id, usage_date=today, call_count=0)
             .on_conflict_do_nothing(index_elements=[AIUsageDaily.owner_id, AIUsageDaily.usage_date])
         )
+        reservation_filters = [
+            AIUsageDaily.owner_id == owner_id,
+            AIUsageDaily.usage_date == today,
+        ]
+        if not budget_exempt:
+            reservation_filters.append(AIUsageDaily.call_count < budget)
         reserved = self.db.execute(
             update(AIUsageDaily)
-            .where(
-                AIUsageDaily.owner_id == owner_id,
-                AIUsageDaily.usage_date == today,
-                AIUsageDaily.call_count < budget,
-            )
+            .where(*reservation_filters)
             .values(call_count=AIUsageDaily.call_count + 1)
             .returning(AIUsageDaily.call_count)
         ).scalar_one_or_none()
@@ -82,25 +104,27 @@ class AbuseControlService:
                 .first()
             )
             used = row.call_count if row is not None else 0
-            raise ProblemDetailException(
-                status_code=429,
-                type_="https://neurolearn.internal/problems/daily-budget-exhausted",
-                title="Daily AI Budget Exhausted",
-                detail=f"You've used your {budget}-request daily AI budget. It resets at midnight UTC.",
-                extra={"reset_at": _next_utc_midnight_iso(), "budget": budget, "used": used},
-            )
-        self.db.commit()
+            self._raise_budget_exhausted(budget, used)
+        if commit:
+            self.db.commit()
+        return today
 
     def enforce_generation_request_controls(self, owner_id: int) -> None:
-        """The two request-level checks every generation-triggering
-        endpoint should run before calling an LLM: a burst rate limit, then
-        the durable daily budget. Call generation_slot(...) separately
-        around the actual generation call for the concurrency limit --
-        that one needs to wrap the call's duration, not just its start."""
-        check_rate_limit(
-            f"generation:{owner_id}", GENERATION_RATE_LIMIT_MAX, GENERATION_RATE_LIMIT_WINDOW_SECONDS
-        )
-        self.enforce_daily_budget(owner_id)
+        """Check request admission; outbound attempts reserve their own budget."""
+        if settings.AI_SHARED_LIMITS_ENABLED:
+            try:
+                allowed = check_shared_burst(f"generation:{owner_id}", GENERATION_RATE_LIMIT_MAX, GENERATION_RATE_LIMIT_WINDOW_SECONDS)
+            except AICapacityUnavailable as exc:
+                raise ProblemDetailException(status_code=503,
+                    type_="https://neurolearn.internal/problems/ai-coordinator-unavailable",
+                    title="AI capacity unavailable", detail="AI request capacity could not be checked. Try again shortly.") from exc
+            if not allowed:
+                raise ProblemDetailException(status_code=429, type_="https://neurolearn.internal/problems/rate-limited",
+                    title="Too Many Requests", detail="Too many AI requests. Wait a moment and try again.",
+                    extra={"retry_after_seconds": GENERATION_RATE_LIMIT_WINDOW_SECONDS})
+        else:
+            check_rate_limit(f"generation:{owner_id}", GENERATION_RATE_LIMIT_MAX, GENERATION_RATE_LIMIT_WINDOW_SECONDS)
+        self.ensure_daily_budget_available(owner_id)
 
     def enforce_course_regeneration_cap(
         self, course_id: UUID, owner_id: int, cap: int = COURSE_REGENERATION_DAILY_CAP

@@ -1,150 +1,246 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Brain, ArrowLeft, Loader2 } from "lucide-react";
+import { useSession } from "next-auth/react";
+import type { components } from "@/lib/generated/api";
+import { CourseSidebar } from "@/components/CourseSidebar";
+import { uploadCourseDocument } from "@/lib/upload-course-document";
+import { ArrowLeft, Check, Loader2, X } from "lucide-react";
+
+type SourceDraft = {
+  id: number;
+  file: File;
+  issue: string | null;
+  status: "selected" | "uploading" | "uploaded" | "failed";
+};
+
+const maximumSourceBytes = 25 * 1024 * 1024;
+
+function sourceIssue(file: File): string | null {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (!extension || !["pdf", "txt", "md"].includes(extension)) {
+    return "Unsupported file type. Use PDF, TXT, or Markdown.";
+  }
+  if (file.size > maximumSourceBytes) return "This file is larger than 25 MB.";
+  return null;
+}
+
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function responseError(body: unknown, fallback: string): string {
+  if (body && typeof body === "object" && "detail" in body && typeof body.detail === "string") return body.detail;
+  if (body && typeof body === "object" && "error" in body && typeof body.error === "string") return body.error;
+  return fallback;
+}
 
 export default function NewCoursePage() {
   const router = useRouter();
-  
+  const { data: session } = useSession();
+  const name = session?.user?.name?.trim() || session?.user?.email?.split("@")[0] || "Learner";
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const nextSourceId = useRef(0);
+
   const [title, setTitle] = useState("");
   const [goal, setGoal] = useState("");
   const [startingConfidence, setStartingConfidence] = useState("3");
-  
+  const [sources, setSources] = useState<SourceDraft[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [createdCourseId, setCreatedCourseId] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) {
-      setError("Title is required.");
-      return;
-    }
+  const addSources = (files: FileList | File[]) => {
+    const incoming = Array.from(files).map((file): SourceDraft => ({
+      id: nextSourceId.current++,
+      file,
+      issue: sourceIssue(file),
+      status: "selected",
+    }));
+    setSources((current) => [...current, ...incoming]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleFileSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files?.length) addSources(event.target.files);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+    if (event.dataTransfer.files.length) addSources(event.dataTransfer.files);
+  };
+
+  const hasInvalidSource = sources.some((source) => source.issue !== null);
+  const titleReady = title.trim().length > 0;
+  const selectedCount = sources.filter((source) => !source.issue).length;
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!titleReady || hasInvalidSource || isLoading || createdCourseId) return;
 
     setIsLoading(true);
     setError("");
-
     try {
-      const res = await fetch("/api/v1/courses", {
+      const coursePayload: components["schemas"]["CourseCreate"] = {
+        title: title.trim(),
+        goal: goal.trim() || null,
+        starting_confidence: Number(startingConfidence),
+      };
+      const response = await fetch("/api/v1/courses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          goal: goal.trim() || null,
-          starting_confidence: parseInt(startingConfidence, 10),
-        }),
+        body: JSON.stringify(coursePayload),
       });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Failed to create course");
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => null);
+        throw new Error(responseError(body, "The course could not be created. Try again."));
       }
 
-      const data = await res.json();
-      router.push(`/courses/${data.id}/workspace`);
-    } catch (err: unknown) {
-      console.error(err);
-      setError(err instanceof Error ? err.message : "Failed to create course. Please try again.");
+      const course: components["schemas"]["CourseOut"] = await response.json();
+      setCreatedCourseId(course.id);
+      for (const source of sources) {
+        if (source.issue) continue;
+        setSources((current) => current.map((item) => item.id === source.id ? { ...item, status: "uploading" } : item));
+        try {
+          await uploadCourseDocument(course.id, source.file);
+          setSources((current) => current.map((item) => item.id === source.id ? { ...item, status: "uploaded" } : item));
+        } catch (cause) {
+          setSources((current) => current.map((item) => item.id === source.id ? { ...item, status: "failed" } : item));
+          throw cause;
+        }
+      }
+
+      const hasUploadedSources = sources.some((source) => !source.issue);
+      router.push(`/courses/${course.id}/workspace${hasUploadedSources ? "?startProcessing=1" : ""}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The course could not be created. Try again.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-[#F4F1EA] text-black font-[family-name:var(--font-kodchasan)] pb-28">
-      <nav className="w-full bg-white border-b-2 border-black px-6 py-4 flex items-center gap-4 sticky top-0 z-50">
-        <Link
-          href="/dashboard"
-          className="p-2 hover:bg-gray-100 rounded-full border-2 border-transparent hover:border-black transition-all"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </Link>
-        <div className="w-10 h-10 bg-purple-500 rounded-lg border-2 border-black flex items-center justify-center shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
-          <Brain className="w-6 h-6 text-white" strokeWidth={2.5} />
-        </div>
-        <span className="text-xl font-bold tracking-tight">Create New Course</span>
-      </nav>
+  const checklist = [
+    [titleReady, titleReady ? "Course name added" : "Add a course name"],
+    [goal.trim().length > 0, goal.trim() ? "Learning goal added" : "Learning goal is optional"],
+    [selectedCount > 0, selectedCount > 0 ? `${selectedCount} source${selectedCount === 1 ? "" : "s"} selected` : "Sources can be added here or next"],
+    [sources.length === 0 || !hasInvalidSource, hasInvalidSource ? "Remove or replace unsupported sources" : "Selected files are within supported limits"],
+  ] as const;
 
-      <main className="max-w-2xl mx-auto px-6 py-10">
-        <div className="bg-white border-2 border-black rounded-xl p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-          <h1 className="text-3xl font-bold mb-2">Set Your Learning Goal</h1>
-          <p className="text-gray-600 font-medium mb-8">
-            We&apos;ll create a course outline and master learning plan. We&apos;ll generate a personalized curriculum just for you.
-          </p>
+  return <div className="nl-course-setup-shell">
+    <CourseSidebar name={name} />
+    <main className="nl-course-setup-main">
+      <Link href="/dashboard" className="nl-course-setup-back"><ArrowLeft aria-hidden="true" />Back to dashboard</Link>
+      <h1 className="nl-course-setup-title">Create course</h1>
+      <p className="nl-course-setup-lead">Add your own material and say what you want to learn. The course is built from these sources only.</p>
 
-          {error && (
-            <div className="mb-6 p-4 bg-red-100 border-2 border-red-500 rounded-lg text-red-700 font-medium">
-              {error}
-            </div>
-          )}
+      <div className="nl-course-setup-grid">
+        <form id="course-setup-form" className="nl-course-setup-form" onSubmit={handleSubmit}>
+          <section className="nl-course-setup-block">
+            <label className="nl-course-setup-label" htmlFor="course-title">Course name <span aria-hidden="true">*</span></label>
+            <input
+              id="course-title"
+              type="text"
+              autoComplete="off"
+              placeholder="For example, Distributed Systems"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              className="nl-course-setup-field"
+              required
+              disabled={isLoading || Boolean(createdCourseId)}
+            />
+          </section>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label className="block font-bold mb-2 text-lg">Course Title <span className="text-red-500">*</span></label>
-              <input
-                type="text"
-                placeholder="e.g., Introduction to Quantum Computing"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full bg-gray-50 border-2 border-black rounded-lg px-4 py-3 font-medium focus:outline-none focus:bg-white focus:ring-2 focus:ring-purple-500"
-                required
-              />
-            </div>
+          <section className="nl-course-setup-block">
+            <label className="nl-course-setup-label" htmlFor="course-goal">What do you want to be able to do?</label>
+            <p className="nl-course-setup-hint">One or two sentences. The course and your practice are shaped around this.</p>
+            <textarea
+              id="course-goal"
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+              className="nl-course-setup-field nl-course-setup-goal"
+              placeholder="Describe what you want to understand, explain, or do."
+              disabled={isLoading || Boolean(createdCourseId)}
+            />
+          </section>
 
-            <div>
-              <label className="block font-bold mb-2 text-lg">Learning Goal (Optional)</label>
-              <textarea
-                placeholder="Why are you taking this course? What do you hope to achieve?"
-                value={goal}
-                onChange={(e) => setGoal(e.target.value)}
-                className="w-full bg-gray-50 border-2 border-black rounded-lg px-4 py-3 font-medium min-h-[100px] focus:outline-none focus:bg-white focus:ring-2 focus:ring-purple-500"
-              />
-            </div>
-            
-            {/* Target deadline / session-length controls were removed: they
-                were captured in state but never sent to the backend, and
-                frozen-scope.md explicitly excludes "time-based planning,
-                calendars, target dates, session fitting" from this product
-                (the same conflict adaptation/policy.py's C-1 resolves for
-                the recommendation scorer) -- there is no field on Course to
-                hold either value, so keeping the inputs would only mislead
-                a learner into thinking a deadline does something. */}
-
-            <div>
-              <label className="block font-bold mb-2">Starting Confidence Level</label>
-              <div className="flex items-center justify-between bg-gray-50 border-2 border-black rounded-lg px-4 py-3">
-                <span className="text-sm font-medium text-gray-500">Beginner</span>
-                <input
-                  type="range"
-                  min="1"
-                  max="5"
-                  step="1"
-                  value={startingConfidence}
-                  onChange={(e) => setStartingConfidence(e.target.value)}
-                  className="w-1/2 accent-purple-600"
-                />
-                <span className="text-sm font-medium text-gray-500">Expert</span>
-              </div>
-            </div>
-
+          <section className="nl-course-setup-block">
+            <div className="nl-course-setup-label" id="source-label">Sources</div>
+            <p className="nl-course-setup-hint">PDF, TXT, or Markdown, up to 25 MB each. You can add more sources in the course workspace.</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="sr-only"
+              accept=".pdf,.txt,.md"
+              multiple
+              aria-labelledby="source-label"
+              onChange={handleFileSelection}
+              disabled={isLoading || Boolean(createdCourseId)}
+            />
             <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 bg-[#FF9F1C] hover:bg-[#ff8c00] border-2 border-black px-6 py-4 rounded-xl font-bold text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all active:translate-x-1 active:translate-y-1 active:shadow-none disabled:opacity-50 mt-8"
+              type="button"
+              className={`nl-course-setup-drop${isDragging ? " is-over" : ""}`}
+              aria-label="Drop files here or choose files"
+              aria-describedby="source-help"
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              disabled={isLoading || Boolean(createdCourseId)}
             >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                "Create Course"
-              )}
+              <strong>Drop files here or choose files</strong>
+              <span id="source-help">Files are checked as soon as you add them</span>
             </button>
-          </form>
-        </div>
-      </main>
-    </div>
-  );
+
+            {sources.length > 0 && <ul className="nl-course-setup-files" aria-label="Selected source files">
+              {sources.map((source) => {
+                const extension = source.file.name.split(".").pop()?.toUpperCase() || "FILE";
+                return <li key={source.id} className={`nl-course-setup-file${source.issue ? " is-invalid" : ""}`}>
+                  <span className="nl-course-setup-filetype" aria-hidden="true">{extension.slice(0, 4)}</span>
+                  <span>
+                    <strong className="nl-course-setup-filename">{source.file.name}</strong>
+                    <small className="nl-course-setup-filesub">{source.issue || formatSize(source.file.size)}</small>
+                  </span>
+                  <span className={`nl-course-setup-chip${source.issue || source.status === "failed" ? " is-invalid" : source.status === "uploaded" ? " is-uploaded" : " is-selected"}`}>
+                    {source.issue ? "Can’t upload" : source.status === "failed" ? "Upload failed" : source.status === "uploaded" ? "Uploaded" : source.status === "uploading" ? "Uploading…" : "Selected"}
+                  </span>
+                  {!isLoading && !createdCourseId && <button type="button" className="nl-course-setup-small-button" onClick={() => setSources((current) => current.filter((item) => item.id !== source.id))} aria-label={`Remove ${source.file.name}`}><X className="size-4" /><span className="sr-only">Remove</span></button>}
+                </li>;
+              })}
+            </ul>}
+          </section>
+
+          <section className="nl-course-setup-block">
+            <details className="nl-course-setup-confidence">
+              <summary><span className="nl-course-setup-caret" aria-hidden="true" /><span className="nl-course-setup-label">Starting confidence <span className="nl-muted">Optional</span></span></summary>
+              <div className="nl-course-setup-confidence-inner">
+                <span>Beginner</span>
+                <input aria-label="Starting confidence level" type="range" min="1" max="5" step="1" value={startingConfidence} onChange={(event) => setStartingConfidence(event.target.value)} disabled={isLoading || Boolean(createdCourseId)} />
+                <span>Expert</span>
+              </div>
+            </details>
+          </section>
+        </form>
+
+        <aside className="nl-course-setup-review" aria-live="polite">
+          <h2>Before you prepare</h2>
+          <ul className="nl-course-setup-checklist">
+            {checklist.map(([complete, label]) => <li key={label} className={`nl-course-setup-check${complete ? " is-complete" : ""}`}>
+              <i aria-hidden="true">{complete ? <Check className="size-3" /> : null}</i>{label}
+            </li>)}
+          </ul>
+
+          {error && <p className="nl-course-setup-error" role="alert">{error}</p>}
+          {createdCourseId ? <Link href={`/courses/${createdCourseId}/workspace`} className="nl-button nl-button-primary nl-button-large nl-course-setup-submit">Continue in workspace</Link> : <button type="submit" form="course-setup-form" className="nl-button nl-button-primary nl-button-large nl-course-setup-submit" disabled={isLoading || !titleReady || hasInvalidSource}>
+            {isLoading ? <><Loader2 className="size-5 animate-spin" aria-hidden="true" />{sources.length > 0 ? "Creating and uploading…" : "Creating…"}</> : "Create course"}
+          </button>}
+          <p className="nl-course-setup-review-note">You can leave the workspace while course preparation runs. The outline will be ready for your review before publishing.</p>
+        </aside>
+      </div>
+    </main>
+  </div>;
 }

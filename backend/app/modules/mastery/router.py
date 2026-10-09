@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.rate_limit import generation_slot
+from app.services.ai_usage import ai_usage_scope
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.modules.abuse.service import AbuseControlService
@@ -74,7 +75,7 @@ def generate_diagnostic(
         if resumed is not None:
             return resumed
         AbuseControlService(db).enforce_generation_request_controls(user.id)
-        with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER):
+        with generation_slot(f"user:{user.id}", MAX_CONCURRENT_GENERATIONS_PER_USER), ai_usage_scope(db, user.id, "diagnostic", course_id):
             return service.start_diagnostic(course_id, user.id, body.max_questions)
     except (LearningNotFound, MasteryNotFound):
         raise HTTPException(status_code=404, detail="Course not found")
@@ -88,17 +89,19 @@ def submit_attempt(
     body: AttemptRequest,
     user: User = Depends(get_current_user),
     service: MasteryService = Depends(_service),
+    db: Session = Depends(get_db),
 ):
     try:
-        attempt = service.submit_attempt(
-            question_id,
-            user.id,
-            body.given_answer,
-            hints_used=body.hints_used,
-            retry_index=body.retry_index,
-            time_taken_seconds=body.time_taken_seconds,
-            confidence=body.confidence,
-        )
+        with ai_usage_scope(db, user.id, "legacy_grading", question_id):
+            attempt = service.submit_attempt(
+                question_id,
+                user.id,
+                body.given_answer,
+                hints_used=body.hints_used,
+                retry_index=body.retry_index,
+                time_taken_seconds=body.time_taken_seconds,
+                confidence=body.confidence,
+            )
     except MasteryNotFound:
         raise HTTPException(status_code=404, detail="Question not found")
     except GradingError as exc:

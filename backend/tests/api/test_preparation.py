@@ -32,15 +32,25 @@ from app.modules.preparation.service import ActivityPreparationService, Candidat
 from app.modules.preparation.generation import (
     CONTENT_PROMPT_VERSION,
     CONTENT_SCHEMA_VERSION,
+    LEGACY_P2_CONTENT_PROMPT_VERSION,
+    LEGACY_P2_CONTENT_SCHEMA_VERSION,
+    LEGACY_P2_VALIDATION_POLICY_VERSION,
+    LEGACY_REMEDIATION_CONTENT_PROMPT_VERSION,
+    LEGACY_REMEDIATION_CONTENT_SCHEMA_VERSION,
+    LEGACY_REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION,
     P4_QUESTION_FRESHNESS_POLICY_VERSION,
     VALIDATION_POLICY_VERSION,
     parse_mcq_set,
+    parse_lesson_content,
     parse_prepared_question_set,
 )
 from app.services.generation.fake import FakeGenerationGateway
 from app.services.generation.gateway import GenerationError
 from app.services.embedding.fake import FakeEmbeddingGateway
 from tests.conftest import auth_headers
+from tests.preparation_generation import PreparationGenerationGateway
+
+
 
 
 def _seed_p4_activity(db, owner, course, version, targets, activity_type, *, lesson_id=None):
@@ -67,7 +77,7 @@ def _seed_p4_activity(db, owner, course, version, targets, activity_type, *, les
 def _p4_gateway(
     concept_ids, chunk_ids, *, prompt_offset=40, duplicate_prompt=False, content=False, content_variant=""
 ):
-    gateway = FakeGenerationGateway().when_prompt_contains(
+    gateway = PreparationGenerationGateway().when_prompt_contains(
         "Write exactly 5 single-answer",
         _question_draft(
             concept_ids,
@@ -112,7 +122,14 @@ def _lesson_draft(concept_ids, chunk_ids, *, unsupported=False, content_variant=
     return json.dumps(
         {
             "insufficient_evidence": False,
-            "objective": [statement("The objective covers a source-supported taught idea.")],
+            "objective": [
+                {
+                    "action": "explain",
+                    "concept_id": str(concept_id),
+                    "citation_chunk_ids": [str(chunk_ids[index % len(chunk_ids)])],
+                }
+                for index, concept_id in enumerate(concept_ids)
+            ],
             "explanation": explanation,
             "example": [statement("This example follows the supplied course passage.", min(1, len(concept_ids) - 1))],
             "recap": [statement("The recap restates a supported idea.")],
@@ -315,7 +332,7 @@ def test_uploaded_outline_publish_saved_lesson_and_fixed_mcq_assessment(
     chunk_ids = []
     for concept_id in concept_ids:
         chunk_ids.append(db_session.query(ConceptSource.chunk_id).filter_by(concept_id=concept_id).first()[0])
-    _configure_generation(fake_generation, concept_ids, chunk_ids)
+    fake_generation = _configure_generation(PreparationGenerationGateway(), concept_ids, chunk_ids)
     dispatcher = RecordingDispatcher()
     preparation_service = ActivityPreparationService(db_session, fake_generation, dispatcher)
     monkeypatch.setitem(__import__("app.main", fromlist=["app"]).app.dependency_overrides, preparation_dependency, lambda: preparation_service)
@@ -393,6 +410,9 @@ def test_uploaded_outline_publish_saved_lesson_and_fixed_mcq_assessment(
     )
     assert assessment.status_code == 200
     session = assessment.json()
+    assert session["activity_id"] == activity["id"]
+    assert session["decision_id"] == activity["decision_id"]
+    assert session["lesson_id"] == activity["lesson_id"]
     assert [question["question_id"] for question in session["questions"]] == [str(row.question_id) for row in prepared]
     session_url = f"/api/v1/courses/{course['id']}/assessment-sessions/{session['id']}"
     for question in session["questions"]:
@@ -418,7 +438,7 @@ def test_unsupported_claim_is_removed_and_failed_stage_retries_without_losing_co
 ):
     course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
     gateway = _configure_generation(
-        FakeGenerationGateway(),
+        PreparationGenerationGateway(),
         [concept.id for concept in concepts],
         [chunk.id for chunk in chunks],
         content_unsupported=True,
@@ -438,7 +458,7 @@ def test_unsupported_claim_is_removed_and_failed_stage_retries_without_losing_co
 
     # A later questions-stage failure leaves the validated content attached.
     failing_gateway = _configure_generation(
-        FakeGenerationGateway(),
+        PreparationGenerationGateway(),
         [concept.id for concept in concepts],
         [chunk.id for chunk in chunks],
         duplicate_prompt=True,
@@ -470,7 +490,7 @@ def test_unsupported_claim_is_removed_and_failed_stage_retries_without_losing_co
     assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=failed.id).count() == 0
 
     recovery_gateway = _configure_generation(
-        FakeGenerationGateway(),
+        PreparationGenerationGateway(),
         [concept.id for concept in concepts],
         [chunk.id for chunk in chunks],
         prompt_offset=10,
@@ -485,13 +505,188 @@ def test_unsupported_claim_is_removed_and_failed_stage_retries_without_losing_co
     assert db_session.query(LessonContentArtifact).count() == 1
 
 
+def test_preparation_checks_every_claim_with_bounded_provider_calls(db_session, owner):
+    course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
+    gateway = _configure_generation(
+        PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks],
+    )
+    service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
+    preparation = service.request_activity(course.id, activity.id, owner.id)
+    result = service.run(preparation.id, owner.id)
+    assert result.status == PreparationStatus.READY, result.error_category
+    assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=result.id).count() == 5
+    assert result.provider_call_count <= 9
+    assert len(gateway.calls) == result.provider_call_count
+    assert db_session.query(AIUsageDaily).filter_by(owner_id=owner.id).one().call_count == result.provider_call_count
+
+
+def test_incomplete_validation_batch_saves_no_content_or_questions(db_session, owner):
+    course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
+
+    class IncompleteGateway(PreparationGenerationGateway):
+        def generate(self, prompt, **kwargs):
+            if "BATCH CHECKS:\n" in prompt:
+                self.calls.append(prompt)
+                return '{"results": []}'
+            return super().generate(prompt, **kwargs)
+
+    gateway = _configure_generation(
+        IncompleteGateway(), [item.id for item in concepts], [item.id for item in chunks],
+    )
+    service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
+    preparation = service.request_activity(course.id, activity.id, owner.id)
+    result = service.run(preparation.id, owner.id)
+    assert result.status == PreparationStatus.RECOVERABLE_FAILURE
+    assert result.error_category == "VALIDATION_UNAVAILABLE"
+    assert db_session.query(LessonContentArtifact).count() == 0
+    assert db_session.query(PreparedActivityQuestion).count() == 0
+
+
+def test_supported_distractor_in_batch_rejects_question_set(db_session, owner):
+    course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
+    gateway = PreparationGenerationGateway().when_prompt_contains(
+        "the option Distractor 0 B is also a supported correct answer.", '{"supported": true}'
+    )
+    _configure_generation(gateway, [item.id for item in concepts], [item.id for item in chunks])
+    service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
+    preparation = service.request_activity(course.id, activity.id, owner.id)
+    result = service.run(preparation.id, owner.id)
+    assert result.status == PreparationStatus.RECOVERABLE_FAILURE
+    assert result.error_category == "QUESTION_SUPPORT_FAILED"
+    assert result.content_artifact_id is not None
+    assert db_session.query(PreparedActivityQuestion).count() == 0
+
+
+def test_retry_from_ready_variant_resumes_failed_questions_without_replacing_content(
+    client, db_session, owner, monkeypatch
+):
+    course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
+    gateway = _configure_generation(
+        PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks],
+        duplicate_prompt=True,
+    )
+    dispatcher = RecordingDispatcher()
+    service = ActivityPreparationService(db_session, gateway, dispatcher)
+    main = service.request_activity(course.id, activity.id, owner.id)
+    assert service.run(main.id, owner.id).stage == "QUESTIONS"
+    assert main.status == PreparationStatus.RECOVERABLE_FAILURE
+    _artifact, variant = service.request_format(course.id, activity.id, owner.id, "concise")
+    assert service.run(variant.id, owner.id).status == PreparationStatus.READY
+    saved_content_ids = {item.id for item in db_session.query(LessonContentArtifact).all()}
+    monkeypatch.setitem(
+        __import__("app.main", fromlist=["app"]).app.dependency_overrides,
+        preparation_dependency, lambda: service,
+    )
+    response = client.post(
+        f"/api/v1/courses/{course.id}/activities/{activity.id}/preparation/retry?format=concise",
+        headers=auth_headers(owner.email),
+    )
+    assert response.status_code == 200, response.text
+    assert main.status == PreparationStatus.PENDING
+    assert main.stage == "QUESTIONS"
+    assert main.retry_count == 1
+    assert variant.status == PreparationStatus.READY
+    assert dispatcher.enqueued[-1][0] == main.id
+    assert {item.id for item in db_session.query(LessonContentArtifact).all()} == saved_content_ids
+
+
+def test_retry_failed_variant_preserves_ready_main_questions(db_session, owner):
+    course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
+    gateway = _configure_generation(
+        PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks],
+    )
+    dispatcher = RecordingDispatcher()
+    service = ActivityPreparationService(db_session, gateway, dispatcher)
+    main = service.request_activity(course.id, activity.id, owner.id)
+    assert service.run(main.id, owner.id).status == PreparationStatus.READY
+    question_ids = {item.question_id for item in db_session.query(PreparedActivityQuestion).all()}
+    failing = ActivityPreparationService(
+        db_session, PreparationGenerationGateway().set_default('{"insufficient_evidence": true}'), dispatcher,
+    )
+    _artifact, variant = failing.request_format(course.id, activity.id, owner.id, "analogy")
+    assert failing.run(variant.id, owner.id).status == PreparationStatus.RECOVERABLE_FAILURE
+    retried = service.retry(course.id, activity.id, owner.id, "analogy")
+    assert retried.id == variant.id
+    assert main.status == PreparationStatus.READY
+    assert main.retry_count == 0
+    assert dispatcher.enqueued[-1][0] == variant.id
+    assert {item.question_id for item in db_session.query(PreparedActivityQuestion).all()} == question_ids
+
+
+def test_content_schema_failure_logs_field_errors_without_generated_text(db_session, owner, caplog):
+    course, _version, _concepts, _chunks, _lesson, activity = seed_published_activity(db_session, owner)
+    private_text = "PRIVATE-GENERATED-SOURCE-SENTINEL"
+    gateway = PreparationGenerationGateway().set_default(json.dumps({
+        "explanation": [{"text": private_text}], private_text: private_text,
+    }))
+    service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
+    row = service.request_activity(course.id, activity.id, owner.id)
+    with caplog.at_level("INFO", logger="app.modules.preparation.service"):
+        assert service.run(row.id, owner.id).status == PreparationStatus.RECOVERABLE_FAILURE
+    schema_records = [record for record in caplog.records if hasattr(record, "schema_errors")]
+    assert schema_records
+    assert any(error["loc"] == ("explanation", 0, "concept_ids") for error in schema_records[0].schema_errors)
+    assert schema_records[0].course_id == str(course.id)
+    assert schema_records[0].model_id == gateway.model_name
+    assert private_text not in caplog.text
+    assert private_text not in repr(schema_records[0].schema_errors)
+
+
+def test_empty_supported_section_logs_rejected_claim_location(db_session, owner, caplog):
+    course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
+    gateway = _configure_generation(
+        PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks],
+    ).when_prompt_contains("CLAIM:\nThis example follows", '{"supported": false}')
+    service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
+    row = service.request_activity(course.id, activity.id, owner.id)
+    with caplog.at_level("INFO", logger="app.modules.preparation.service"):
+        assert service.run(row.id, owner.id).status == PreparationStatus.RECOVERABLE_FAILURE
+    rejected = [record for record in caplog.records if hasattr(record, "validation_details")]
+    assert rejected
+    assert rejected[0].validation_details["section"] == "example"
+    assert rejected[0].validation_details["claims"] == [
+        {"index": 0, "citation_owned": True, "support": "failed"}
+    ]
+    assert "This example follows the supplied course passage" not in caplog.text
+
+
+def test_concise_lesson_preparation_requests_compact_source_checkable_statements(db_session, owner):
+    course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
+    activity.presentation_format = "concise"
+    db_session.commit()
+    compact_instruction = "use one short explanation statement per concept"
+    gateway = PreparationGenerationGateway().when_prompt_contains(
+        compact_instruction,
+        _lesson_draft([concept.id for concept in concepts], [chunk.id for chunk in chunks]),
+    ).when_prompt_contains(
+        "Write exactly 5 single-answer",
+        _question_draft([concept.id for concept in concepts], [chunk.id for chunk in chunks]),
+    ).when_prompt_contains(
+        '"criteria_met"', '{"criteria_met": [true, true, true]}'
+    ).when_prompt_contains(
+        "is also a supported correct answer.", '{"supported": false}'
+    ).set_default('{"supported": true}')
+    service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
+
+    preparation = service.request_activity(course.id, activity.id, owner.id)
+    result = service.run(preparation.id, owner.id)
+
+    assert result.status == PreparationStatus.READY, result.error_category
+    assert result.content_artifact_id is not None
+    assert any(compact_instruction in prompt for prompt in gateway.calls)
+    artifact = db_session.query(LessonContentArtifact).filter_by(id=result.content_artifact_id).one()
+    assert len(artifact.sections["objective"]) == len(concepts)
+    assert all(item["text"].startswith("Learn to explain ") for item in artifact.sections["objective"])
+    assert not any("CLAIM:\nLearn to explain " in prompt for prompt in gateway.calls)
+
+
 def test_duplicate_delivery_and_repeated_requests_share_one_preparation_and_question_set(
     db_session, owner
 ):
     course, _version, concepts, chunks, _lesson, activity = seed_published_activity(
         db_session, owner, with_next_lesson=True
     )
-    gateway = _configure_generation(FakeGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
+    gateway = _configure_generation(PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
     dispatcher = RecordingDispatcher()
     service = ActivityPreparationService(db_session, gateway, dispatcher)
 
@@ -524,7 +719,7 @@ def test_selected_next_lesson_reuses_speculative_content_without_regenerating_it
         .filter(Module.course_version_id == version.id, Lesson.title == "Next lesson")
         .one()
     )
-    gateway = FakeGenerationGateway()
+    gateway = PreparationGenerationGateway()
     gateway.when_prompt_contains(
         'LESSON: {"title": "Next lesson",',
         _lesson_draft([concepts[1].id], [chunks[1].id]),
@@ -665,7 +860,7 @@ def test_submitted_lesson_results_select_next_activity_and_resume_reused_prepara
             mastery.record_graded_attempt(question, owner.id, "yes", 1.0, commit=False)
     db_session.commit()
 
-    gateway = FakeGenerationGateway()
+    gateway = PreparationGenerationGateway()
     gateway.when_prompt_contains(
         'LESSON: {"title": "Next lesson",',
         _lesson_draft([next_concept.id], [next_chunk.id]),
@@ -771,7 +966,7 @@ def test_foreign_owner_cannot_read_or_prepare_an_activity(client, owner, other_u
     dispatcher = RecordingDispatcher()
     service = ActivityPreparationService(
         db_session,
-        _configure_generation(FakeGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks]),
+        _configure_generation(PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks]),
         dispatcher,
     )
     from app.main import app
@@ -787,7 +982,7 @@ def test_foreign_owner_cannot_read_or_prepare_an_activity(client, owner, other_u
 
 def test_assessment_readiness_requires_complete_prepared_set(db_session, owner):
     course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
-    gateway = _configure_generation(FakeGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
+    gateway = _configure_generation(PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
     service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
     preparation = service.request_activity(course.id, activity.id, owner.id)
     service.run(preparation.id, owner.id)
@@ -814,7 +1009,7 @@ def test_inadequate_supported_content_abstains_and_retries_from_content_stage(db
             "citation_chunk_ids": [str(chunks[0].id)],
         }
     ]
-    failing_gateway = FakeGenerationGateway().when_prompt_contains(
+    failing_gateway = PreparationGenerationGateway().when_prompt_contains(
         "Prepare the first lesson", json.dumps(insufficient)
     ).when_prompt_contains(
         "CLAIM:\nNo supported explanation remains after validation.", '{"supported": false}'
@@ -830,13 +1025,104 @@ def test_inadequate_supported_content_abstains_and_retries_from_content_stage(db
     assert db_session.query(LessonContentArtifact).count() == 0
 
     recovery_gateway = _configure_generation(
-        FakeGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
+        PreparationGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
     )
     recovery = ActivityPreparationService(db_session, recovery_gateway, dispatcher)
     retry = recovery.retry(course.id, activity.id, owner.id)
     assert retry.stage == "CONTENT"
     assert retry.retry_count == 1
     assert recovery.run(retry.id, owner.id).status == PreparationStatus.READY
+
+
+def test_learning_objective_is_not_misclassified_as_a_factual_source_claim(db_session, owner):
+    course, _version, concepts, chunks, _lesson, _activity = seed_published_activity(db_session, owner)
+    payload = json.loads(_lesson_draft([item.id for item in concepts], [item.id for item in chunks]))
+    instructional_objective = f"Learn to explain {concepts[0].name}."
+    calls = []
+
+    def checker(claim_text, _chunk_text):
+        calls.append(claim_text)
+        return claim_text != instructional_objective
+
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway(), RecordingDispatcher())
+    source_by_id = {chunk.id: chunk for chunk in chunks}
+    chunks_by_concept = {
+        concept.id: {chunks[index].id}
+        for index, concept in enumerate(concepts)
+    }
+
+    sections = service._validate_content_draft(
+        parse_lesson_content(json.dumps(payload)), concepts, chunks_by_concept, source_by_id, checker
+    )
+
+    assert instructional_objective not in calls
+    assert sections["objective"][0]["text"] == instructional_objective
+
+
+def test_statement_supported_by_its_cited_passages_as_a_group_is_retained(db_session, owner):
+    course, _version, concepts, chunks, _lesson, _activity = seed_published_activity(db_session, owner)
+    chunks[0].text = "A client retries a request after a timeout."
+    chunks[1].text = "An idempotency key keeps the retried operation from having a different effect."
+    db_session.commit()
+    payload = json.loads(_lesson_draft([item.id for item in concepts], [item.id for item in chunks]))
+    combined_claim = "After a timeout, an idempotency key keeps a client retry from changing the operation's effect."
+    payload["explanation"][0] = {
+        "text": combined_claim,
+        "concept_ids": [str(concepts[0].id), str(concepts[1].id)],
+        "citation_chunk_ids": [str(chunks[0].id), str(chunks[1].id)],
+    }
+    checked_sources = []
+
+    def checker(claim_text, source_text):
+        if claim_text == combined_claim:
+            checked_sources.append(source_text)
+            return "timeout" in source_text and "idempotency key" in source_text and "different effect" in source_text
+        return True
+
+    assert checker(combined_claim, chunks[0].text) is False
+    assert checker(combined_claim, chunks[1].text) is False
+    checked_sources.clear()
+
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway(), RecordingDispatcher())
+    source_by_id = {chunk.id: chunk for chunk in chunks}
+    chunks_by_concept = {
+        concept.id: {chunks[index].id}
+        for index, concept in enumerate(concepts)
+    }
+
+    sections = service._validate_content_draft(
+        parse_lesson_content(json.dumps(payload)), concepts, chunks_by_concept, source_by_id, checker
+    )
+
+    assert len(checked_sources) == 1
+    assert "\n\n" in checked_sources[0]
+    assert sections["explanation"][0]["text"] == combined_claim
+
+
+def test_multi_concept_statement_requires_mapped_citations_for_each_concept(db_session, owner):
+    _course, _version, concepts, chunks, _lesson, _activity = seed_published_activity(db_session, owner)
+    payload = json.loads(_lesson_draft([item.id for item in concepts], [item.id for item in chunks]))
+    payload["explanation"][0] = {
+        "text": "A combined statement about the two selected concepts.",
+        "concept_ids": [str(concepts[0].id), str(concepts[1].id)],
+        "citation_chunk_ids": [str(chunks[0].id)],
+    }
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway(), RecordingDispatcher())
+    source_by_id = {chunk.id: chunk for chunk in chunks}
+    chunks_by_concept = {
+        concept.id: {chunks[index].id}
+        for index, concept in enumerate(concepts)
+    }
+
+    try:
+        service._validate_content_draft(
+            parse_lesson_content(json.dumps(payload)), concepts, chunks_by_concept, source_by_id,
+            lambda _claim, _source: True,
+        )
+    except CandidateRejected as exc:
+        assert exc.category == "INVALID_CITATION"
+    else:
+        raise AssertionError("each concept in a multi-concept claim needs a mapped cited source")
 
 
 def test_diagnostic_duplicate_is_rejected_from_lesson_set(db_session, owner):
@@ -864,7 +1150,7 @@ def test_diagnostic_duplicate_is_rejected_from_lesson_set(db_session, owner):
     db_session.commit()
 
     gateway = _configure_generation(
-        FakeGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
+        PreparationGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
     )
     preparation = ActivityPreparationService(db_session, gateway, RecordingDispatcher()).request_activity(
         course.id, activity.id, owner.id
@@ -878,7 +1164,7 @@ def test_diagnostic_duplicate_is_rejected_from_lesson_set(db_session, owner):
 
 def test_source_change_blocks_saved_content_artifact(db_session, owner):
     course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
-    gateway = _configure_generation(FakeGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
+    gateway = _configure_generation(PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
     service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
     preparation = service.request_activity(course.id, activity.id, owner.id)
     assert service.run(preparation.id, owner.id).status == PreparationStatus.READY
@@ -900,7 +1186,7 @@ def test_replaced_worker_lease_cannot_attach_an_artifact(db_session, owner):
     from datetime import datetime, timedelta, timezone
 
     course, _version, _concepts, _chunks, _lesson, activity = seed_published_activity(db_session, owner)
-    service = ActivityPreparationService(db_session, FakeGenerationGateway(), RecordingDispatcher())
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway(), RecordingDispatcher())
     preparation = service.request_activity(course.id, activity.id, owner.id)
     running, stale_token = service._acquire(preparation.id, owner.id)
     assert stale_token is not None
@@ -924,7 +1210,7 @@ def test_replaced_worker_lease_cannot_attach_an_artifact(db_session, owner):
 def test_unavailable_distractor_check_does_not_validate_questions(db_session, owner):
     course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
 
-    class FailingDistractorValidation(FakeGenerationGateway):
+    class FailingDistractorValidation(PreparationGenerationGateway):
         def generate(self, prompt, *args, **kwargs):
             if "is also a supported correct answer." in prompt:
                 raise GenerationError("fixture validation unavailable")
@@ -940,14 +1226,14 @@ def test_unavailable_distractor_check_does_not_validate_questions(db_session, ow
     assert result.status == PreparationStatus.RECOVERABLE_FAILURE
     assert result.stage == "QUESTIONS"
     assert result.error_category == "VALIDATION_UNAVAILABLE"
-    assert result.candidate_count == 3
+    assert result.candidate_count == 1
     assert result.content_artifact_id is not None
     assert db_session.query(PreparedActivityQuestion).filter_by(preparation_id=result.id).count() == 0
 
 
 def test_saved_content_rejects_chunk_that_changed_owner(db_session, owner, other_user):
     course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
-    gateway = _configure_generation(FakeGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
+    gateway = _configure_generation(PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
     service = ActivityPreparationService(db_session, gateway, RecordingDispatcher())
     preparation = service.request_activity(course.id, activity.id, owner.id)
     assert service.run(preparation.id, owner.id).status == PreparationStatus.READY
@@ -966,11 +1252,11 @@ def test_saved_content_rejects_chunk_that_changed_owner(db_session, owner, other
 
 def test_content_artifact_cache_key_tracks_prompt_version(db_session, owner, monkeypatch):
     course, version, concepts, _chunks, lesson, _activity = seed_published_activity(db_session, owner)
-    service = ActivityPreparationService(db_session, FakeGenerationGateway(), RecordingDispatcher())
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway(), RecordingDispatcher())
     from app.modules.preparation import service as preparation_module
 
     original_key = service._artifact_key(version, lesson, concepts, "detailed")[0]
-    monkeypatch.setattr(preparation_module, "CONTENT_PROMPT_VERSION", "p2-lesson-content-v2")
+    monkeypatch.setattr(preparation_module, "CONTENT_PROMPT_VERSION", f"{preparation_module.CONTENT_PROMPT_VERSION}-test")
     updated_key = service._artifact_key(version, lesson, concepts, "detailed")[0]
     assert updated_key != original_key
 
@@ -978,7 +1264,7 @@ def test_content_artifact_cache_key_tracks_prompt_version(db_session, owner, mon
 def test_legacy_ready_p2_preparation_reuses_saved_work_without_enqueue_or_ai_calls(db_session, owner):
     course, _version, concepts, chunks, _lesson, activity = seed_published_activity(db_session, owner)
     gateway = _configure_generation(
-        FakeGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
+        PreparationGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
     )
     dispatcher = RecordingDispatcher()
     service = ActivityPreparationService(db_session, gateway, dispatcher)
@@ -1018,7 +1304,7 @@ def test_legacy_ready_p2_preparation_reuses_saved_work_without_enqueue_or_ai_cal
 def test_legacy_ready_p2_published_preparation_is_adopted_by_first_activity(db_session, owner):
     course, version, concepts, chunks, lesson, activity = seed_published_activity(db_session, owner)
     gateway = _configure_generation(
-        FakeGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
+        PreparationGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
     )
     dispatcher = RecordingDispatcher()
     service = ActivityPreparationService(db_session, gateway, dispatcher)
@@ -1045,7 +1331,7 @@ def test_legacy_ready_p2_published_preparation_is_adopted_by_first_activity(db_s
 def test_legacy_p2_content_artifact_is_reused_for_compatible_lesson_preparation(db_session, owner):
     course, version, concepts, chunks, lesson, first_activity = seed_published_activity(db_session, owner)
     first_gateway = _configure_generation(
-        FakeGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
+        PreparationGenerationGateway(), [concept.id for concept in concepts], [chunk.id for chunk in chunks]
     )
     dispatcher = RecordingDispatcher()
     first_service = ActivityPreparationService(db_session, first_gateway, dispatcher)
@@ -1079,14 +1365,17 @@ def test_legacy_p2_content_artifact_is_reused_for_compatible_lesson_preparation(
                 "curriculum_fingerprint": legacy_curriculum_fingerprint,
                 "lesson_id": str(lesson.id),
                 "format": "detailed",
-                "prompt": CONTENT_PROMPT_VERSION,
-                "schema": CONTENT_SCHEMA_VERSION,
-                "validation": VALIDATION_POLICY_VERSION,
+                "prompt": LEGACY_P2_CONTENT_PROMPT_VERSION,
+                "schema": LEGACY_P2_CONTENT_SCHEMA_VERSION,
+                "validation": LEGACY_P2_VALIDATION_POLICY_VERSION,
             },
             sort_keys=True,
         ).encode()
     ).hexdigest()
     saved_artifact.curriculum_fingerprint = legacy_curriculum_fingerprint
+    saved_artifact.prompt_version = LEGACY_P2_CONTENT_PROMPT_VERSION
+    saved_artifact.schema_version = LEGACY_P2_CONTENT_SCHEMA_VERSION
+    saved_artifact.validation_policy_version = LEGACY_P2_VALIDATION_POLICY_VERSION
     assert ActivityPreparationService._legacy_p2_artifact_key(
         version, lesson, ordered_concepts, "detailed"
     ) == (saved_artifact.artifact_key, legacy_curriculum_fingerprint)
@@ -1105,7 +1394,7 @@ def test_legacy_p2_content_artifact_is_reused_for_compatible_lesson_preparation(
     db_session.commit()
 
     next_gateway = _configure_generation(
-        FakeGenerationGateway(),
+        PreparationGenerationGateway(),
         [concept.id for concept in concepts],
         [chunk.id for chunk in chunks],
         prompt_offset=120,
@@ -1121,7 +1410,7 @@ def test_legacy_p2_content_artifact_is_reused_for_compatible_lesson_preparation(
 
 def test_presentation_variants_prepare_on_demand_and_reuse_saved_artifacts(db_session, owner):
     course, version, concepts, chunks, lesson, activity = seed_published_activity(db_session, owner)
-    gateway = _configure_generation(FakeGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
+    gateway = _configure_generation(PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks])
     dispatcher = RecordingDispatcher()
     service = ActivityPreparationService(db_session, gateway, dispatcher)
     core = service.request_activity(course.id, activity.id, owner.id)
@@ -1167,7 +1456,7 @@ def test_exhausted_allowance_and_provider_failure_keep_saved_content_for_retry(d
     course, version, concepts, chunks, lesson, first_activity = seed_published_activity(db_session, owner)
     dispatcher = RecordingDispatcher()
     initial_gateway = _configure_generation(
-        FakeGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks]
+        PreparationGenerationGateway(), [item.id for item in concepts], [item.id for item in chunks]
     )
     initial_service = ActivityPreparationService(db_session, initial_gateway, dispatcher)
     initial = initial_service.request_activity(course.id, first_activity.id, owner.id)
@@ -1194,7 +1483,7 @@ def test_exhausted_allowance_and_provider_failure_keep_saved_content_for_retry(d
     usage.call_count = 200
     db_session.commit()
 
-    service = ActivityPreparationService(db_session, FakeGenerationGateway().set_default('{"supported": true}'), dispatcher)
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway().set_default('{"supported": true}'), dispatcher)
     preparation = service.request_activity(course.id, next_activity.id, owner.id)
     exhausted = service.run(preparation.id, owner.id)
     assert exhausted.status == PreparationStatus.RECOVERABLE_FAILURE
@@ -1222,7 +1511,7 @@ def test_exhausted_allowance_and_provider_failure_keep_saved_content_for_retry(d
     assert provider_failed.content_artifact_id == content_artifact_id
 
     recovery_gateway = _configure_generation(
-        FakeGenerationGateway(),
+        PreparationGenerationGateway(),
         [item.id for item in concepts],
         [item.id for item in chunks],
         prompt_offset=10,
@@ -1402,6 +1691,37 @@ def test_remediation_prepares_focused_teaching_then_requires_reading_before_asse
         len(db_session.query(QuestionConcept).filter_by(question_id=UUID(question["question_id"])).all()) == 1
         for question in assessment.json()["questions"]
     )
+
+
+def test_legacy_remediation_content_artifact_is_reused_after_objective_schema_revision(db_session, owner):
+    course, version, concepts, chunks, _lesson, _activity = seed_published_activity(db_session, owner)
+    activity = _seed_p4_activity(
+        db_session, owner, course, version, concepts[:1], "PREREQUISITE_REMEDIATION"
+    )
+    service = ActivityPreparationService(
+        db_session,
+        _p4_gateway([concepts[0].id], [chunks[0].id], content=True),
+        RecordingDispatcher(),
+    )
+    preparation = service.request_activity(course.id, activity.id, owner.id)
+    ready = service.run(preparation.id, owner.id)
+    assert ready.status == PreparationStatus.READY
+    artifact = db_session.query(LessonContentArtifact).filter_by(id=ready.content_artifact_id).one()
+
+    legacy_key, artifact.curriculum_fingerprint = service._legacy_p4_artifact_key(
+        version, None, concepts[:1], activity.presentation_format, activity.activity_type, activity.id
+    )
+    artifact.artifact_key = legacy_key
+    artifact.prompt_version = LEGACY_REMEDIATION_CONTENT_PROMPT_VERSION
+    artifact.schema_version = LEGACY_REMEDIATION_CONTENT_SCHEMA_VERSION
+    artifact.validation_policy_version = LEGACY_REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION
+    db_session.commit()
+
+    reused = service._find_content_artifact(
+        version, None, concepts[:1], activity.presentation_format, activity.activity_type, activity.id
+    )
+
+    assert reused is not None and reused.id == artifact.id
 
 
 def test_short_answer_report_and_authorized_correction_update_effective_evidence(
@@ -1612,6 +1932,10 @@ def test_short_answer_report_and_authorized_correction_update_effective_evidence
     assert updated_result["correctness"] == 0.0
     assert updated_result["grade_corrected"] is True
     assert "only the first rubric criterion" in updated_result["correction_reason"]
+    assert updated_result["original_correctness"] == 1.0
+    assert updated_result["original_rubric_score"] == 3
+    assert all(item["met"] for item in updated_result["original_rubric_feedback"])
+    assert updated_result["rubric_score"] == 1
     expected_progress = mastery.get_assessment_concept_progress(
         course.id,
         owner.id,
@@ -1750,9 +2074,38 @@ def test_p4_freshness_failure_retries_without_replacing_the_saved_activity(db_se
     assert db_session.query(LearningActivity).filter_by(id=activity.id).one().id == activity.id
 
 
+def test_adaptive_question_scope_uses_curriculum_definition_not_only_the_label(db_session, owner):
+    _course, _version, concepts, chunks, _lesson, _activity = seed_published_activity(db_session, owner)
+    concept = concepts[0]
+    concept.name = "Retry Limits and Backoff"
+    concept.definition = (
+        "Retries use limits and backoff with jitter; services distinguish temporary failures "
+        "from validation errors requiring changed requests."
+    )
+    source_by_id = {chunks[0].id: chunks[0]}
+    chunks_by_concept = {concept.id: {chunks[0].id}}
+    draft = parse_mcq_set(_question_draft([concept.id], [chunks[0].id], include_short=False))
+    draft.questions[0].prompt = "Which failures should be retried, and which require a changed request?"
+    scope_checks = []
+
+    def checker(claim, _source):
+        if "without needing another selected concept" in claim:
+            scope_checks.append(claim)
+            return concept.definition in claim
+        return "also a supported correct answer" not in claim
+
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway(), RecordingDispatcher())
+    accepted = service._validate_question_set(
+        draft, [concept], source_by_id, chunks_by_concept, checker, 5, set(),
+        activity_purpose="PREREQUISITE_REMEDIATION",
+    )
+    assert len(accepted) == 5
+    assert len(scope_checks) == 5
+
+
 def test_p4_question_validation_rejects_non_isolatable_concept_attribution(db_session, owner):
     course, _version, concepts, chunks, _lesson, _activity = seed_published_activity(db_session, owner)
-    service = ActivityPreparationService(db_session, FakeGenerationGateway(), RecordingDispatcher())
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway(), RecordingDispatcher())
     source_by_id = {chunk.id: chunk for chunk in chunks[:1]}
     chunks_by_concept = {concepts[0].id: {chunks[0].id}}
 
@@ -1779,7 +2132,7 @@ def test_p4_question_validation_rejects_non_isolatable_concept_attribution(db_se
 
 def test_short_answer_prompt_and_each_rubric_claim_require_source_support(db_session, owner):
     _course, _version, concepts, chunks, _lesson, _activity = seed_published_activity(db_session, owner)
-    service = ActivityPreparationService(db_session, FakeGenerationGateway(), RecordingDispatcher())
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway(), RecordingDispatcher())
     draft = parse_prepared_question_set(
         _question_draft([item.id for item in concepts], [item.id for item in chunks])
     )
@@ -1815,7 +2168,7 @@ def test_short_answer_prompt_and_each_rubric_claim_require_source_support(db_ses
 
 def test_activity_purpose_and_target_sets_do_not_share_preparation_or_artifact_keys(db_session, owner):
     _course, version, concepts, _chunks, lesson, _activity = seed_published_activity(db_session, owner)
-    service = ActivityPreparationService(db_session, FakeGenerationGateway(), RecordingDispatcher())
+    service = ActivityPreparationService(db_session, PreparationGenerationGateway(), RecordingDispatcher())
     new_lesson_key = service._artifact_key(version, lesson, concepts[:1], "detailed", "NEW_LESSON")[0]
     remediation_key = service._artifact_key(
         version, lesson, concepts[:1], "detailed", "PREREQUISITE_REMEDIATION"
@@ -1840,7 +2193,7 @@ def test_lesson_weak_result_remediation_reassessment_and_continue_cycle(
 ):
     course, version, concepts, chunks, _lesson, lesson_activity = seed_published_activity(db_session, owner)
     initial_gateway = _configure_generation(
-        FakeGenerationGateway(),
+        PreparationGenerationGateway(),
         [concept.id for concept in concepts],
         [chunk.id for chunk in chunks],
     )

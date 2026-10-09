@@ -33,6 +33,19 @@ grade or create another attempt.
 - New lesson and interrupted-lesson study continue through the P2 lesson screen.
 - Main content: objective, explanation, example, recap for teaching activities.
 - Concise, detailed, worked example, analogy formats retain the same learning objective.
+- The selected format stays in the activity URL and uses a clear selected state. Worked examples lead with the example; concise lessons use compact spacing; diagram and source-view layouts preserve each validated statement and its citations.
+- Citation actions open the cited passage in the Sources tab beside the lesson and confirm that the passage is open.
+- Diagram mode draws directed, individually source-checked connections between saved
+  explanation points. Connection text and citations stay inspectable; unrelated points
+  are never connected merely because they share a concept or appear consecutively.
+- Source view leads with original uploaded passages, document names, headings, and pages
+  where available. Passage failures can be retried while the validated lesson remains
+  accessible. Uploaded text is displayed as inert text.
+- Quiz-first starts with an ungraded warm-up for each learning objective. An attempted
+  answer or explicit uncertainty reveals the matching source-grounded explanation,
+  example, and recap for self-comparison. Warm-up responses restore on the same browser,
+  scoped to activity and content artifact. Once each explanation is revealed, the usual
+  reading-completion and fixed-assessment readiness checks govern the handoff.
 - Tutor receives course/activity context. Sources open supporting passages with document
   and page where available; TXT/Markdown use headings/locations without invented pages.
 - Tutor/source panels preserve activity position. Responsive behavior must retain this

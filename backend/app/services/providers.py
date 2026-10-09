@@ -6,11 +6,11 @@ from app.services.vectorstore.pgvector_store import PgVectorStore
 
 
 def generation_gateway():
-    return GeminiGenerationGateway()
+    return GeminiGenerationGateway(require_accounting=True)
 
 
 def embedding_gateway():
-    return GeminiEmbeddingGateway()
+    return GeminiEmbeddingGateway(require_accounting=True)
 
 
 def vector_store(db: Session):

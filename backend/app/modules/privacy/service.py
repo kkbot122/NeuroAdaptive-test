@@ -27,7 +27,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.modules.abuse.models import AIUsageDaily
+from app.modules.abuse.models import AIProviderCall, AIUsageDaily
 from app.modules.adaptation.models import AdaptationDecision, AdaptationOutcome, PresentationAffinity
 from app.modules.assessment.models import QuizAttempt
 from app.modules.auth.models import User
@@ -99,6 +99,7 @@ class PrivacyService:
         )
         db.query(PresentationAffinity).filter(PresentationAffinity.owner_id == user_id).delete(synchronize_session=False)
         db.query(AIUsageDaily).filter(AIUsageDaily.owner_id == user_id).delete(synchronize_session=False)
+        db.query(AIProviderCall).filter(AIProviderCall.owner_id == user_id).delete(synchronize_session=False)
         db.query(LearningEvent).filter(LearningEvent.user_id == user_id).delete(synchronize_session=False)
 
         session_ids = [row[0] for row in db.query(ChatSession.id).filter(ChatSession.user_id == user_id).all()]

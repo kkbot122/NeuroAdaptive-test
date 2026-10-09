@@ -1,210 +1,240 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { components } from "@/lib/generated/api";
-import { StateWrapper } from "@/components/StateWrapper";
-import { Brain, ArrowLeft, Settings, CheckCircle, Loader2 } from "lucide-react";
+import { ArrowLeft, CheckCircle, LoaderCircle } from "lucide-react";
+import { LearningSidePanel } from "@/components/LearningSidePanel";
+import { EmptyLessonContentState } from "@/components/EmptyLessonContentState";
+import { PreparedLessonContent } from "@/components/PreparedLessonContent";
+import { StudyPositionRestorer } from "@/components/StudyPositionRestorer";
+import { preparationFailureMessage } from "@/lib/learning-route";
+import {
+  canCommitWorkspaceResponse,
+  studyWorkspaceIdentity,
+  updateWorkspaceState,
+  visibleWorkspaceContent,
+  workspaceStateForIdentity,
+} from "@/lib/study-workspace-state.mjs";
 
-// Keep the persisted activity format and content endpoint in sync with the
-// server's PresentationFormat vocabulary, including formats this screen did
-// not previously expose as controls.
-const FORMATS = [
-  "concise",
-  "detailed",
-  "worked_example",
-  "analogy",
-  "diagram",
-  "source_view",
-  "quiz_first",
-] as const;
+const FORMATS = ["concise", "detailed", "worked_example", "analogy", "diagram", "source_view", "quiz_first"] as const;
 type Format = (typeof FORMATS)[number];
+type Content = components["schemas"]["PreparedLessonContentOut"];
+type Preparation = components["schemas"]["PreparationOut"];
+type Activity = components["schemas"]["LearningActivityOut"];
+type WorkspaceContentState = {
+  identity: string;
+  content: Content | null;
+  preparation: Preparation | null;
+  error: string | null;
+  loading: boolean;
+};
+
+function formatLabel(format: Format): string {
+  return format === "worked_example" ? "Worked example" : format.replaceAll("_", " ");
+}
 
 export default function StudyLessonPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
-
   const courseId = params.courseId as string;
   const lessonId = params.lessonId as string;
   const activityId = searchParams.get("activityId");
-
-  const initialFormat = (searchParams.get("format") as Format) || "detailed";
-
-  const [isLoading, setIsLoading] = useState(true);
-  const [isError, setIsError] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-
+  const workspaceIdentity = studyWorkspaceIdentity(courseId, activityId);
+  const requestedFormat = searchParams.get("format") as Format | null;
   const [course, setCourse] = useState<components["schemas"]["CourseOut"] | null>(null);
   const [lesson, setLesson] = useState<components["schemas"]["LessonOut"] | null>(null);
+  const [activityState, setActivityState] = useState<{ identity: string; value: Activity | null } | null>(null);
   const [conceptNames, setConceptNames] = useState<Record<string, string>>({});
-  const [format, setFormat] = useState<Format>(FORMATS.includes(initialFormat) ? initialFormat : "detailed");
-
-  const [content, setContent] = useState<components["schemas"]["PreparedLessonContentOut"] | null>(null);
-  const [preparation, setPreparation] = useState<components["schemas"]["PreparationOut"] | null>(null);
-  const [contentError, setContentError] = useState<string | null>(null);
-  const [isContentLoading, setIsContentLoading] = useState(false);
-  const [readingPosition, setReadingPosition] = useState(0);
+  const [format, setFormat] = useState<Format>(requestedFormat && FORMATS.includes(requestedFormat) ? requestedFormat : "detailed");
+  const [workspaceContent, setWorkspaceContent] = useState<WorkspaceContentState | null>(null);
+  const [savedReadingPosition, setSavedReadingPosition] = useState<{ identity: string; position: number } | null>(null);
   const [progressError, setProgressError] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [sourceToOpen, setSourceToOpen] = useState<string | null>(null);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [quizReady, setQuizReady] = useState<{ identity: string; artifactId: string; ready: boolean } | null>(null);
   const saveTimer = useRef<number | null>(null);
   const formatRef = useRef(format);
+  const contentRequestRef = useRef<AbortController | null>(null);
+  const lessonRequestIdRef = useRef(0);
+  const progressSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const progressTargetRef = useRef(workspaceIdentity);
+  const activeIdentityRef = useRef(workspaceIdentity);
+  activeIdentityRef.current = workspaceIdentity;
+
+  const syncFormatUrl = useCallback((selectedFormat: Format) => {
+    const query = new URLSearchParams(window.location.search);
+    query.set("format", selectedFormat);
+    const nextUrl = `${window.location.pathname}?${query.toString()}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      router.replace(nextUrl, { scroll: false });
+    }
+  }, [router]);
+
+  const currentWorkspace = workspaceStateForIdentity(workspaceContent, workspaceIdentity) as WorkspaceContentState | null;
+  const content = currentWorkspace?.content ?? null;
+  const preparation = currentWorkspace?.preparation ?? null;
+  const contentError = currentWorkspace?.error ?? null;
+  const isContentLoading = currentWorkspace?.loading ?? true;
+  const activity = activityState?.identity === workspaceIdentity ? activityState.value : null;
+  const readingPosition = savedReadingPosition?.identity === workspaceIdentity ? savedReadingPosition.position : 0;
+  const displayedContent = visibleWorkspaceContent(workspaceContent, workspaceIdentity, format) as Content | null;
+  const warmupReady = format !== "quiz_first" || (quizReady?.identity === workspaceIdentity
+    && quizReady.artifactId === displayedContent?.artifact_id && quizReady.ready);
+  const updateQuizReady = useCallback((ready: boolean) => {
+    if (displayedContent) setQuizReady({ identity: workspaceIdentity, artifactId: displayedContent.artifact_id, ready });
+  }, [workspaceIdentity, displayedContent]);
 
   const fetchLessonData = useCallback(async () => {
+    const requestId = ++lessonRequestIdRef.current;
     setIsLoading(true);
-    setIsError(false);
+    setPageError(null);
     try {
-      const [courseRes, structureRes, graphRes, activityRes] = await Promise.all([
-        fetch(`/api/v1/courses/${courseId}`),
-        fetch(`/api/v1/courses/${courseId}/structure`),
-        fetch(`/api/v1/courses/${courseId}/graph`),
-        activityId ? fetch(`/api/v1/courses/${courseId}/activities/${activityId}`) : Promise.resolve(null),
+      const [courseResponse, structureResponse, graphResponse, activityResponse] = await Promise.all([
+        fetch(`/api/v1/courses/${courseId}`, { cache: "no-store" }),
+        fetch(`/api/v1/courses/${courseId}/structure`, { cache: "no-store" }),
+        fetch(`/api/v1/courses/${courseId}/graph`, { cache: "no-store" }),
+        activityId ? fetch(`/api/v1/courses/${courseId}/activities/${activityId}`, { cache: "no-store" }) : Promise.resolve(null),
       ]);
-      if (!courseRes.ok) throw new Error("Failed to load course");
-      setCourse(await courseRes.json());
-
-      if (!structureRes.ok) throw new Error("Failed to load course structure");
-      const structure: components["schemas"]["StructureOut"] = await structureRes.json();
-
-      let foundLesson = null;
-      for (const mod of structure.modules || []) {
-        const match = mod.lessons.find((l: { id: string }) => l.id === lessonId);
-        if (match) {
-          foundLesson = match;
-          break;
-        }
-      }
-      if (!foundLesson) throw new Error("Lesson not found in course structure");
+      if (requestId !== lessonRequestIdRef.current) return;
+      if (!courseResponse.ok || !structureResponse.ok) throw new Error("The saved course outline could not be loaded.");
+      if (activityResponse && !activityResponse.ok) throw new Error("This saved activity is no longer available.");
+      const currentCourse: components["schemas"]["CourseOut"] = await courseResponse.json();
+      const structure: components["schemas"]["StructureOut"] = await structureResponse.json();
+      const foundLesson = structure.modules.flatMap((module) => module.lessons).find((item) => item.id === lessonId);
+      if (!foundLesson) throw new Error("This lesson is not in the published course version.");
+      setCourse(currentCourse);
       setLesson(foundLesson);
 
-      if (activityRes?.ok) {
-        const activity: components["schemas"]["LearningActivityOut"] = await activityRes.json();
-        setReadingPosition(activity.reading_position);
-        setPreparation(activity.preparation ?? null);
-        if (FORMATS.includes(activity.presentation_format as Format)) {
-          setFormat(activity.presentation_format as Format);
+      if (activityResponse) {
+        const savedActivity: Activity = await activityResponse.json();
+        setActivityState({ identity: workspaceIdentity, value: savedActivity });
+        setSavedReadingPosition({ identity: workspaceIdentity, position: savedActivity.reading_position });
+        setWorkspaceContent((current) => updateWorkspaceState(current, workspaceIdentity, {
+          preparation: savedActivity.preparation ?? null,
+        }));
+        if (FORMATS.includes(savedActivity.presentation_format as Format)) {
+          setFormat(savedActivity.presentation_format as Format);
+          formatRef.current = savedActivity.presentation_format as Format;
+          syncFormatUrl(savedActivity.presentation_format as Format);
         }
+      } else {
+        setActivityState({ identity: workspaceIdentity, value: null });
+        setSavedReadingPosition({ identity: workspaceIdentity, position: 0 });
       }
 
-      // Lessons carry concept_id, not a name (curriculum/router.py's
-      // _version_out) -- names come from the graph.
-      if (graphRes.ok) {
-        const graph: components["schemas"]["GraphOut"] = await graphRes.json();
-        const names: Record<string, string> = {};
-        for (const c of graph.concepts || []) names[c.id] = c.name;
-        setConceptNames(names);
+      if (graphResponse.ok) {
+        const graph: components["schemas"]["GraphOut"] = await graphResponse.json();
+        setConceptNames(Object.fromEntries(graph.concepts.map((concept) => [concept.id, concept.name])));
       }
-    } catch (err: unknown) {
-      console.error(err);
-      setIsError(true);
-      setErrorMsg(err instanceof Error ? err.message : "An error occurred");
+    } catch (cause) {
+      if (requestId === lessonRequestIdRef.current) setPageError(cause instanceof Error ? cause.message : "The saved lesson could not be loaded.");
     } finally {
-      setIsLoading(false);
+      if (requestId === lessonRequestIdRef.current) setIsLoading(false);
     }
-  }, [courseId, lessonId, activityId, setIsLoading, setIsError, setErrorMsg, setCourse, setLesson, setConceptNames]);
+  }, [activityId, courseId, lessonId, syncFormatUrl, workspaceIdentity]);
 
-  const fetchContent = useCallback(async (fmt: Format) => {
+  const fetchContent = useCallback(async (selectedFormat: Format) => {
+    const requestIdentity = workspaceIdentity;
     if (!activityId) {
-      setContent(null);
-      setContentError("Open this lesson from Continue studying so its saved activity content can load.");
+      setWorkspaceContent((current) => updateWorkspaceState(current, requestIdentity, {
+        error: "Open this lesson from Continue studying to load its saved learning activity.",
+        loading: false,
+      }));
       return;
     }
-    setIsContentLoading(true);
+    contentRequestRef.current?.abort();
+    const controller = new AbortController();
+    contentRequestRef.current = controller;
+    setWorkspaceContent((current) => updateWorkspaceState(current, requestIdentity, { error: null, loading: true }));
     try {
-      const res = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/content?format=${fmt}`, {
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/content?format=${encodeURIComponent(selectedFormat)}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
-      const data: components["schemas"]["ActivityContentResponseOut"] = await res.json();
-      setPreparation(data.preparation ?? null);
-      if (res.ok && data.status === "READY" && data.content) {
-        setContent(data.content);
-        setContentError(data.preparation?.status === "RECOVERABLE_FAILURE"
-          ? "Preparation paused. Your saved lesson is available, but its assessment or requested format needs a retry."
-          : null);
-      } else if (data.status === "RECOVERABLE_FAILURE") {
-        setContent(null);
-        setContentError("Preparation paused. Your saved course is safe. Retry when you are ready.");
-      } else if (!res.ok && res.status !== 202) {
-        setContent(null);
-        setContentError("Saved lesson content is unavailable right now. Try again shortly.");
-      } else {
-        setContent(null);
-        setContentError(null);
+      const payload: components["schemas"]["ActivityContentResponseOut"] = await response.json();
+      if (!canCommitWorkspaceResponse({
+        requestIdentity,
+        activeIdentity: activeIdentityRef.current,
+        requestedFormat: selectedFormat,
+        activeFormat: formatRef.current,
+        aborted: controller.signal.aborted,
+      })) return;
+      setWorkspaceContent((current) => {
+        const previous = updateWorkspaceState(current, requestIdentity, {});
+        const ready = response.ok && payload.status === "READY" && payload.content;
+        return {
+          ...previous,
+          preparation: payload.preparation ?? null,
+          content: ready ? payload.content : previous.content,
+          error: ready
+            ? payload.preparation?.status === "RECOVERABLE_FAILURE"
+              ? "Questions or another requested format need preparation. This saved lesson content remains available."
+              : null
+            : payload.status === "RECOVERABLE_FAILURE"
+              ? preparationFailureMessage(payload.preparation?.error_category)
+              : !response.ok && response.status !== 202
+                ? "Saved lesson content is unavailable right now. Try again shortly."
+                : null,
+          loading: false,
+        };
+      });
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      if (activeIdentityRef.current === requestIdentity) {
+        setWorkspaceContent((current) => updateWorkspaceState(current, requestIdentity, {
+          error: cause instanceof Error ? "Saved lesson content is unavailable right now. Try again shortly." : "Saved lesson content could not be loaded.",
+          loading: false,
+        }));
       }
-    } catch (err) {
-      console.error("Failed to load prepared lesson content", err);
-      setContent(null);
-      setContentError("Saved lesson content is unavailable right now. Try again shortly.");
     } finally {
-      setIsContentLoading(false);
+      if (!controller.signal.aborted && activeIdentityRef.current === requestIdentity && formatRef.current === selectedFormat) {
+        setWorkspaceContent((current) => updateWorkspaceState(current, requestIdentity, { loading: false }));
+      }
     }
-  }, [activityId, courseId]);
+  }, [activityId, courseId, workspaceIdentity]);
 
+  useEffect(() => { void fetchLessonData(); }, [fetchLessonData]);
+  useEffect(() => { progressTargetRef.current = workspaceIdentity; }, [workspaceIdentity]);
+  useEffect(() => { formatRef.current = format; }, [format]);
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (courseId && lessonId) void fetchLessonData();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [courseId, lessonId, fetchLessonData]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (courseId && lessonId) void fetchContent(format);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [courseId, lessonId, format, fetchContent]);
-
+    const timer = window.setTimeout(() => void fetchContent(format), 0);
+    return () => {
+      window.clearTimeout(timer);
+      contentRequestRef.current?.abort();
+    };
+  }, [fetchContent, format]);
   useEffect(() => {
     if (!preparation || !["PENDING", "RUNNING"].includes(preparation.status)) return;
-    const timer = window.setTimeout(() => void fetchContent(format), 2000);
+    const timer = window.setTimeout(() => void fetchContent(format), 2500);
     return () => window.clearTimeout(timer);
   }, [preparation, format, fetchContent]);
+  useEffect(() => { setSourceToOpen(null); }, [format, workspaceIdentity]);
 
-  useEffect(() => {
-    formatRef.current = format;
-  }, [format]);
-
-  useEffect(() => {
-    if (
-      readingPosition > 0 &&
-      !isLoading &&
-      !isContentLoading &&
-      content !== null
-    ) {
-      window.scrollTo(0, readingPosition);
-    }
-  }, [readingPosition, isLoading, isContentLoading, content]);
-
-  const retryPreparation = async () => {
-    if (!activityId) return;
-    setContentError(null);
-    try {
-      const response = await fetch(
-        `/api/v1/courses/${courseId}/activities/${activityId}/preparation/retry?format=${encodeURIComponent(format)}`,
-        { method: "POST" },
-      );
-      if (!response.ok) throw new Error("Preparation could not be retried.");
-      await fetchContent(format);
-    } catch {
-      setContentError("Preparation could not be restarted. Your saved course is safe; try again shortly.");
-    }
-  };
-
-  const saveProgress = useCallback(async (position: number, selectedFormat: Format, keepalive = false) => {
-    if (!activityId) return;
-    const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reading_position: position, presentation_format: selectedFormat }),
-      keepalive,
+  const saveProgress = useCallback((position: number, selectedFormat: Format, keepalive = false) => {
+    if (!activityId) return Promise.resolve();
+    const target = `${courseId}:${activityId}`;
+    const save = progressSaveQueueRef.current.catch(() => undefined).then(async () => {
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reading_position: position, presentation_format: selectedFormat }),
+        keepalive,
+      });
+      if (!response.ok) throw new Error("Could not save lesson progress");
+      if (!keepalive && progressTargetRef.current === target) setProgressError(null);
     });
-    if (!response.ok) throw new Error("Could not save lesson progress");
-    if (!keepalive) setProgressError(null);
+    progressSaveQueueRef.current = save;
+    return save;
   }, [activityId, courseId]);
 
   useEffect(() => {
     if (!activityId) return;
-    const handleScroll = () => {
+    const onScroll = () => {
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => {
         void saveProgress(Math.max(0, Math.round(window.scrollY)), formatRef.current).catch(() => {
@@ -212,211 +242,154 @@ export default function StudyLessonPage() {
         });
       }, 500);
     };
-    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true });
     return () => {
-      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("scroll", onScroll);
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-      void saveProgress(
-        Math.max(0, Math.round(window.scrollY)),
-        formatRef.current,
-        true,
-      ).catch(() => undefined);
+      void saveProgress(Math.max(0, Math.round(window.scrollY)), formatRef.current, true).catch(() => undefined);
     };
   }, [activityId, saveProgress]);
 
-  const handleFormatSwitch = async (newFormat: Format) => {
-    if (newFormat === format) return;
+  const changeFormat = async (nextFormat: Format) => {
+    if (nextFormat === format) return;
     const previousFormat = formatRef.current;
-    formatRef.current = newFormat;
+    formatRef.current = nextFormat;
     if (saveTimer.current !== null) {
       window.clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
     try {
-      await saveProgress(Math.max(0, Math.round(window.scrollY)), newFormat);
+      await saveProgress(Math.max(0, Math.round(window.scrollY)), nextFormat);
+      setProgressError(null);
     } catch {
       formatRef.current = previousFormat;
-      setProgressError("The presentation format could not be saved.");
+      setProgressError("The presentation format could not be saved. Your current format is unchanged.");
       return;
     }
-    try {
-      await fetch("/api/v1/presentation-affinity/switch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from_format: format, to_format: newFormat }),
-      });
-    } catch (err) {
-      console.error("Failed to record format switch", err);
-    }
-    setFormat(newFormat);
+    void fetch("/api/v1/presentation-affinity/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from_format: format, to_format: nextFormat }),
+    }).catch(() => undefined);
+    setFormat(nextFormat);
+    syncFormatUrl(nextFormat);
   };
 
-  const handleComplete = async () => {
+  const retryPreparation = async () => {
     if (!activityId) return;
-    if (!preparation?.assessment_ready) {
-      setProgressError("The lesson is saved. Questions are still preparing; this button will be ready when they are.");
-      return;
+    const requestIdentity = workspaceIdentity;
+    setWorkspaceContent((current) => updateWorkspaceState(current, requestIdentity, { error: null, loading: true }));
+    try {
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/preparation/retry?format=${encodeURIComponent(format)}`, { method: "POST" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail || "Preparation could not be retried.");
+      if (activeIdentityRef.current === requestIdentity) {
+        setWorkspaceContent((current) => updateWorkspaceState(current, requestIdentity, { preparation: payload.preparation ?? null }));
+      }
+      await fetchContent(format);
+    } catch {
+      if (activeIdentityRef.current === requestIdentity) {
+        setWorkspaceContent((current) => updateWorkspaceState(current, requestIdentity, {
+          error: "Preparation could not be restarted. Your saved activity and lesson remain available.",
+          loading: false,
+        }));
+      }
     }
+  };
+
+  const readyForQuestions = async () => {
+    if (!activityId || !preparation?.assessment_ready || !content || content.presentation_format !== format || !warmupReady || isCompleting) return;
+    setIsCompleting(true);
+    setProgressError(null);
     try {
       await saveProgress(Math.max(0, Math.round(window.scrollY)), format);
-      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/reading-complete`, {
-        method: "POST",
-      });
-      if (!response.ok) throw new Error("Could not save reading completion");
-      router.push(`/courses/${courseId}/assessment?type=activity&activityId=${activityId}`);
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/reading-complete`, { method: "POST" });
+      const payload: Activity = await response.json().catch(() => null);
+      if (!response.ok) throw new Error("Reading completion could not be saved.");
+      if (payload?.assessment_session_id) {
+        router.push(`/courses/${courseId}/assessment?type=activity&sessionId=${payload.assessment_session_id}`);
+      } else {
+        router.push(`/courses/${courseId}/assessment?type=activity&activityId=${activityId}`);
+      }
     } catch {
-      setProgressError("Reading completion could not be saved. Try again.");
+      setProgressError("Reading completion could not be saved. Your place is still available; try again.");
+    } finally {
+      setIsCompleting(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-[#F4F1EA] text-black font-[family-name:var(--font-kodchasan)] pb-28">
-      <nav className="w-full bg-white border-b-2 border-black px-6 py-4 flex items-center justify-between sticky top-0 z-50">
-        <div className="flex items-center gap-4">
-          <Link
-            href={`/dashboard`}
-            className="p-2 hover:bg-gray-100 rounded-full border-2 border-transparent hover:border-black transition-all"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <div className="w-10 h-10 bg-blue-500 rounded-lg border-2 border-black flex items-center justify-center shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
-            <span className="text-white font-bold tracking-tight">L</span>
-          </div>
-          <span className="text-xl font-bold tracking-tight truncate max-w-[250px]">
-            {course ? course.title : "Study Lesson"}
-          </span>
-        </div>
+  const citedIds = displayedContent?.source_chunk_ids || [];
 
-        <Link
-          href={`/courses/${courseId}/tutor?lessonId=${lessonId}`}
-          className="flex items-center gap-2 bg-purple-100 hover:bg-purple-200 border-2 border-black px-4 py-2 rounded-lg font-bold transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-1 active:translate-y-1 active:shadow-none"
-        >
-          <Brain className="w-4 h-4 text-purple-700" />
-          <span className="hidden md:inline">Ask Tutor</span>
-        </Link>
-      </nav>
+  if (isLoading) return <main className="nl-screen grid place-items-center p-6"><p role="status" className="flex items-center gap-3"><LoaderCircle className="size-5 animate-spin" />Loading saved lesson and activity…</p></main>;
 
-      <main className="max-w-4xl mx-auto px-6 py-10">
-        <StateWrapper
-          isLoading={isLoading}
-          isError={isError}
-          errorMessage={errorMsg}
-          isUnauthorized={errorMsg.includes("Unauthorized")}
-          isEmpty={false}
-          onRetry={fetchLessonData}
-        >
-          {lesson && (
-            <div className="space-y-8">
-              {/* Header */}
-              <div className="bg-white border-4 border-black p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] rotate-1">
-                <h1 className="text-4xl font-extrabold mb-4">{lesson.title}</h1>
-              </div>
+  return <div className="nl-screen">
+    <StudyPositionRestorer
+      identity={workspaceIdentity}
+      readingPosition={readingPosition}
+      hasActivity={Boolean(activity)}
+      isLoading={isLoading}
+      isContentLoading={isContentLoading}
+      contentFormat={displayedContent?.presentation_format}
+      format={format}
+    />
+    <nav className="nl-topbar" aria-label="Learning workspace">
+      <Link href={`/courses/${courseId}/learn`} className="nl-button" aria-label="Back to course overview"><ArrowLeft className="size-4" /><span className="hidden sm:inline">Back to course</span></Link>
+      <div className="nl-crumb"><small>{course?.title || "Course"}</small><strong>{lesson?.title || "Learning activity"}</strong></div>
+      <span className="nl-spacer" />
+      <span className="nl-chip nl-chip-mint">{preparation && ["PENDING", "RUNNING"].includes(preparation.status) ? `preparing content · ${preparation.progress}%` : activity?.status.replaceAll("_", " ").toLowerCase() || "Saved activity"}</span>
+    </nav>
 
-              {/* Format Controls */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gray-100 border-2 border-black rounded-lg p-4">
-                <div className="flex items-center gap-2 font-bold text-gray-700">
-                  <Settings className="w-5 h-5" />
-                  Presentation Variant
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  {FORMATS.map((fmt) => (
-                    <button
-                      key={fmt}
-                      onClick={() => handleFormatSwitch(fmt)}
-                      className={`px-4 py-2 border-2 border-black rounded-lg font-bold transition-all capitalize ${
-                        format === fmt
-                        ? "bg-purple-500 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
-                        : "bg-white hover:bg-gray-50"
-                      }`}
-                    >
-                      {fmt.replace("_", " ")}
-                    </button>
-                  ))}
-                </div>
-              </div>
+    <main className="nl-shell nl-grid">
+      <article className="nl-stack min-w-0" aria-label="Lesson content">
+        {pageError ? <section className="nl-card" role="alert"><h1 className="text-2xl font-bold">This saved lesson is unavailable</h1><p className="mt-3 text-zinc-700">{pageError}</p><button className="nl-button mt-4" onClick={() => void fetchLessonData()}>Try again</button></section> : lesson && <>
+          <header className="nl-card nl-card-accent">
+            <span className="nl-chip nl-chip-yellow">Lesson</span>
+            <h1 className="mt-3 text-3xl font-bold md:text-4xl">{lesson.title}</h1>
+            {activity?.reason && <p className="mt-3 max-w-3xl text-zinc-700">{activity.reason}</p>}
+            {lesson.objective && <p className="mt-4 border-l-4 border-black pl-4"><strong>Objective:</strong> {lesson.objective}</p>}
+            {lesson.concepts.length > 0 && <ul className="mt-4 flex flex-wrap gap-2" aria-label="Concepts covered">{lesson.concepts.map((concept) => <li key={concept.concept_id} className="nl-chip nl-chip-violet">{conceptNames[concept.concept_id] || "Course concept"}</li>)}</ul>}
+            <p className="mt-4 text-sm text-zinc-600">Your selected activity, course version, presentation format, and reading position are saved with this workspace.</p>
+          </header>
 
-              {/* This view renders only saved, fully validated statements. */}
-              <div className="bg-white border-2 border-black p-8 rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] min-h-[400px]">
-                <div className="mb-6 inline-block bg-blue-100 border-2 border-black px-3 py-1 font-bold text-sm uppercase tracking-widest shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                  {format.replace("_", " ")} VARIANT
-                </div>
-
-                <h3 className="text-2xl font-bold mb-4">Concepts Covered</h3>
-                <ul className="list-disc pl-6 space-y-2 mb-8 text-lg font-medium text-gray-800">
-                  {lesson.concepts?.map((c) => (
-                    <li key={c.concept_id}>{conceptNames[c.concept_id] || c.concept_id}</li>
-                  ))}
-                </ul>
-
-                {isContentLoading || (preparation && ["PENDING", "RUNNING"].includes(preparation.status) && !content) ? (
-                  <div className="flex items-center gap-3 p-6 bg-gray-50 border-2 border-dashed border-gray-400 rounded-lg text-gray-600 font-medium">
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Preparing saved lesson content and its assessment…
-                  </div>
-                ) : content ? (
-                  <div>
-                    {preparation?.status === "RECOVERABLE_FAILURE" && (
-                      <div className="mb-6 rounded-lg border-2 border-orange-400 bg-orange-50 p-4 font-medium text-orange-900">
-                        <p>{contentError || "Assessment preparation paused. Your saved lesson is still available."}</p>
-                        <button onClick={() => void retryPreparation()} className="mt-3 border-2 border-black bg-white px-4 py-2 font-bold text-black">
-                          Retry preparation
-                        </button>
-                      </div>
-                    )}
-                    {preparation?.status === "RUNNING" && !preparation.assessment_ready && (
-                      <div className="mb-6 flex items-center gap-3 rounded-lg border-2 border-blue-300 bg-blue-50 p-4 font-medium text-blue-900">
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        Lesson saved. Assessment preparation: {preparation.progress}%.
-                      </div>
-                    )}
-                    {(["objective", "explanation", "example", "recap"] as const).map((sectionName) => (
-                      <section key={sectionName} className="mb-8 last:mb-0">
-                        <h3 className="mb-3 text-2xl font-bold capitalize">{sectionName}</h3>
-                        <div className="space-y-4 text-lg leading-relaxed text-gray-800">
-                          {(content.sections[sectionName] || []).map((statement, index) => (
-                            <div key={`${sectionName}-${index}`}>
-                              <p>{statement.text}</p>
-                              <p className="mt-1 flex flex-wrap gap-x-3 text-xs font-bold text-blue-700">
-                                {statement.citation_chunk_ids.map((chunkId, citationIndex) => (
-                                  <Link key={chunkId} href={`/courses/${courseId}/sources/${chunkId}`} className="hover:underline">
-                                    Source {citationIndex + 1}
-                                  </Link>
-                                ))}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      </section>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="p-6 bg-orange-50 border-2 border-dashed border-orange-300 rounded-lg font-medium text-orange-900">
-                    {contentError || "Saved lesson content is not available yet."}
-                    {(preparation?.status === "RECOVERABLE_FAILURE" || contentError) && (
-                      <button onClick={() => void retryPreparation()} className="mt-4 block border-2 border-black bg-white px-4 py-2 font-bold text-black">
-                        Retry preparation
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Completion Actions */}
-              <div className="flex flex-col sm:flex-row justify-end gap-4 mt-8">
-                {progressError && <p role="status" className="text-red-700 font-bold">{progressError}</p>}
-                <button
-                  onClick={() => void handleComplete()}
-                  disabled={!activityId || !preparation?.assessment_ready}
-                  className="flex items-center justify-center gap-2 bg-[#FF9F1C] hover:bg-[#ff8c00] border-2 border-black px-8 py-3 rounded-lg font-bold transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-1 active:translate-y-1 active:shadow-none"
-                >
-                  <CheckCircle className="w-5 h-5" />
-                  {preparation?.assessment_ready ? "Ready for questions" : "Preparing questions…"}
-                </button>
-              </div>
+          <section className="nl-card" aria-labelledby="format-heading">
+            <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="format-heading" className="font-bold">Presentation format</h2><span className="text-sm text-zinc-600">Changing format keeps your place.</span></div>
+            <div className="mt-3 flex flex-wrap border-2 border-black" role="group" aria-label="Presentation format">
+              {FORMATS.map((item) => <button key={item} type="button" aria-pressed={format === item} onClick={() => void changeFormat(item)} className={`min-h-11 border-r-2 border-black px-3 py-2 capitalize last:border-r-0 ${format === item ? "bg-[#FFD23F] font-bold text-black shadow-[inset_0_-3px_0_#000]" : "bg-white hover:bg-zinc-100"}`}>{formatLabel(item)}{format === item && <span className="sr-only">, selected</span>}</button>)}
             </div>
-          )}
-        </StateWrapper>
-      </main>
-    </div>
-  );
+          </section>
+
+          <section className="nl-card min-h-96" aria-label="Saved validated lesson content" aria-live="polite">
+            <span className="nl-chip nl-chip-violet">{formatLabel(format)} variant</span>
+            {contentError && <div className="mt-4 border-2 border-amber-700 bg-amber-50 p-4 text-amber-950" role={displayedContent ? "status" : "alert"}><p>{contentError}</p><button type="button" className="nl-button mt-3" onClick={() => void retryPreparation()}>Retry preparation</button></div>}
+            {isContentLoading && !displayedContent ? <EmptyLessonContentState preparation={preparation} isLoading />
+              : displayedContent ? <div>
+                <PreparedLessonContent state={workspaceContent} identity={workspaceIdentity} courseId={courseId} format={format}
+                  activeSourceChunkId={sourceToOpen} onOpenSource={setSourceToOpen} onQuizReadyChange={updateQuizReady} />
+                {preparation?.status === "RUNNING" && !preparation.assessment_ready && <p className="mt-4 flex items-center gap-2 border-2 border-blue-800 bg-blue-50 p-3 text-sm" role="status"><LoaderCircle className="size-4 animate-spin" />Lesson saved. Questions are preparing ({preparation.progress}%).</p>}
+              </div>
+              : !contentError && <EmptyLessonContentState preparation={preparation} isLoading={isContentLoading} />}
+          </section>
+
+          <footer className="nl-card flex flex-wrap items-center justify-between gap-4">
+            <p className="max-w-xl text-sm text-zinc-700">Ready for questions records reading completion only. It does not count as understanding.</p>
+            {progressError && <p role="alert" className="w-full text-sm font-semibold text-red-800">{progressError}</p>}
+            {!warmupReady && <p className="text-sm text-zinc-700">Try each warm-up question or choose “I’m not sure” to reveal its explanation before continuing.</p>}
+            <button type="button" className="nl-button nl-button-primary nl-button-large" onClick={() => void readyForQuestions()} disabled={!activityId || !preparation?.assessment_ready || !displayedContent || !warmupReady || isCompleting}>
+              {isCompleting ? <LoaderCircle className="size-5 animate-spin" /> : <CheckCircle className="size-5" />}
+              {activity?.reading_completed_at ? "Continue to questions" : "Ready for questions"}
+            </button>
+          </footer>
+        </>}
+      </article>
+
+      {lesson && <LearningSidePanel
+        courseId={courseId}
+        contextLessonId={lesson.id}
+        decisionId={activity?.decision_id}
+        sourceIds={citedIds}
+        initialSourceChunkId={sourceToOpen}
+        conversationStorageKey={activityId ? `course:${courseId}:activity:${activityId}` : `course:${courseId}:lesson:${lesson.id}`}
+      />}
+    </main>
+  </div>;
 }

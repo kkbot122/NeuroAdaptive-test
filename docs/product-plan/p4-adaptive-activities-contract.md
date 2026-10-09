@@ -119,3 +119,12 @@ P5 can rely on the existing fixed-session answer/grading lifecycle, attributed P
 source-backed feedback, immutable attempts/evidence, P3 before/after progress, and
 Continue. It should extend those paths without adding parallel assessment or mastery
 records.
+
+## Adaptive attribution clarification — 2026-10-08
+
+Browser acceptance found a false rejection when an adaptive question tested an aspect
+included in the selected concept's definition but not obvious from its short label.
+The isolation check now includes the saved curriculum definition as scope context.
+It still requires source support and single-concept attribution; no evidence, mastery,
+question-count, or selection threshold changed. Newly prepared mixed questions record
+`p5-question-rubric-grounding-v2`; existing fixed sets remain intact.

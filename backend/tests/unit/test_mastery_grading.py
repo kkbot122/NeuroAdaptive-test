@@ -9,6 +9,7 @@ from app.modules.mastery.grading import (
     grade_multi_select,
     grade_numeric,
     grade_short_text,
+    grade_short_text_criteria,
 )
 from app.modules.mastery.models import Question, QuestionType
 from app.services.generation.fake import FakeGenerationGateway
@@ -71,6 +72,41 @@ class TestNumeric:
 
 
 class TestShortText:
+    def test_requests_fixed_boolean_array_schema_for_the_saved_rubric(self):
+        q = make_question(question_type=QuestionType.SHORT_TEXT.value, rubric=["mentions X", "mentions Y"])
+
+        class SchemaGateway(FakeGenerationGateway):
+            def generate(self, prompt, **kwargs):
+                self.options = kwargs
+                return '{"criteria_met": [true, false]}'
+
+        gateway = SchemaGateway()
+        assert grade_short_text_criteria(q, "mentions X", gateway) == [True, False]
+        schema = gateway.options.get("response_schema")
+        assert schema is not None
+        assert schema["type"] == "OBJECT"
+        assert schema["required"] == ["criteria_met"]
+        judgments = schema["properties"]["criteria_met"]
+        assert judgments["items"]["type"] == "BOOLEAN"
+        assert judgments["minItems"] == judgments["maxItems"] == 2
+
+    @pytest.mark.parametrize("response", [
+        '[true, false]', '{"criteria_met": ["true", false]}',
+        '{"criteria_met": [true]}', '{"criteria_met": [true, false, true]}',
+        '{"criteria_met": [true, false], "extra": "PRIVATE-SENTINEL"}',
+        '{"criteria_met": [true, false], "PRIVATE-FIELD-SENTINEL": "PRIVATE-SENTINEL"}',
+        'not JSON',
+    ])
+    def test_malformed_grades_are_rejected_with_safe_diagnostics(self, response):
+        q = make_question(question_type=QuestionType.SHORT_TEXT.value, rubric=["mentions X", "mentions Y"])
+        gateway = FakeGenerationGateway().set_default(response)
+        with pytest.raises(GradingError) as failure:
+            grade_short_text_criteria(q, "PRIVATE-ANSWER-SENTINEL", gateway)
+        assert failure.value.diagnostics
+        assert "PRIVATE-SENTINEL" not in repr(failure.value.diagnostics)
+        assert "PRIVATE-ANSWER-SENTINEL" not in repr(failure.value.diagnostics)
+        assert "PRIVATE-FIELD-SENTINEL" not in repr(failure.value.diagnostics)
+
     def test_all_criteria_met_scores_one(self):
         q = make_question(
             question_type=QuestionType.SHORT_TEXT.value, correct_answer=None,

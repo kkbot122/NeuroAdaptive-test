@@ -54,7 +54,21 @@ class Settings(BaseSettings):
     # Bounded provider calls keep a stalled upstream request from holding a
     # durable processing stage indefinitely. This is an unvalidated V1
     # operational default and can be tuned through deployment configuration.
-    GEMINI_GENERATION_TIMEOUT_SECONDS_V1: int = 45
+    GEMINI_GENERATION_TIMEOUT_SECONDS_V1: int = Field(default=45, ge=1, le=90)
+    GEMINI_EMBEDDING_TIMEOUT_SECONDS_V1: int = Field(default=30, ge=1, le=90)
+    # Application retries are explicit and individually metered; SDK retries
+    # are disabled. Avoid stacking long backoffs on domain candidate retries.
+    GEMINI_MAX_RETRIES_V1: int = Field(default=1, ge=0, le=3)
+    GEMINI_RETRY_BACKOFF_SECONDS_V1: float = Field(default=2.0, ge=0, le=10)
+    AI_VALIDATION_CONCURRENCY_V1: int = Field(default=2, ge=1, le=4)
+    AI_SHARED_LIMITS_ENABLED: bool = True
+    AI_PROVIDER_MAX_CONCURRENT_V1: int = Field(default=4, ge=2, le=32)
+    AI_WORKER_MAX_CONCURRENT_V1: int = Field(default=2, ge=1, le=16)
+    AI_PROVIDER_MAX_CONCURRENT_PER_USER_V1: int = Field(default=4, ge=1, le=16)
+    AI_PROVIDER_SLOT_WAIT_SECONDS_V1: float = Field(default=2.0, ge=0, le=10)
+    AI_WORKER_SLOT_WAIT_SECONDS_V1: float = Field(default=60.0, ge=0, le=120)
+    AI_INTERACTIVE_DEADLINE_SECONDS_V1: int = Field(default=120, ge=10, le=600)
+    AI_ACCOUNTING_RESERVATION_TIMEOUT_SECONDS_V1: float = Field(default=3.0, gt=0, le=10)
     # One corrected re-prompt is allowed for malformed structured extraction
     # output; a second malformed result abstains rather than inventing data.
     CONCEPT_EXTRACTION_MAX_GENERATION_ATTEMPTS_V1: int = 2
@@ -67,6 +81,8 @@ class Settings(BaseSettings):
     WORKER_TASK_SOFT_TIME_LIMIT_SECONDS_V1: int = Field(default=1200, gt=0)
     WORKER_TASK_TIME_LIMIT_SECONDS_V1: int = Field(default=1500, gt=0)
     EVALUATOR_EMAILS: str = ""  # comma-separated allowlist; closed by default
+    # Explicit developer accounts that bypass only the daily AI-call budget.
+    AI_BUDGET_EXEMPT_EMAILS: str = ""
 
     # Indexed in bounded batches. These versioned values are unvalidated
     # defaults until the benchmark suite records representative measurements.
@@ -99,6 +115,14 @@ class Settings(BaseSettings):
     P2_PREPARATION_MAX_CANDIDATES_V1: int = Field(default=3, ge=1, le=5)
     P2_PREPARATION_MAX_LOOKAHEAD_V1: int = Field(default=1, ge=0, le=1)
     P2_PREPARATION_MAX_SOURCE_CHUNKS_V1: int = Field(default=12, ge=1, le=24)
+    # Group independent support checks without omitting any claim. Unvalidated
+    # operational default; individual results are strictly matched by ID.
+    P2_VALIDATION_BATCH_SIZE_V1: int = Field(default=12, ge=1, le=24)
+    # Unvalidated tutor history bounds; stored turns remain paginated separately.
+    TUTOR_CONTEXT_MAX_TURNS_V1: int = Field(default=6, ge=1, le=12)
+    TUTOR_CONTEXT_MAX_CHARS_V1: int = Field(default=12000, ge=1000, le=24000)
+    TUTOR_RETRIEVAL_CONTEXT_MAX_CHARS_V1: int = Field(default=2000, ge=200, le=4000)
+    TUTOR_HISTORY_PAGE_SIZE_V1: int = Field(default=50, ge=1, le=100)
 
     # Private S3-compatible storage (Supabase Storage production endpoint).
     STORAGE_BUCKET: str = "neurolearn-sources"
@@ -132,6 +156,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_worker_lease(self):
+        if self.AI_WORKER_MAX_CONCURRENT_V1 >= self.AI_PROVIDER_MAX_CONCURRENT_V1:
+            raise ValueError("AI worker concurrency must leave capacity for interactive requests")
         if self.JOB_LEASE_SECONDS_V1 <= self.JOB_HEARTBEAT_SECONDS_V1:
             raise ValueError("JOB_LEASE_SECONDS_V1 must exceed JOB_HEARTBEAT_SECONDS_V1")
         if self.WORKER_TASK_TIME_LIMIT_SECONDS_V1 <= self.WORKER_TASK_SOFT_TIME_LIMIT_SECONDS_V1:

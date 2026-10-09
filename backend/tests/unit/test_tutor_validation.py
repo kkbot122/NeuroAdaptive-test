@@ -53,8 +53,31 @@ class TestTier1Structural:
         claim = Claim(text="x", chunk_id=str(chunk_a.id))
         assert tier1_validate(db_session, claim, course_a.id, other_user.id) is False
 
+    def test_every_chunk_in_a_multi_source_claim_must_be_owned(self, db_session, owner, two_courses_with_chunks):
+        course_a, _course_b, chunk_a, chunk_b = two_courses_with_chunks
+        claim = Claim(
+            text="x",
+            chunk_id=str(chunk_a.id),
+            source_chunk_ids=(str(chunk_a.id), str(chunk_b.id)),
+        )
+        assert tier1_validate(db_session, claim, course_a.id, owner.id) is False
+
 
 class TestTier2Semantic:
+    def test_default_checks_every_claim(self, db_session, owner, two_courses_with_chunks):
+        course_a, _, chunk_a, _ = two_courses_with_chunks
+        claims = [Claim(text=f"claim {i}", chunk_id=str(chunk_a.id)) for i in range(4)]
+        calls = []
+
+        def checker(claim, source):
+            calls.append(claim)
+            return claim != "claim 1"
+
+        results = validate_claims(db_session, claims, course_a.id, owner.id,
+                                  {str(chunk_a.id): "source"}, entailment_checker=checker)
+        assert calls == [claim.text for claim in claims]
+        assert [result.tier2_status for result in results] == ["passed", "failed", "passed", "passed"]
+
     def test_supported_claim_passes(self, db_session, owner, two_courses_with_chunks):
         course_a, _, chunk_a, _ = two_courses_with_chunks
         claims = [Claim(text="claim", chunk_id=str(chunk_a.id))]

@@ -37,6 +37,10 @@ remain usable. Linked-course grounding remains P8.
   passing threshold is snapshotted on its immutable question version. Expired leases can
   be taken over; attempts and evidence remain unique per fixed assessment question.
 - Provider calls use the configured Gemini gateway and existing atomic daily allowance.
+  The saved answer's lifetime call limit now counts each outbound transport attempt,
+  including gateway retries. SDK retries are disabled. Provider outages stop the current
+  grading run after the bounded gateway retry, leaving an explicit manual retry when
+  the saved limit permits; malformed rubric output retains the existing correction loop.
   Malformed/provider-failed grading stays unresolved; after the bounded calls the
   answer remains saved and is marked retry-required or exhausted with a safe failure
   reason. Concurrent retries lock and refresh the saved answer before changing state.
@@ -127,3 +131,14 @@ allowance behavior are not demonstrated here. Defaults have not been calibrated 
 learner outcomes. P6 can rely on the fixed session/result/report API, source links,
 pending/retry states, correction-aware progress, and the direct dashboard exit; full
 workspace and side-panel integration stays in P6.
+
+## Structured grading responses — 2026-10-08
+
+The grader now requests a provider schema for the exact `criteria_met` object and
+saved-rubric boolean count. The Gemini adapter handles the installed SDK's array-bound
+field names; strict domain parsing remains authoritative. Unexpected roots, nonboolean
+values, extra fields, and missing/extra judgments are rejected, never interpreted as
+incorrect learner evidence. Safe failure diagnostics record shape/field errors without
+learner or provider text. The rubric evidence policy and bounded retry allowance remain
+unchanged. Repeated live positive and negative checks are recorded in
+[the workspace diagnosis](learning-workspace-diagnosis.md).

@@ -8,11 +8,9 @@ a vendor SDK directly (AGENTS.md: "keep model/provider calls behind a single
 abstraction").
 
 The interface returns raw text; callers are responsible for parsing and
-validating structured output against their own schema. Per the mandate's
-explicit instruction, the LLM proposes structure and deterministic code
-validates it -- the gateway does not attempt to enforce a schema itself,
-because doing so would let a provider's own confidence stand in for
-validation the mandate says must be separate.
+validating structured output against their own schema. Callers may request
+a provider response shape, which the gateway transports. That shape never
+replaces deterministic domain parsing, source validation, or grading policy.
 """
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -36,12 +34,16 @@ class GenerationGateway(ABC):
         temperature: float = 0.2,
         max_output_tokens: int = 4096,
         json_mode: bool = False,
+        response_schema: Optional[dict] = None,
     ) -> str:
         """
         One completion. Raises GenerationError on provider failure.
 
         ``json_mode`` asks providers that support it for syntactically valid
         JSON; callers must still validate its domain schema.
+
+        ``response_schema`` constrains a structured response at the provider;
+        the domain parser remains authoritative for accepting its values.
 
         Low default temperature: every call site in this phase wants
         structured, low-variance output (concept lists, edge proposals, JSON

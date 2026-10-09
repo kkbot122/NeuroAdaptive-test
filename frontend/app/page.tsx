@@ -1,281 +1,158 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
-import Link from "next/link";
-import { Brain } from "lucide-react";
-import Architect from "@/components/illustrations/Architect";
 import Tinkerer from "@/components/illustrations/Tinker";
-import Sprinter from "@/components/illustrations/Sprinter";
-import Astronaut from "@/components/illustrations/Astronaut";
+
+const progressLabels = [
+  ["Not assessed", "No graded evidence is available yet."],
+  ["Needs attention", "Recent answers show a gap."],
+  ["Developing", "Some answers are correct, but not consistently yet."],
+  ["Proficient", "Recent answers are consistently correct on this concept."],
+  ["Mastered", "Correct on varied questions over time."],
+] as const;
+
+const steps = [
+  {
+    number: "1",
+    title: "Upload your material",
+    text: "Add PDFs, text, or Markdown and say what you want to be able to do. Your sources are checked as the course is prepared.",
+  },
+  {
+    number: "2",
+    title: "Review the outline",
+    text: "Inspect the modules, lessons, and objectives built from your sources. Rename lessons, check the outline, then publish it yourself.",
+  },
+  {
+    number: "3",
+    title: "Study and practice",
+    text: "Read a lesson, answer questions, and review the saved evidence. The next activity is selected from your answers, with the reason shown.",
+  },
+] as const;
+
+const features = [
+  {
+    color: "violet",
+    title: "Built from your files only",
+    text: "Saved lessons and tutor answers are checked against your course sources. Citations open the supporting passage.",
+  },
+  {
+    color: "yellow",
+    title: "Reading is not mastery",
+    text: "Finishing a lesson records reading coverage. Understanding labels use graded answers.",
+  },
+  {
+    color: "mint",
+    title: "Pending stays pending",
+    text: "Unresolved grading is shown separately and is never counted as an incorrect answer.",
+  },
+  {
+    color: "coral",
+    title: "Tutor answers show sources",
+    text: "Tutor replies use checked course material. When the sources cannot support an answer, the tutor says so.",
+  },
+] as const;
+
+const questions = [
+  ["What files can I use?", "PDF, TXT, and Markdown files are supported. If a source cannot be read, you can review the issue in the course workspace."],
+  ["Is my material private?", "Your course files and saved learning records are scoped to your account."],
+  ["Do I have to take the diagnostic?", "No. The diagnostic is optional, and you can start with a lesson instead."],
+  ["What if I disagree with a grade?", "You can report a grading judgment from submitted results. A reviewer can correct it, and the original judgment remains visible."],
+] as const;
 
 export default async function Home() {
   const session = await auth();
+  if (session) redirect("/dashboard");
 
-  // If logged in, go to dashboard.
-  if (session) {
-    redirect("/dashboard");
-  }
+  return <main className="nl-screen nl-landing">
+    <nav className="nl-landing-nav" aria-label="Main">
+      <Link href="/" className="nl-landing-logo"><i aria-hidden="true" />NeuroLearn</Link>
+      <div className="nl-landing-links">
+        <a href="#how">How it works</a>
+        <a href="#different">Why it is different</a>
+        <a href="#progress">Progress</a>
+        <a href="#faq">FAQ</a>
+      </div>
+      <Link href="/signin" className="nl-landing-button nl-landing-button-small">Sign in</Link>
+    </nav>
 
-  return (
-    <div className="min-h-screen bg-[#F4F1EA] text-black font-[family-name:var(--font-kodchasan)] selection:bg-purple-300">
-      {/* --- Navbar --- */}
-      <nav className="w-full border-b-2 border-black bg-white px-6 py-4 flex items-center justify-between sticky top-0 z-50">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-purple-500 rounded-full border-2 border-black"></div>
-          <span className="text-xl font-bold tracking-tight">NeuroLearn</span>
+    <header className="nl-landing-wrap nl-landing-hero">
+      <div>
+        <h1>Study from your own material, not someone else&apos;s course.</h1>
+        <p className="nl-landing-lead">Upload your notes, slides, and PDFs. NeuroLearn builds lessons from those sources, checks what you understand, and picks what to study next.</p>
+        <div className="nl-landing-actions">
+          <Link href="/signin" className="nl-landing-button nl-landing-button-primary nl-landing-button-large">Continue with Google</Link>
+          <a href="#how" className="nl-landing-button nl-landing-button-large">See how it works</a>
         </div>
-        <div className="flex items-center gap-6">
-          <Link
-            href="#archetypes"
-            className="hidden md:block hover:underline underline-offset-4 decoration-2"
-          >
-            Archetypes
-          </Link>
-          <Link
-            href="#methodology"
-            className="hidden md:block hover:underline underline-offset-4 decoration-2"
-          >
-            Methodology
-          </Link>
-          <Link href="/signin">
-            <button className="bg-[#FF6B6B] border-2 border-black px-6 py-2 rounded-lg font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-none transition-all active:translate-y-1 active:shadow-none">
-              Login
-            </button>
-          </Link>
+        <p className="nl-landing-fine">Your files and progress stay private to you.</p>
+      </div>
+
+      <figure className="nl-landing-frame">
+        <div className="nl-landing-scene">
+          <Tinkerer className="nl-landing-illustration" />
         </div>
-      </nav>
+        <figcaption className="nl-landing-caption">
+          <span>Concept understanding</span>
+          <span><span className="nl-landing-label nl-landing-label-mint">Saved answers</span> <span className="nl-landing-label nl-landing-label-coral">Evidence based</span></span>
+        </figcaption>
+      </figure>
+    </header>
 
-      <main className="flex flex-col items-center">
-        {/* --- Hero Section --- */}
-        <section className="w-full max-w-6xl px-4 py-20 md:py-32 flex flex-col md:flex-row items-center gap-12">
-          {/* Left Content */}
-          <div className="flex-1 space-y-6 text-center md:text-left">
-            <p className="text-xl md:text-2xl font-bold mb-10 text-gray-800 leading-tight">
-              &quot;The most powerful learning system ever created.&quot; <br className="hidden md:block"/>
-              Transform your raw documents into a mastery-driven curriculum in seconds.
-            </p>
-            <h2 className="text-5xl md:text-7xl font-black mb-8 uppercase tracking-tighter">
-              Ready to Upgrade <br /> <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-500 to-[#FF9F1C]">&quot;Your&quot;</span> Brain?
-            </h2>
-            <p className="text-xl font-bold text-gray-700 italic max-w-2xl mx-auto leading-relaxed">
-              &quot;The brutalist design combined with advanced AI creates an learning experience that doesn&apos;t just teach—it completely rewires how you think about education.&quot;
-            </p>
-            <div className="flex flex-col md:flex-row gap-4 pt-4 justify-center md:justify-start">
-              <Link href="/signin">
-                <button className="w-full md:w-auto bg-[#4D96FF] text-white border-2 border-black px-8 py-4 rounded-xl text-lg font-bold shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all">
-                  Start Learning
-                </button>
-              </Link>
-              <button className="w-full md:w-auto bg-white border-2 border-black px-8 py-4 rounded-xl text-lg font-bold shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all">
-                View Demo
-              </button>
-            </div>
-          </div>
+    <section className="nl-landing-section nl-landing-section-white" id="how"><div className="nl-landing-wrap">
+      <h2>From a pile of files to a course in three steps.</h2>
+      <p className="nl-landing-sub">You stay in control at each step. Nothing is published until you say so.</p>
+      <div className="nl-landing-steps">
+        {steps.map((step) => <article className="nl-landing-step" key={step.number}>
+          <span className="nl-landing-step-number">{step.number}</span>
+          <h3>{step.title}</h3>
+          <p>{step.text}</p>
+        </article>)}
+      </div>
+    </div></section>
 
-          {/* Right Image/Illustration Placeholder */}
-          <div className="flex-1 w-full flex justify-center relative">
-            {/* Abstract Decorative Elements (Background) */}
-            <div className="absolute top-0 right-10 w-16 h-16 bg-yellow-400 rounded-full border-2 border-black animate-bounce delay-700 -z-10"></div>
-            <div className="absolute bottom-10 left-10 w-12 h-12 bg-blue-400 rotate-12 border-2 border-black -z-10"></div>
-            {/* Main Illustration Container */}
-            <div className="relative w-full max-w-lg md:max-w-xl bg-white border-2 border-black rounded-2xl p-2 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] z-10 transform -rotate-2 hover:rotate-0 transition-transform duration-500">
-              <div className="bg-[#E0E7FF] border-2 border-black rounded-xl overflow-hidden relative">
-                {/* Background Grid Pattern */}
-                <div className="absolute inset-0 bg-[radial-gradient(#a5b4fc_1px,transparent_1px)] [background-size:16px_16px] opacity-50"></div>
+    <section className="nl-landing-section" id="different"><div className="nl-landing-wrap">
+      <h2>Built to be honest about what you know.</h2>
+      <p className="nl-landing-sub">Most study tools count pages read. NeuroLearn separates reading from understanding.</p>
+      <div className="nl-landing-features">
+        {features.map((feature) => <article className="nl-landing-feature" key={feature.title}>
+          <span className={`nl-landing-feature-mark nl-landing-feature-mark-${feature.color}`} aria-hidden="true" />
+          <h3>{feature.title}</h3>
+          <p>{feature.text}</p>
+        </article>)}
+      </div>
+    </div></section>
 
-                {/* The Illustration */}
-                <Astronaut className="w-full h-full max-h-[400px] text-blue-600 relative z-10" />
-              </div>
-            </div>
-          </div>
-        </section>
+    <section className="nl-landing-section nl-landing-section-white" id="progress"><div className="nl-landing-wrap">
+      <h2>Progress you can read at a glance.</h2>
+      <p className="nl-landing-sub">Five plain labels instead of a percentage that pretends to be exact.</p>
+      <div className="nl-landing-legend">
+        {progressLabels.map(([label, description]) => <div key={label}>
+          <span className={`nl-landing-label nl-landing-label-${label.toLowerCase().replaceAll(" ", "-")}`}>{label}</span>
+          <p>{description}</p>
+        </div>)}
+      </div>
+      <p className="nl-landing-note">Lesson coverage and concept understanding are kept apart, so finishing every lesson never hides a weak spot.</p>
+    </div></section>
 
-        {/* --- Methodology / Features Section --- */}
-        <section
-          id="methodology"
-          className="w-full bg-white border-y-2 border-black py-20 px-4"
-        >
-          <div className="max-w-6xl mx-auto">
-            <h2 className="text-4xl font-bold text-center mb-16">
-              The{" "}
-              <span className="bg-yellow-300 px-2 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-                Functional Engine
-              </span>
-            </h2>
+    <section className="nl-landing-section" id="faq"><div className="nl-landing-wrap">
+      <h2>Questions you might have.</h2>
+      <p className="nl-landing-sub">Short answers to the common ones.</p>
+      <div className="nl-landing-faq">
+        {questions.map(([question, answer]) => <details key={question}>
+          <summary>{question}</summary>
+          <p>{answer}</p>
+        </details>)}
+      </div>
+    </div></section>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {/* Feature 1: The Sensor */}
-              <div className="bg-[#FF9F1C] border-2 border-black rounded-xl p-6 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all">
-                <div className="w-12 h-12 bg-white rounded-lg border-2 border-black flex items-center justify-center mb-4">
-                  <div className="w-7 h-7 text-black" />
-                </div>
-                <h3 className="text-2xl font-bold mb-2">The Sensor</h3>
-                <p className="font-medium opacity-90">
-                  Gaze & Scroll tracking captures your &quot;digital body language&quot;
-                  to detect confusion instantly.
-                </p>
-              </div>
+    <section className="nl-landing-final"><div className="nl-landing-wrap">
+      <h2>Turn what you already have into a course.</h2>
+      <p>Sign in with Google and add your first source. You can review the outline before it is published.</p>
+      <Link href="/signin" className="nl-landing-button nl-landing-button-warm nl-landing-button-large">Continue with Google</Link>
+    </div></section>
 
-              {/* Feature 2: The Brain */}
-              <div className="bg-[#2EC4B6] border-2 border-black rounded-xl p-6 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all">
-                <div className="w-12 h-12 bg-white rounded-lg border-2 border-black flex items-center justify-center mb-4">
-                  <Brain className="w-7 h-7 text-black" strokeWidth={2.5} />
-                </div>
-                <h3 className="text-2xl font-bold mb-2">The Brain</h3>
-                <p className="font-medium opacity-90">
-                  Translates raw data into a &quot;Load Score,&quot; deciding if you are
-                  zoning out or deeply focused.
-                </p>
-              </div>
-
-              {/* Feature 3: The Teacher */}
-              <div className="bg-[#CBF3F0] border-2 border-black rounded-xl p-6 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all">
-                <div className="w-12 h-12 bg-white rounded-lg border-2 border-black flex items-center justify-center mb-4">
-                  <div className="w-7 h-7 text-black" />
-                </div>
-                <h3 className="text-2xl font-bold mb-2">The Teacher</h3>
-                <p className="font-medium opacity-90">
-                  Adapts content by injecting JIT scaffolding, simplifying text,
-                  or offering quizzes.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* --- Archetypes Section --- */}
-        <section id="archetypes" className="w-full bg-[#F4F1EA] py-20 px-4">
-          <div className="max-w-6xl mx-auto">
-            <div className="text-center mb-12">
-              <span className="font-bold text-sm tracking-widest uppercase text-gray-500 mb-2 block">
-                Personalized Learning
-              </span>
-              <h2 className="text-4xl md:text-5xl font-bold">
-                Which{" "}
-                <span>&quot;I finally understand quantum mechanics...&quot;</span>
-                <span className="underline decoration-wavy decoration-purple-500">
-                  Archetype
-                </span>{" "}
-                Are You?
-              </h2>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {/* Archetype 1: The Architect */}
-              <div className="group bg-white border-2 border-black rounded-2xl overflow-hidden shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 transition-all">
-                {/* Illustration Placeholder */}
-                <div className="h-48 bg-[#E2E8F0] border-b-2 border-black flex items-center justify-center relative overflow-hidden">
-                  <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:16px_16px] opacity-50"></div>
-                  <div className="relative w-full h-full p-4 flex items-center justify-center">
-                    <Architect className="w-full h-full text-purple-600" />
-                  </div>
-                </div>
-                <div className="p-6">
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="text-2xl font-bold">The Architect</h3>
-                    <span className="bg-purple-100 border border-black px-2 py-0.5 text-xs font-bold rounded">
-                      Holist
-                    </span>
-                  </div>
-                  <p className="text-sm font-medium text-gray-600 mb-4">
-                    Scans the whole page first. Needs to know &quot;Why&quot; before
-                    &quot;How.&quot; Gets frustrated by details without context.
-                  </p>
-                  <div className="bg-gray-50 p-3 rounded-lg border border-black border-dashed">
-                    <p className="text-xs font-bold text-purple-600">
-                      AI Action:
-                    </p>
-                    <p className="text-xs">
-                      Generates a high-level &quot;Concept Map&quot; at the start of every
-                      article.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Archetype 2: The Tinkerer */}
-              <div className="group bg-white border-2 border-black rounded-2xl overflow-hidden shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 transition-all">
-                {/* Illustration Placeholder */}
-                <div className="h-48 bg-[#FFEDD5] border-b-2 border-black flex items-center justify-center relative overflow-hidden">
-                  <div className="absolute inset-0 bg-[radial-gradient(#fdba74_1px,transparent_1px)] [background-size:16px_16px] opacity-50"></div>
-                  <Tinkerer className="w-full h-full text-orange-600 p-6" />
-                </div>
-                <div className="p-6">
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="text-2xl font-bold">The Tinkerer</h3>
-                    <span className="bg-orange-100 border border-black px-2 py-0.5 text-xs font-bold rounded">
-                      Active
-                    </span>
-                  </div>
-                  <p className="text-sm font-medium text-gray-600 mb-4">
-                    Learns by doing. Skips text to find the &quot;Try it yourself&quot;
-                    button. Gets bored if they can&apos;t interact with the content
-                    within 30 seconds.
-                  </p>
-                  <div className="bg-gray-50 p-3 rounded-lg border border-black border-dashed">
-                    <p className="text-xs font-bold text-orange-600">
-                      AI Action:
-                    </p>
-                    <p className="text-xs">
-                      Converts static examples into interactive code blocks &
-                      challenges.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Archetype 3: The Sprinter */}
-              <div className="group bg-white border-2 border-black rounded-2xl overflow-hidden shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-1 transition-all">
-                {/* Illustration Placeholder */}
-                <div className="h-48 bg-[#D1FAE5] border-b-2 border-black flex items-center justify-center relative overflow-hidden">
-                  <div className="absolute inset-0 bg-[radial-gradient(#6ee7b7_1px,transparent_1px)] [background-size:16px_16px] opacity-50"></div>
-                  <Sprinter className="w-full h-full text-green-600 p-6" />
-                </div>
-                <div className="p-6">
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="text-2xl font-bold">The Sprinter</h3>
-                    <span className="bg-green-100 border border-black px-2 py-0.5 text-xs font-bold rounded">
-                      Micro-Learner
-                    </span>
-                  </div>
-                  <p className="text-sm font-medium text-gray-600 mb-4">
-                    High energy, short duration. Needs rapid-fire content
-                    delivery. Checks phone every 3 mins.
-                  </p>
-                  <div className="bg-gray-50 p-3 rounded-lg border border-black border-dashed">
-                    <p className="text-xs font-bold text-green-600">
-                      AI Action:
-                    </p>
-                    <p className="text-xs">
-                      Auto-summarizes text into &quot;TikTok-style&quot; 30-second
-                      flashcards.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* CTA for Archetypes */}
-            <div className="mt-16 text-center">
-              <p className="text-lg font-bold">&quot;Upload any document, and we&apos;ll generate a complete learning pathway instantly.&quot;</p>
-              <p className="text-xl font-bold mb-6">
-                And 7 more archetypes waiting to be discovered...
-              </p>
-              <Link href="/signin">
-                <button className="bg-purple-500 text-white border-2 border-black px-8 py-3 rounded-xl text-xl font-bold shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[2px] hover:shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all">
-                  Sign Up to Find Your Archetype
-                </button>
-              </Link>
-            </div>
-          </div>
-        </section>
-
-        {/* --- Footer --- */}
-        <footer className="w-full py-10 text-center border-t-2 border-black bg-white">
-          <p className="font-bold text-gray-600">
-            © 2026 NeuroLearn. Built for the Future of EdTech.
-          </p>
-        </footer>
-      </main>
-    </div>
-  );
+    <footer className="nl-landing-footer"><div className="nl-landing-wrap">
+      <span><b>NeuroLearn</b>&nbsp; A final year BTech project</span>
+      <span>Your files and progress stay private to you.</span>
+    </div></footer>
+  </main>;
 }

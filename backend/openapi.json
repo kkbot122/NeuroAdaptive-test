@@ -1,6 +1,323 @@
 {
   "components": {
     "schemas": {
+      "AIProviderCallOut": {
+        "properties": {
+          "cached_input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cached Input Tokens"
+          },
+          "capacity_wait_ms": {
+            "title": "Capacity Wait Ms",
+            "type": "integer"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed Ms"
+          },
+          "error_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Category"
+          },
+          "feature": {
+            "title": "Feature",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_items": {
+            "title": "Input Items",
+            "type": "integer"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "operation": {
+            "enum": [
+              "generation",
+              "embedding"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "retry_index": {
+            "title": "Retry Index",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "STARTED",
+              "SUCCEEDED",
+              "FAILED",
+              "CANCELLED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Tokens"
+          }
+        },
+        "required": [
+          "id",
+          "operation_id",
+          "resource_id",
+          "feature",
+          "phase",
+          "provider",
+          "model_id",
+          "operation",
+          "retry_index",
+          "input_items",
+          "status",
+          "started_at",
+          "finished_at",
+          "elapsed_ms",
+          "capacity_wait_ms",
+          "error_category",
+          "input_tokens",
+          "output_tokens",
+          "cached_input_tokens",
+          "total_tokens"
+        ],
+        "title": "AIProviderCallOut",
+        "type": "object"
+      },
+      "AIUsageOut": {
+        "properties": {
+          "accounting_policy": {
+            "const": "provider-attempt-v1",
+            "default": "provider-attempt-v1",
+            "title": "Accounting Policy",
+            "type": "string"
+          },
+          "daily_generation_limit": {
+            "title": "Daily Generation Limit",
+            "type": "integer"
+          },
+          "features": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AIUsageTotalsOut"
+            },
+            "title": "Features",
+            "type": "object"
+          },
+          "generation_budget_exempt": {
+            "title": "Generation Budget Exempt",
+            "type": "boolean"
+          },
+          "generation_budget_used": {
+            "title": "Generation Budget Used",
+            "type": "integer"
+          },
+          "recent_calls": {
+            "items": {
+              "$ref": "#/components/schemas/AIProviderCallOut"
+            },
+            "title": "Recent Calls",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AIUsageTotalsOut"
+          },
+          "unitemized_generation_reservations": {
+            "title": "Unitemized Generation Reservations",
+            "type": "integer"
+          },
+          "usage_date": {
+            "format": "date",
+            "title": "Usage Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "usage_date",
+          "daily_generation_limit",
+          "generation_budget_used",
+          "generation_budget_exempt",
+          "unitemized_generation_reservations",
+          "totals",
+          "features",
+          "recent_calls"
+        ],
+        "title": "AIUsageOut",
+        "type": "object"
+      },
+      "AIUsageTotalsOut": {
+        "properties": {
+          "calls_with_token_usage": {
+            "title": "Calls With Token Usage",
+            "type": "integer"
+          },
+          "cancelled_reservations": {
+            "title": "Cancelled Reservations",
+            "type": "integer"
+          },
+          "capacity_wait_ms": {
+            "title": "Capacity Wait Ms",
+            "type": "integer"
+          },
+          "embedding_attempts": {
+            "title": "Embedding Attempts",
+            "type": "integer"
+          },
+          "failed_attempts": {
+            "title": "Failed Attempts",
+            "type": "integer"
+          },
+          "generation_attempts": {
+            "title": "Generation Attempts",
+            "type": "integer"
+          },
+          "provider_elapsed_ms": {
+            "title": "Provider Elapsed Ms",
+            "type": "integer"
+          },
+          "reported_cached_input_tokens": {
+            "title": "Reported Cached Input Tokens",
+            "type": "integer"
+          },
+          "reported_input_tokens": {
+            "title": "Reported Input Tokens",
+            "type": "integer"
+          },
+          "reported_output_tokens": {
+            "title": "Reported Output Tokens",
+            "type": "integer"
+          },
+          "reported_total_tokens": {
+            "title": "Reported Total Tokens",
+            "type": "integer"
+          },
+          "succeeded_attempts": {
+            "title": "Succeeded Attempts",
+            "type": "integer"
+          },
+          "token_usage_complete": {
+            "title": "Token Usage Complete",
+            "type": "boolean"
+          },
+          "unfinished_attempts": {
+            "title": "Unfinished Attempts",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generation_attempts",
+          "embedding_attempts",
+          "succeeded_attempts",
+          "failed_attempts",
+          "unfinished_attempts",
+          "cancelled_reservations",
+          "reported_input_tokens",
+          "reported_output_tokens",
+          "reported_cached_input_tokens",
+          "reported_total_tokens",
+          "calls_with_token_usage",
+          "token_usage_complete",
+          "provider_elapsed_ms",
+          "capacity_wait_ms"
+        ],
+        "title": "AIUsageTotalsOut",
+        "type": "object"
+      },
       "ActivityContentResponseOut": {
         "properties": {
           "content": {
@@ -396,6 +713,18 @@
             ],
             "title": "Concept Progress Reference At"
           },
+          "decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
           "graded_answer_count": {
             "title": "Graded Answer Count",
             "type": "integer"
@@ -408,6 +737,18 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
           },
           "questions": {
             "items": {
@@ -2436,6 +2777,51 @@
         "title": "PreparationOut",
         "type": "object"
       },
+      "PreparedDiagramEdgeOut": {
+        "properties": {
+          "citation_chunk_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Citation Chunk Ids",
+            "type": "array"
+          },
+          "concept_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Concept Ids",
+            "type": "array"
+          },
+          "from_index": {
+            "maximum": 11.0,
+            "minimum": 0.0,
+            "title": "From Index",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "to_index": {
+            "maximum": 11.0,
+            "minimum": 0.0,
+            "title": "To Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "text",
+          "concept_ids",
+          "citation_chunk_ids",
+          "from_index",
+          "to_index"
+        ],
+        "title": "PreparedDiagramEdgeOut",
+        "type": "object"
+      },
       "PreparedLessonContentOut": {
         "properties": {
           "artifact_id": {
@@ -2497,6 +2883,13 @@
       },
       "PreparedLessonSectionsOut": {
         "properties": {
+          "diagram_edges": {
+            "items": {
+              "$ref": "#/components/schemas/PreparedDiagramEdgeOut"
+            },
+            "title": "Diagram Edges",
+            "type": "array"
+          },
           "example": {
             "items": {
               "$ref": "#/components/schemas/PreparedStatementOut"
@@ -2740,6 +3133,42 @@
             "default": false,
             "title": "Grade Corrected",
             "type": "boolean"
+          },
+          "original_correctness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Correctness"
+          },
+          "original_rubric_feedback": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RubricFeedbackOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Rubric Feedback"
+          },
+          "original_rubric_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Rubric Score"
           },
           "rubric": {
             "anyOf": [
@@ -3275,18 +3704,20 @@
             "title": "Message Id",
             "type": "string"
           },
+          "operation_id": {
+            "format": "uuid",
+            "title": "Operation Id",
+            "type": "string"
+          },
           "token_usage": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Token Usage",
-            "type": "object"
+            "$ref": "#/components/schemas/AIUsageTotalsOut"
           }
         },
         "required": [
           "message_id",
           "grounding_mode",
-          "token_usage"
+          "token_usage",
+          "operation_id"
         ],
         "title": "TutorDone",
         "type": "object"
@@ -3330,6 +3761,61 @@
           "data"
         ],
         "title": "TutorEvent",
+        "type": "object"
+      },
+      "TutorFailureOut": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "error_category": {
+            "enum": [
+              "PROVIDER_UNAVAILABLE",
+              "RESPONSE_INVALID",
+              "VALIDATION_UNAVAILABLE"
+            ],
+            "title": "Error Category",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "error_category"
+        ],
+        "title": "TutorFailureOut",
+        "type": "object"
+      },
+      "TutorHistoryOut": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/TutorTurnOut"
+            },
+            "title": "Turns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "available",
+          "turns",
+          "has_more"
+        ],
+        "title": "TutorHistoryOut",
         "type": "object"
       },
       "TutorInsufficient": {
@@ -3429,6 +3915,49 @@
           "text"
         ],
         "title": "TutorToken",
+        "type": "object"
+      },
+      "TutorTurnOut": {
+        "properties": {
+          "answer_markdown": {
+            "title": "Answer Markdown",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitationOut"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "grounding_mode": {
+            "title": "Grounding Mode",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "answer_markdown",
+          "citations",
+          "grounding_mode",
+          "created_at"
+        ],
+        "title": "TutorTurnOut",
         "type": "object"
       },
       "UploadIntentIn": {
@@ -3586,6 +4115,86 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/ai/usage": {
+      "get": {
+        "operationId": "get_usage_api_v1_ai_usage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "usage_date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Usage Date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIUsageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Usage",
+        "tags": [
+          "ai-usage"
+        ]
+      }
+    },
     "/api/v1/assessment/quiz-attempts": {
       "get": {
         "description": "The caller's own attempts. Scoped by user id, never by a query param.",
@@ -6384,6 +6993,9 @@
             },
             "description": "Successful Response"
           },
+          "409": {
+            "description": "Tutor assistance is unavailable while an assessment is open."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6393,6 +7005,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TutorFailureOut"
+                }
+              }
+            },
+            "description": "Generation or verification is unavailable"
           }
         },
         "summary": "Get Lesson Content",
@@ -6956,6 +7578,141 @@
             },
             "description": "SSE frames: event name plus JSON data from TutorEvent. Full answer is validated before emission."
           },
+          "409": {
+            "description": "Tutor assistance is unavailable while an assessment is open."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/TutorFailureOut"
+                }
+              }
+            },
+            "description": "Generation or verification is unavailable; no insufficient-evidence turn is saved."
+          }
+        },
+        "summary": "Ask Tutor",
+        "tags": [
+          "tutor"
+        ]
+      }
+    },
+    "/api/v1/courses/{course_id}/tutor/history": {
+      "get": {
+        "operationId": "tutor_history_api_v1_courses__course_id__tutor_history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "context_lesson_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Context Lesson Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "decision_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Decision Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-user-email",
+            "required": true,
+            "schema": {
+              "title": "X-User-Email",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-internal-token",
+            "required": true,
+            "schema": {
+              "title": "X-Internal-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TutorHistoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6967,7 +7724,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Ask Tutor",
+        "summary": "Tutor History",
         "tags": [
           "tutor"
         ]

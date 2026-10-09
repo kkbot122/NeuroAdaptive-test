@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/ai/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Usage */
+        get: operations["get_usage_api_v1_ai_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assessment/quiz-attempts": {
         parameters: {
             query?: never;
@@ -802,6 +819,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/courses/{course_id}/tutor/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tutor History */
+        get: operations["tutor_history_api_v1_courses__course_id__tutor_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{document_id}/content": {
         parameters: {
             query?: never;
@@ -1395,6 +1429,124 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AIProviderCallOut */
+        AIProviderCallOut: {
+            /** Cached Input Tokens */
+            cached_input_tokens: number | null;
+            /** Capacity Wait Ms */
+            capacity_wait_ms: number;
+            /** Elapsed Ms */
+            elapsed_ms: number | null;
+            /** Error Category */
+            error_category: string | null;
+            /** Feature */
+            feature: string;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Items */
+            input_items: number;
+            /** Input Tokens */
+            input_tokens: number | null;
+            /** Model Id */
+            model_id: string;
+            /**
+             * Operation
+             * @enum {string}
+             */
+            operation: "generation" | "embedding";
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Output Tokens */
+            output_tokens: number | null;
+            /** Phase */
+            phase: string;
+            /** Provider */
+            provider: string;
+            /** Resource Id */
+            resource_id: string | null;
+            /** Retry Index */
+            retry_index: number;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "STARTED" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+            /** Total Tokens */
+            total_tokens: number | null;
+        };
+        /** AIUsageOut */
+        AIUsageOut: {
+            /**
+             * Accounting Policy
+             * @default provider-attempt-v1
+             * @constant
+             */
+            accounting_policy: "provider-attempt-v1";
+            /** Daily Generation Limit */
+            daily_generation_limit: number;
+            /** Features */
+            features: {
+                [key: string]: components["schemas"]["AIUsageTotalsOut"];
+            };
+            /** Generation Budget Exempt */
+            generation_budget_exempt: boolean;
+            /** Generation Budget Used */
+            generation_budget_used: number;
+            /** Recent Calls */
+            recent_calls: components["schemas"]["AIProviderCallOut"][];
+            totals: components["schemas"]["AIUsageTotalsOut"];
+            /** Unitemized Generation Reservations */
+            unitemized_generation_reservations: number;
+            /**
+             * Usage Date
+             * Format: date
+             */
+            usage_date: string;
+        };
+        /** AIUsageTotalsOut */
+        AIUsageTotalsOut: {
+            /** Calls With Token Usage */
+            calls_with_token_usage: number;
+            /** Cancelled Reservations */
+            cancelled_reservations: number;
+            /** Capacity Wait Ms */
+            capacity_wait_ms: number;
+            /** Embedding Attempts */
+            embedding_attempts: number;
+            /** Failed Attempts */
+            failed_attempts: number;
+            /** Generation Attempts */
+            generation_attempts: number;
+            /** Provider Elapsed Ms */
+            provider_elapsed_ms: number;
+            /** Reported Cached Input Tokens */
+            reported_cached_input_tokens: number;
+            /** Reported Input Tokens */
+            reported_input_tokens: number;
+            /** Reported Output Tokens */
+            reported_output_tokens: number;
+            /** Reported Total Tokens */
+            reported_total_tokens: number;
+            /** Succeeded Attempts */
+            succeeded_attempts: number;
+            /** Token Usage Complete */
+            token_usage_complete: boolean;
+            /** Unfinished Attempts */
+            unfinished_attempts: number;
+        };
         /** ActivityContentResponseOut */
         ActivityContentResponseOut: {
             content?: components["schemas"]["PreparedLessonContentOut"] | null;
@@ -1525,6 +1677,8 @@ export interface components {
             concept_progress?: components["schemas"]["AssessmentConceptProgressOut"][] | null;
             /** Concept Progress Reference At */
             concept_progress_reference_at?: string | null;
+            /** Decision Id */
+            decision_id?: string | null;
             /** Graded Answer Count */
             graded_answer_count: number;
             /** Grading State */
@@ -1534,6 +1688,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Lesson Id */
+            lesson_id?: string | null;
             /** Questions */
             questions: components["schemas"]["AssessmentQuestionOut"][];
             /** Submission State */
@@ -2313,6 +2469,19 @@ export interface components {
              */
             updated_at: string;
         };
+        /** PreparedDiagramEdgeOut */
+        PreparedDiagramEdgeOut: {
+            /** Citation Chunk Ids */
+            citation_chunk_ids: string[];
+            /** Concept Ids */
+            concept_ids: string[];
+            /** From Index */
+            from_index: number;
+            /** Text */
+            text: string;
+            /** To Index */
+            to_index: number;
+        };
         /** PreparedLessonContentOut */
         PreparedLessonContentOut: {
             /**
@@ -2338,6 +2507,8 @@ export interface components {
         };
         /** PreparedLessonSectionsOut */
         PreparedLessonSectionsOut: {
+            /** Diagram Edges */
+            diagram_edges?: components["schemas"]["PreparedDiagramEdgeOut"][];
             /** Example */
             example: components["schemas"]["PreparedStatementOut"][];
             /** Explanation */
@@ -2431,6 +2602,12 @@ export interface components {
              * @default false
              */
             grade_corrected: boolean;
+            /** Original Correctness */
+            original_correctness?: number | null;
+            /** Original Rubric Feedback */
+            original_rubric_feedback?: components["schemas"]["RubricFeedbackOut"][] | null;
+            /** Original Rubric Score */
+            original_rubric_score?: number | null;
             /** Rubric */
             rubric?: string[] | null;
             /** Rubric Feedback */
@@ -2598,10 +2775,12 @@ export interface components {
              * Format: uuid
              */
             message_id: string;
-            /** Token Usage */
-            token_usage: {
-                [key: string]: string;
-            };
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            token_usage: components["schemas"]["AIUsageTotalsOut"];
         };
         /** TutorEvent */
         TutorEvent: {
@@ -2612,6 +2791,30 @@ export interface components {
              * @enum {string}
              */
             event: "retrieval" | "token" | "citation" | "done" | "insufficient";
+        };
+        /** TutorFailureOut */
+        TutorFailureOut: {
+            /** Detail */
+            detail: string;
+            /**
+             * Error Category
+             * @enum {string}
+             */
+            error_category: "PROVIDER_UNAVAILABLE" | "RESPONSE_INVALID" | "VALIDATION_UNAVAILABLE";
+        };
+        /** TutorHistoryOut */
+        TutorHistoryOut: {
+            /** Available */
+            available: boolean;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /** Has More */
+            has_more: boolean;
+            /** Turns */
+            turns: components["schemas"]["TutorTurnOut"][];
         };
         /** TutorInsufficient */
         TutorInsufficient: {
@@ -2643,6 +2846,27 @@ export interface components {
         TutorToken: {
             /** Text */
             text: string;
+        };
+        /** TutorTurnOut */
+        TutorTurnOut: {
+            /** Answer Markdown */
+            answer_markdown: string;
+            /** Citations */
+            citations: components["schemas"]["CitationOut"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Grounding Mode */
+            grounding_mode: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Question */
+            question: string;
         };
         /** UploadIntentIn */
         UploadIntentIn: {
@@ -2706,6 +2930,41 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_usage_api_v1_ai_usage_get: {
+        parameters: {
+            query?: {
+                usage_date?: string | null;
+                limit?: number;
+            };
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIUsageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_my_quiz_attempts_api_v1_assessment_quiz_attempts_get: {
         parameters: {
             query?: never;
@@ -4154,6 +4413,13 @@ export interface operations {
                     "application/json": components["schemas"]["LessonContentOut"];
                 };
             };
+            /** @description Tutor assistance is unavailable while an assessment is open. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -4161,6 +4427,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Generation or verification is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TutorFailureOut"];
                 };
             };
         };
@@ -4439,6 +4714,61 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": components["schemas"]["TutorEvent"];
+                };
+            };
+            /** @description Tutor assistance is unavailable while an assessment is open. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Generation or verification is unavailable; no insufficient-evidence turn is saved. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["TutorFailureOut"];
+                };
+            };
+        };
+    };
+    tutor_history_api_v1_courses__course_id__tutor_history_get: {
+        parameters: {
+            query: {
+                conversation_id: string;
+                context_lesson_id?: string | null;
+                decision_id?: string | null;
+                before?: string | null;
+            };
+            header: {
+                "x-user-email": string;
+                "x-internal-token": string;
+            };
+            path: {
+                course_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TutorHistoryOut"];
                 };
             };
             /** @description Validation Error */

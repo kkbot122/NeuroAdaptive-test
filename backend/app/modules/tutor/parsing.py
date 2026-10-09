@@ -41,6 +41,8 @@ def parse_tutor_response(raw: str) -> ParsedAnswer:
         payload = AnswerPayload.model_validate_json(_strip_code_fence(raw))
         if not payload.insufficient_evidence and payload.answer_markdown.strip() and not payload.claims:
             raise ValueError("An answer requires claims")
+        if any(not claim.text.strip() or not claim.chunk_id.strip() for claim in payload.claims):
+            raise ValueError("Claim text and citation must not be blank")
     except (ValidationError, ValueError) as exc:
         raise TutorParseError("Tutor response failed schema validation") from exc
     return ParsedAnswer(payload.insufficient_evidence, payload.answer_markdown,

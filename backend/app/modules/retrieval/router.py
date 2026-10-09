@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
 from app.db.session import get_db
+from app.services.ai_usage import ai_usage_scope
 from app.modules.auth.models import User
 from app.modules.retrieval.service import RetrievalNotAuthorized, RetrievalService
 from app.services.embedding.gemini import GeminiEmbeddingGateway
@@ -26,6 +27,7 @@ def retrieve(
     limit: int = Query(default=10, ge=1, le=50),
     user: User = Depends(get_current_user),
     service: RetrievalService = Depends(_service),
+    db: Session = Depends(get_db),
 ):
     """
     Query chunks scoped to one course the caller owns.
@@ -36,7 +38,8 @@ def retrieve(
     result to JSON.
     """
     try:
-        results = service.search(course_id, user.id, q, limit=limit)
+        with ai_usage_scope(db, user.id, "retrieval", course_id):
+            results = service.search(course_id, user.id, q, limit=limit)
     except RetrievalNotAuthorized:
         raise HTTPException(status_code=404, detail="Course not found")
 

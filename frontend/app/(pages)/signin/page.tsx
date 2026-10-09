@@ -3,100 +3,34 @@
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
-import { Brain, Zap, Sparkles, Hexagon } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, BookOpen } from "lucide-react";
 
 function SignInError() {
   const params = useSearchParams();
   if (!params.get("error")) return null;
-  return <p role="alert" className="mb-4 text-sm text-red-700">Sign-in could not be completed. The course service may be unavailable. Please try again.</p>;
+  return <p role="alert" className="mb-5 border-2 border-black border-l-8 border-l-[#FF6B5E] bg-[#FFF1EF] p-4 text-sm"><strong className="block">Sign-in did not finish.</strong>Google closed before your account could be confirmed. Nothing was changed; you can try again.</p>;
+}
+
+function GoogleMark() {
+  return <svg className="size-5 shrink-0" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.5 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>;
 }
 
 export default function SignInPage() {
-  return (
-    <div className="min-h-screen bg-[#F4F1EA] flex items-center justify-center font-[family-name:var(--font-kodchasan)] p-4 relative overflow-hidden">
-      
-      {/* --- Decorative Background Icons (Replaces Shapes) --- */}
-      {/* Top Left - Sparkles */}
-      <div className="absolute top-12 left-12 hidden md:block animate-bounce">
-        <div className="w-16 h-16 bg-[#FF9F1C] rounded-full border-2 border-black flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-            <Sparkles className="w-8 h-8 text-black" strokeWidth={2.5} />
-        </div>
-      </div>
-
-      {/* Bottom Right - Hexagon */}
-      <div className="absolute bottom-12 right-12 hidden md:block">
-        <div className="w-20 h-20 bg-[#2EC4B6] rotate-12 border-2 border-black flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-             <Hexagon className="w-10 h-10 text-black" strokeWidth={2.5} />
-        </div>
-      </div>
-
-      {/* Middle Left - Zap */}
-      <div className="absolute top-1/2 left-20 hidden md:block -rotate-12">
-        <div className="w-12 h-12 bg-purple-400 border-2 border-black flex items-center justify-center shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
-            <Zap className="w-6 h-6 text-black fill-black" strokeWidth={2.5} />
-        </div>
-      </div>
-
-      {/* --- Main Card --- */}
-      <div className="w-full max-w-md bg-white border-2 border-black rounded-2xl p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] relative z-10">
-        
-        {/* Header Section */}
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-20 h-20 bg-[#FF6B6B] rounded-xl border-2 border-black flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] mb-4 rotate-[-3deg] hover:rotate-0 transition-transform">
-            {/* Main Brain Icon */}
-            <Brain className="w-10 h-10 text-black" strokeWidth={2.5} />
-          </div>
-          <h1 className="text-3xl font-bold text-black mb-2 tracking-tight">
-            Welcome Back
-          </h1>
-          <p className="text-gray-600 font-medium text-center">
-            Sign in to NeuroLearn
-          </p>
-        </div>
-
+  return <main className="nl-screen grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
+    <section className="flex flex-col justify-between gap-12 border-b-2 border-black bg-white p-7 md:p-12 lg:border-b-0 lg:border-r-2" aria-label="About NeuroLearn">
+      <Link href="/" className="nl-brand"><span className="nl-brand-mark"><BookOpen className="size-5" /></span>NeuroLearn</Link>
+      <div><p className="nl-kicker">Your sources. Your course.</p><h1 className="max-w-2xl text-4xl font-bold md:text-5xl">Turn your study material into a course that responds to your answers.</h1><p className="mt-5 max-w-xl text-lg text-zinc-700">Upload your notes, review the outline, and work through saved lessons and assessments from your own material.</p></div>
+      <div className="grid gap-3 sm:grid-cols-3" aria-label="How NeuroLearn works"><div className="border-2 border-black bg-zinc-100 p-4"><strong className="block">Your files</strong><span className="text-sm">Notes and documents</span></div><div className="border-2 border-black bg-white p-4"><strong className="block">A course</strong><span className="text-sm">Reviewed outline</span></div><div className="border-2 border-black bg-[#FFD23F] p-4 shadow-[4px_4px_0_#111]"><strong className="block">Practice</strong><span className="text-sm">Based on saved answers</span></div></div>
+    </section>
+    <section className="grid place-items-center p-5 md:p-10">
+      <div className="nl-card nl-card-accent w-full max-w-lg p-7 md:p-9">
+        <p className="nl-kicker">Welcome</p><h2 className="text-3xl font-bold">Sign in</h2><p className="mt-2 mb-6 text-zinc-700">Use your Google account to save and return to your courses.</p>
         <Suspense fallback={null}><SignInError /></Suspense>
-        {/* Google Sign-In Button */}
-        <button
-          onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
-          className="w-full bg-white border-2 border-black text-black font-bold py-3 px-4 rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center justify-center gap-3 hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-[4px] active:shadow-none transition-all"
-        >
-            {/* Google Icon SVG (Kept as SVG for brand accuracy) */}
-            <svg className="w-5 h-5" viewBox="0 0 24 24">
-                <path
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
-                    fill="#4285F4"
-                />
-                <path
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    fill="#34A853"
-                />
-                <path
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                    fill="#FBBC05"
-                />
-                <path
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                    fill="#EA4335"
-                />
-            </svg>
-            Continue with Google
-        </button>
-
-        {/* Divider */}
-        <div className="relative flex py-8 items-center">
-            <div className="flex-grow border-t-2 border-black/10"></div>
-            <span className="flex-shrink-0 mx-4 text-gray-400 text-xs font-bold tracking-widest uppercase">
-                Powered by AI
-            </span>
-            <div className="flex-grow border-t-2 border-black/10"></div>
-        </div>
-
-        {/* Footer Text */}
-        <p className="text-center text-xs text-gray-500 font-medium leading-relaxed">
-          By continuing, you agree to our <br/>
-          <span className="underline decoration-2 decoration-purple-400 cursor-pointer">Terms of Service</span> and <span className="underline decoration-2 decoration-purple-400 cursor-pointer">Privacy Policy</span>.
-        </p>
+        <button type="button" onClick={() => void signIn("google", { callbackUrl: "/dashboard" })} className="nl-button w-full py-3 text-base"><GoogleMark />Continue with Google</button>
+        <p className="mt-5 text-sm text-zinc-600">Your account is used to sign you in and scope your course data.</p>
+        <Link href="/" className="mt-6 inline-flex items-center gap-2 text-sm font-bold underline underline-offset-4">Back to NeuroLearn <ArrowRight className="size-4 rotate-180" /></Link>
       </div>
-    </div>
-  );
+    </section>
+  </main>;
 }

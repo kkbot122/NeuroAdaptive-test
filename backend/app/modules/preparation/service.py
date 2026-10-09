@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -28,19 +29,32 @@ from app.modules.mastery.service import MasteryService
 from app.modules.preparation.generation import (
     CONTENT_PROMPT_VERSION,
     CONTENT_SCHEMA_VERSION,
+    DIAGRAM_PROMPT_VERSION,
+    DIAGRAM_SCHEMA_VERSION,
+    DIAGRAM_VALIDATION_POLICY_VERSION,
+    LEGACY_P2_CONTENT_PROMPT_VERSION,
+    LEGACY_P2_CONTENT_SCHEMA_VERSION,
+    LEGACY_P2_VALIDATION_POLICY_VERSION,
+    LEGACY_REMEDIATION_CONTENT_PROMPT_VERSION,
+    LEGACY_REMEDIATION_CONTENT_SCHEMA_VERSION,
+    LEGACY_REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION,
+    PREVIOUS_P2_CONTENT_PROMPT_VERSION,
+    PREVIOUS_REMEDIATION_CONTENT_PROMPT_VERSION,
     P4_QUESTION_FRESHNESS_POLICY_VERSION,
     P4_QUESTION_PROMPT_VERSION,
     P4_QUESTION_SCHEMA_VERSION,
-    P4_VALIDATION_POLICY_VERSION,
     P5_QUESTION_PROMPT_VERSION,
     P5_QUESTION_SCHEMA_VERSION,
     P5_VALIDATION_POLICY_VERSION,
     REMEDIATION_CONTENT_PROMPT_VERSION,
     REMEDIATION_CONTENT_SCHEMA_VERSION,
+    REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION,
     QUESTION_FRESHNESS_POLICY_VERSION,
     QUESTION_PROMPT_VERSION,
     QUESTION_SCHEMA_VERSION,
     VALIDATION_POLICY_VERSION,
+    GroundedStatement,
+    LearningObjectiveDraft,
     LessonContentDraft,
     MCQDraft,
     MCQSetDraft,
@@ -63,9 +77,10 @@ from app.modules.preparation.models import (
     PreparedActivityQuestion,
     QuestionSource,
 )
-from app.modules.tutor.entailment import EntailmentUnavailable, GeminiEntailmentChecker
+from app.modules.tutor.entailment import EntailmentUnavailable, GeminiEntailmentChecker, check_support
 from app.modules.tutor.validation import Claim, ValidationStatus, validate_claims
 from app.services.generation.gateway import GenerationError, GenerationGateway
+from app.services.ai_usage import ai_usage_scope, provider_attempt
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +106,9 @@ class PreparationFailure(Exception):
 
 
 class CandidateRejected(Exception):
-    def __init__(self, category: str):
+    def __init__(self, category: str, *, diagnostics: dict | None = None):
         self.category = category
+        self.diagnostics = diagnostics or {}
         super().__init__(category)
 
 
@@ -110,15 +126,29 @@ class BudgetedGenerationGateway(GenerationGateway):
     def model_name(self) -> str:
         return self.delegate.model_name
 
-    def generate(self, *args, **kwargs) -> str:
-        row = _lock_current_lease(self.db, self.preparation_id, self.owner_id, self.lease_token)
+    @property
+    def reports_provider_attempts(self):
+        return getattr(self.delegate, "reports_provider_attempts", False)
+
+    def _before_attempt(self, db):
+        row = _lock_current_lease(db, self.preparation_id, self.owner_id, self.lease_token)
         row.provider_call_count += 1
         row.heartbeat_at = _now()
         row.lease_expires_at = _now() + timedelta(seconds=settings.JOB_LEASE_SECONDS_V1)
-        # The abuse-control commit persists the refreshed lease and quota
-        # reservation before the provider request starts.
-        AbuseControlService(self.db).enforce_daily_budget(self.owner_id)
-        return self.delegate.generate(*args, **kwargs)
+
+    def _cancel_attempt(self, db):
+        db.execute(update(ActivityPreparation).where(ActivityPreparation.id == self.preparation_id,
+                   ActivityPreparation.owner_id == self.owner_id).values(provider_call_count=ActivityPreparation.provider_call_count - 1))
+
+    def generate(self, *args, **kwargs) -> str:
+        with ai_usage_scope(self.db, self.owner_id, "preparation", self.preparation_id,
+                            worker=True, before_attempt=self._before_attempt, cancel_attempt=self._cancel_attempt):
+            if self.reports_provider_attempts:
+                return self.delegate.generate(*args, **kwargs)
+            # Injected offline gateways have no transport boundary. Preserve
+            # the same accounting seam with one synthetic attempt per call.
+            with provider_attempt("generation", self.model_name, provider="injected"):
+                return self.delegate.generate(*args, **kwargs)
 
 
 def _now() -> datetime:
@@ -316,8 +346,49 @@ class ActivityPreparationService:
         if activity_purpose in P4_TEACHING_ACTIVITY_TYPES:
             key_data["prompt"] = REMEDIATION_CONTENT_PROMPT_VERSION
             key_data["schema"] = REMEDIATION_CONTENT_SCHEMA_VERSION
-            key_data["validation"] = P4_VALIDATION_POLICY_VERSION
+            key_data["validation"] = REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION
+        if presentation_format == "diagram":
+            key_data.update(prompt=DIAGRAM_PROMPT_VERSION, schema=DIAGRAM_SCHEMA_VERSION,
+                            validation=DIAGRAM_VALIDATION_POLICY_VERSION)
         return _sha256(json.dumps(key_data, sort_keys=True)), curriculum_fingerprint, version.source_fingerprint
+
+    def _previous_prompt_artifact_key(
+        self,
+        version: CourseVersion,
+        lesson: Lesson | None,
+        concepts: list[Concept],
+        presentation_format: str,
+        activity_purpose: str,
+        activity_id: UUID | None,
+    ) -> tuple[str, str]:
+        """Keep the last validated format artifact available across prompt-only revisions."""
+        curriculum_fingerprint = self._curriculum_fingerprint(lesson, concepts, activity_purpose)
+        key_data = {
+            "activity_purpose": activity_purpose,
+            "course_version_id": str(version.id),
+            "source_fingerprint": version.source_fingerprint,
+            "curriculum_fingerprint": curriculum_fingerprint,
+            "target_concept_ids": sorted(str(item.id) for item in concepts),
+            "lesson_id": str(lesson.id) if lesson is not None else None,
+            "format": presentation_format,
+            "activity_id": str(activity_id) if activity_purpose in P4_TEACHING_ACTIVITY_TYPES else None,
+            "prompt": (
+                PREVIOUS_REMEDIATION_CONTENT_PROMPT_VERSION
+                if activity_purpose in P4_TEACHING_ACTIVITY_TYPES
+                else PREVIOUS_P2_CONTENT_PROMPT_VERSION
+            ),
+            "schema": (
+                REMEDIATION_CONTENT_SCHEMA_VERSION
+                if activity_purpose in P4_TEACHING_ACTIVITY_TYPES
+                else CONTENT_SCHEMA_VERSION
+            ),
+            "validation": (
+                REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION
+                if activity_purpose in P4_TEACHING_ACTIVITY_TYPES
+                else VALIDATION_POLICY_VERSION
+            ),
+        }
+        return _sha256(json.dumps(key_data, sort_keys=True)), curriculum_fingerprint
 
     @staticmethod
     def _legacy_p2_artifact_key(
@@ -347,14 +418,40 @@ class ActivityPreparationService:
                     "curriculum_fingerprint": curriculum_fingerprint,
                     "lesson_id": str(lesson.id),
                     "format": presentation_format,
-                    "prompt": CONTENT_PROMPT_VERSION,
-                    "schema": CONTENT_SCHEMA_VERSION,
-                    "validation": VALIDATION_POLICY_VERSION,
+                    "prompt": LEGACY_P2_CONTENT_PROMPT_VERSION,
+                    "schema": LEGACY_P2_CONTENT_SCHEMA_VERSION,
+                    "validation": LEGACY_P2_VALIDATION_POLICY_VERSION,
                 },
                 sort_keys=True,
             )
         )
         return artifact_key, curriculum_fingerprint
+
+    def _legacy_p4_artifact_key(
+        self,
+        version: CourseVersion,
+        lesson: Lesson | None,
+        concepts: list[Concept],
+        presentation_format: str,
+        activity_purpose: str,
+        activity_id: UUID,
+    ) -> tuple[str, str]:
+        """Keep strictly validated P4 content reusable across the schema revision."""
+        curriculum_fingerprint = self._curriculum_fingerprint(lesson, concepts, activity_purpose)
+        key_data = {
+            "activity_purpose": activity_purpose,
+            "course_version_id": str(version.id),
+            "source_fingerprint": version.source_fingerprint,
+            "curriculum_fingerprint": curriculum_fingerprint,
+            "target_concept_ids": sorted(str(item.id) for item in concepts),
+            "lesson_id": str(lesson.id) if lesson is not None else None,
+            "format": presentation_format,
+            "activity_id": str(activity_id),
+            "prompt": LEGACY_REMEDIATION_CONTENT_PROMPT_VERSION,
+            "schema": LEGACY_REMEDIATION_CONTENT_SCHEMA_VERSION,
+            "validation": LEGACY_REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION,
+        }
+        return _sha256(json.dumps(key_data, sort_keys=True)), curriculum_fingerprint
 
     def _prep_key(
         self,
@@ -796,6 +893,24 @@ class ActivityPreparationService:
                     preparation = self.db.query(ActivityPreparation).filter_by(preparation_key=preparation_key).first()
                     if preparation is None:
                         raise
+            if preparation.presentation_format == "diagram" and preparation.content_artifact_id is not None:
+                saved_artifact = self.db.get(LessonContentArtifact, preparation.content_artifact_id)
+                if saved_artifact is not None and saved_artifact.schema_version != DIAGRAM_SCHEMA_VERSION and preparation.status in {
+                    PreparationStatus.READY, PreparationStatus.RECOVERABLE_FAILURE,
+                }:
+                    # Upgrade only diagram content. Keep fixed question membership
+                    # and assessment identity when a pre-graph preparation exists.
+                    preparation.content_artifact_id = None
+                    preparation.artifact_keys = {k: v for k, v in (preparation.artifact_keys or {}).items() if k != "lesson_content"}
+                    preparation.status = PreparationStatus.PENDING
+                    preparation.stage = PreparationStage.CONTENT
+                    preparation.progress = 0
+                    preparation.candidate_count = 0
+                    preparation.error_category = None
+                    preparation.finished_at = None
+                    preparation.lease_token = None
+                    preparation.last_dispatched_at = None
+                    self.db.commit()
             if activity is not None and include_assessment and preparation.status != PreparationStatus.READY and activity.status in {
                 ActivityStatus.SELECTED.value,
                 ActivityStatus.READY.value,
@@ -896,6 +1011,10 @@ class ActivityPreparationService:
         if fmt is not None and fmt != default_format:
             _artifact, variant = self.request_format(course_id, activity_id, owner_id, fmt)
             if variant is None:
+                if default_preparation is not None and default_preparation.status == PreparationStatus.RECOVERABLE_FAILURE:
+                    # The displayed variant is readable; Retry must recover
+                    # the main content/questions job that still blocks progress.
+                    return self.retry(course_id, activity_id, owner_id)
                 raise PreparationConflict("The requested format is already ready")
             preparation = variant
             if preparation.status != PreparationStatus.RECOVERABLE_FAILURE:
@@ -1263,6 +1382,12 @@ class ActivityPreparationService:
             LessonContentArtifact.course_id == version.course_id,
             LessonContentArtifact.validation_status == "PASSED",
         ).first()
+        if fmt == "diagram":
+            # Earlier diagram artifacts have no checked connections. Their
+            # text remains stored, but cannot satisfy the new graph contract.
+            if artifact is not None and not self._artifact_sources_are_current(artifact):
+                raise PreparationFailure("STALE_CONTENT_PROVENANCE")
+            return artifact
         if (
             artifact is None
             and activity_purpose in P2_TEACHING_ACTIVITY_TYPES
@@ -1289,9 +1414,9 @@ class ActivityPreparationService:
                     LessonContentArtifact.activity_purpose == "NEW_LESSON",
                     LessonContentArtifact.presentation_format == fmt,
                     LessonContentArtifact.validation_status == "PASSED",
-                    LessonContentArtifact.prompt_version == CONTENT_PROMPT_VERSION,
-                    LessonContentArtifact.schema_version == CONTENT_SCHEMA_VERSION,
-                    LessonContentArtifact.validation_policy_version == VALIDATION_POLICY_VERSION,
+                    LessonContentArtifact.prompt_version == LEGACY_P2_CONTENT_PROMPT_VERSION,
+                    LessonContentArtifact.schema_version == LEGACY_P2_CONTENT_SCHEMA_VERSION,
+                    LessonContentArtifact.validation_policy_version == LEGACY_P2_VALIDATION_POLICY_VERSION,
                 ).first()
                 if (
                     legacy is not None
@@ -1302,6 +1427,80 @@ class ActivityPreparationService:
                 ):
                     artifact = legacy
                     break
+        if (
+            artifact is None
+            and activity_purpose in P4_TEACHING_ACTIVITY_TYPES
+            and activity_id is not None
+        ):
+            legacy_key, legacy_curriculum_fingerprint = self._legacy_p4_artifact_key(
+                version, lesson, concepts, fmt, activity_purpose, activity_id
+            )
+            legacy = self.db.query(LessonContentArtifact).filter(
+                LessonContentArtifact.artifact_key == legacy_key,
+                LessonContentArtifact.owner_id == version.owner_id,
+                LessonContentArtifact.course_id == version.course_id,
+                LessonContentArtifact.course_version_id == version.id,
+                LessonContentArtifact.lesson_id == (lesson.id if lesson is not None else None),
+                LessonContentArtifact.activity_purpose == activity_purpose,
+                LessonContentArtifact.presentation_format == fmt,
+                LessonContentArtifact.validation_status == "PASSED",
+                LessonContentArtifact.prompt_version == LEGACY_REMEDIATION_CONTENT_PROMPT_VERSION,
+                LessonContentArtifact.schema_version == LEGACY_REMEDIATION_CONTENT_SCHEMA_VERSION,
+                LessonContentArtifact.validation_policy_version == LEGACY_REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION,
+            ).first()
+            if (
+                legacy is not None
+                and legacy.source_fingerprint == version.source_fingerprint
+                and legacy.curriculum_fingerprint == legacy_curriculum_fingerprint
+                and sorted(str(item) for item in (legacy.target_concept_ids or []))
+                == sorted(str(item.id) for item in concepts)
+            ):
+                artifact = legacy
+        if artifact is None:
+            previous_key, previous_curriculum_fingerprint = self._previous_prompt_artifact_key(
+                version,
+                lesson,
+                concepts,
+                fmt,
+                activity_purpose,
+                activity_id,
+            )
+            previous_prompt = (
+                PREVIOUS_REMEDIATION_CONTENT_PROMPT_VERSION
+                if activity_purpose in P4_TEACHING_ACTIVITY_TYPES
+                else PREVIOUS_P2_CONTENT_PROMPT_VERSION
+            )
+            previous_schema = (
+                REMEDIATION_CONTENT_SCHEMA_VERSION
+                if activity_purpose in P4_TEACHING_ACTIVITY_TYPES
+                else CONTENT_SCHEMA_VERSION
+            )
+            previous_validation = (
+                REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION
+                if activity_purpose in P4_TEACHING_ACTIVITY_TYPES
+                else VALIDATION_POLICY_VERSION
+            )
+            previous = self.db.query(LessonContentArtifact).filter(
+                LessonContentArtifact.artifact_key == previous_key,
+                LessonContentArtifact.owner_id == version.owner_id,
+                LessonContentArtifact.course_id == version.course_id,
+                LessonContentArtifact.course_version_id == version.id,
+                LessonContentArtifact.lesson_id == (lesson.id if lesson is not None else None),
+                LessonContentArtifact.activity_purpose == activity_purpose,
+                LessonContentArtifact.presentation_format == fmt,
+                LessonContentArtifact.validation_status == "PASSED",
+                LessonContentArtifact.prompt_version == previous_prompt,
+                LessonContentArtifact.schema_version == previous_schema,
+                LessonContentArtifact.validation_policy_version == previous_validation,
+            ).first()
+            if (
+                previous is not None
+                and previous.source_fingerprint == version.source_fingerprint
+                and previous.curriculum_fingerprint == previous_curriculum_fingerprint
+                and sorted(str(item) for item in (previous.target_concept_ids or []))
+                == sorted(str(item.id) for item in concepts)
+            ):
+                artifact = previous
         if artifact is not None and not self._artifact_sources_are_current(artifact):
             raise PreparationFailure("STALE_CONTENT_PROVENANCE")
         return artifact
@@ -1372,7 +1571,7 @@ class ActivityPreparationService:
                 )
                 draft = parse_lesson_content(raw)
                 sections = self._validate_content_draft(
-                    draft, concepts, chunks_by_concept, source_by_id, checker
+                    draft, concepts, chunks_by_concept, source_by_id, checker, preparation.presentation_format
                 )
                 if preparation.activity_purpose in P4_TEACHING_ACTIVITY_TYPES:
                     explanation_signature = self._explanation_signature(sections.get("explanation", []))
@@ -1407,19 +1606,22 @@ class ActivityPreparationService:
                     model_id=self.generation.model_name,
                     validation_model_id=self.generation.model_name,
                     prompt_version=(
-                        REMEDIATION_CONTENT_PROMPT_VERSION
-                        if preparation.activity_purpose in P4_TEACHING_ACTIVITY_TYPES
-                        else CONTENT_PROMPT_VERSION
+                        DIAGRAM_PROMPT_VERSION if preparation.presentation_format == "diagram" else (
+                            REMEDIATION_CONTENT_PROMPT_VERSION
+                            if preparation.activity_purpose in P4_TEACHING_ACTIVITY_TYPES else CONTENT_PROMPT_VERSION
+                        )
                     ),
                     schema_version=(
-                        REMEDIATION_CONTENT_SCHEMA_VERSION
-                        if preparation.activity_purpose in P4_TEACHING_ACTIVITY_TYPES
-                        else CONTENT_SCHEMA_VERSION
+                        DIAGRAM_SCHEMA_VERSION if preparation.presentation_format == "diagram" else (
+                            REMEDIATION_CONTENT_SCHEMA_VERSION
+                            if preparation.activity_purpose in P4_TEACHING_ACTIVITY_TYPES else CONTENT_SCHEMA_VERSION
+                        )
                     ),
                     validation_policy_version=(
-                        P4_VALIDATION_POLICY_VERSION
-                        if preparation.activity_purpose in P4_TEACHING_ACTIVITY_TYPES
-                        else VALIDATION_POLICY_VERSION
+                        DIAGRAM_VALIDATION_POLICY_VERSION if preparation.presentation_format == "diagram" else (
+                            REMEDIATION_CONTENT_VALIDATION_POLICY_VERSION
+                            if preparation.activity_purpose in P4_TEACHING_ACTIVITY_TYPES else VALIDATION_POLICY_VERSION
+                        )
                     ),
                     validation_status="PASSED",
                     validated_at=_now(),
@@ -1443,15 +1645,63 @@ class ActivityPreparationService:
             except CandidateRejected as exc:
                 self.db.rollback()
                 last_category = exc.category
-            except EntailmentUnavailable:
+                logger.info(
+                    "Preparation %s content candidate %d rejected (%s) details=%s",
+                    preparation.id,
+                    attempt + 1,
+                    exc.category,
+                    exc.diagnostics,
+                    extra={
+                        "course_id": str(preparation.course_id),
+                        "model_id": gateway.model_name,
+                        "validation_details": exc.diagnostics,
+                    },
+                )
+            except EntailmentUnavailable as exc:
                 self.db.rollback()
-                last_category = "VALIDATION_UNAVAILABLE"
-            except (ValidationError, ValueError, KeyError, TypeError):
+                raise PreparationFailure("VALIDATION_UNAVAILABLE") from exc
+            except ValidationError as exc:
                 self.db.rollback()
                 last_category = "CONTENT_SCHEMA_OR_GROUNDING_FAILED"
-            except GenerationError:
+                known_fields = (
+                    set(LessonContentDraft.model_fields)
+                    | set(LearningObjectiveDraft.model_fields)
+                    | set(GroundedStatement.model_fields)
+                )
+                schema_errors = [
+                    {
+                        "loc": tuple(
+                            part if isinstance(part, int) or part in known_fields else "<unexpected_field>"
+                            for part in error["loc"]
+                        ),
+                        "type": error["type"],
+                    }
+                    for error in exc.errors(include_input=False, include_context=False, include_url=False)
+                ]
+                logger.info(
+                    "Preparation %s content candidate %d rejected (CONTENT_SCHEMA_OR_GROUNDING_FAILED) schema_errors=%s",
+                    preparation.id,
+                    attempt + 1,
+                    schema_errors,
+                    extra={
+                        "course_id": str(preparation.course_id),
+                        "model_id": gateway.model_name,
+                        "schema_errors": schema_errors,
+                    },
+                )
+            except (ValueError, KeyError, TypeError) as exc:
                 self.db.rollback()
-                last_category = "PROVIDER_UNAVAILABLE"
+                last_category = "CONTENT_SCHEMA_OR_GROUNDING_FAILED"
+                logger.info(
+                    "Preparation %s content candidate %d rejected (CONTENT_SCHEMA_OR_GROUNDING_FAILED) error_type=%s",
+                    preparation.id,
+                    attempt + 1,
+                    type(exc).__name__,
+                )
+            except GenerationError as exc:
+                self.db.rollback()
+                raise PreparationFailure("PROVIDER_UNAVAILABLE") from exc
+
         raise PreparationFailure(last_category)
 
     def _previous_remediation_explanations(
@@ -1491,36 +1741,82 @@ class ActivityPreparationService:
             for statement in statements
         )
 
-    def _validate_content_draft(self, draft: LessonContentDraft, concepts, chunks_by_concept, source_by_id, checker):
+    def _validate_content_draft(self, draft: LessonContentDraft, concepts, chunks_by_concept, source_by_id, checker, fmt=None):
         if draft.insufficient_evidence:
-            raise CandidateRejected("INSUFFICIENT_SOURCE_SUPPORT")
-        sections = {
-            "objective": draft.objective,
+            raise CandidateRejected("INSUFFICIENT_SOURCE_SUPPORT", diagnostics={"model_abstained": True})
+        factual_sections = {
             "explanation": draft.explanation,
             "example": draft.example,
             "recap": draft.recap,
         }
-        if any(not statements for statements in sections.values()):
-            raise CandidateRejected("INSUFFICIENT_SOURCE_SUPPORT")
+        if fmt == "diagram":
+            if len(draft.explanation) < 2 or not draft.diagram_edges:
+                raise CandidateRejected("DIAGRAM_SOURCE_SUPPORT_FAILED")
+            seen_connections = set()
+            for edge in draft.diagram_edges:
+                if max(edge.from_index, edge.to_index) >= len(draft.explanation):
+                    raise CandidateRejected("INVALID_DIAGRAM_CONNECTION")
+                endpoints = (edge.from_index, edge.to_index)
+                if endpoints in seen_connections:
+                    raise CandidateRejected("INVALID_DIAGRAM_CONNECTION")
+                seen_connections.add(endpoints)
+                node_concepts = set(draft.explanation[edge.from_index].concept_ids + draft.explanation[edge.to_index].concept_ids)
+                if not node_concepts.issubset(edge.concept_ids):
+                    raise CandidateRejected("CONTENT_CONCEPT_MISMATCH")
+            factual_sections["diagram_edges"] = draft.diagram_edges
+        elif draft.diagram_edges:
+            raise CandidateRejected("INVALID_DIAGRAM_CONNECTION")
+        if not draft.objective or any(not statements for statements in factual_sections.values()):
+            raise CandidateRejected("INSUFFICIENT_SOURCE_SUPPORT", diagnostics={
+                "empty_sections": [
+                    name for name, items in {"objective": draft.objective, **factual_sections}.items() if not items
+                ],
+            })
         concept_ids = {concept.id for concept in concepts}
+        concepts_by_id = {concept.id: concept for concept in concepts}
+        objectives_by_concept = {}
+        for objective in draft.objective:
+            if objective.concept_id not in concept_ids or objective.concept_id in objectives_by_concept:
+                raise CandidateRejected("CONTENT_CONCEPT_MISMATCH")
+            cited_ids = set(objective.citation_chunk_ids)
+            mapped_ids = chunks_by_concept.get(objective.concept_id, set())
+            if not cited_ids.issubset(source_by_id) or not cited_ids.issubset(mapped_ids):
+                raise CandidateRejected("INVALID_CITATION")
+            objectives_by_concept[objective.concept_id] = objective
+        if set(objectives_by_concept) != concept_ids:
+            raise CandidateRejected("CONTENT_CONCEPT_COVERAGE_FAILED")
+
         all_claims = []
         claim_owners = []
-        for section_name, statements in sections.items():
+        for section_name, statements in factual_sections.items():
             for statement_index, statement in enumerate(statements):
                 statement_concepts = set(statement.concept_ids)
                 if not statement_concepts or not statement_concepts.issubset(concept_ids):
                     raise CandidateRejected("CONTENT_CONCEPT_MISMATCH")
-                if not set(statement.citation_chunk_ids).issubset(source_by_id):
+                cited_ids = set(statement.citation_chunk_ids)
+                if not cited_ids.issubset(source_by_id):
                     raise CandidateRejected("INVALID_CITATION")
-                if not any(
-                    chunk_id in chunks_by_concept.get(concept_id, set())
+                related_ids = set().union(
+                    *(chunks_by_concept.get(concept_id, set()) for concept_id in statement_concepts)
+                )
+                if not cited_ids.issubset(related_ids) or any(
+                    not cited_ids.intersection(chunks_by_concept.get(concept_id, set()))
                     for concept_id in statement_concepts
-                    for chunk_id in statement.citation_chunk_ids
                 ):
                     raise CandidateRejected("INVALID_CITATION")
-                for chunk_id in statement.citation_chunk_ids:
-                    all_claims.append(Claim(text=statement.text, chunk_id=str(chunk_id)))
-                    claim_owners.append((section_name, statement_index))
+                citation_ids = tuple(str(chunk_id) for chunk_id in statement.citation_chunk_ids)
+                all_claims.append(
+                    Claim(
+                        text=(
+                            "The source explicitly supports this connection AND its direction: "
+                            f"FROM [{draft.explanation[statement.from_index].text}] "
+                            f"TO [{draft.explanation[statement.to_index].text}]. RELATIONSHIP: {statement.text}"
+                            if section_name == "diagram_edges" else statement.text
+                        ),
+                        chunk_id=citation_ids[0], source_chunk_ids=citation_ids,
+                    )
+                )
+                claim_owners.append((section_name, statement_index))
 
         texts_by_id = {str(chunk_id): chunk.text for chunk_id, chunk in source_by_id.items()}
         validated = validate_claims(
@@ -1531,14 +1827,32 @@ class ActivityPreparationService:
             texts_by_id,
             checker,
             sample_every=1,
+            batch_checks=True,
         )
-        clean_sections = {}
-        for section_name, statements in sections.items():
+        if fmt == "diagram" and any(
+            not result.tier1_passed or result.tier2_status != ValidationStatus.PASSED
+            for (section, _index), result in zip(claim_owners, validated)
+            if section in {"explanation", "diagram_edges"}
+        ):
+            # Never reindex away a rejected node or silently draw an unchecked link.
+            raise CandidateRejected("DIAGRAM_SOURCE_SUPPORT_FAILED")
+        objective_statements = []
+        for concept in concepts:
+            objective = objectives_by_concept[concept.id]
+            objective_statements.append(
+                {
+                    "text": f"Learn to {objective.action} {concept.name}.",
+                    "concept_ids": [str(concept.id)],
+                    "citation_chunk_ids": sorted(str(chunk_id) for chunk_id in objective.citation_chunk_ids),
+                }
+            )
+        clean_sections = {"objective": objective_statements}
+        for section_name, statements in factual_sections.items():
             accepted = []
             for statement_index, statement in enumerate(statements):
                 key = (section_name, statement_index)
-                # Every citation attached to displayed text must pass. A
-                # partial citation list is removed with its claim.
+                # Every listed source must be owned and the cited passages as
+                # a whole must support the displayed factual statement.
                 claim_positions = [i for i, owner in enumerate(claim_owners) if owner == key]
                 if claim_positions and all(
                     validated[i].tier1_passed and validated[i].tier2_status == ValidationStatus.PASSED
@@ -1548,13 +1862,23 @@ class ActivityPreparationService:
                         "text": statement.text,
                         "concept_ids": [str(cid) for cid in statement.concept_ids],
                         "citation_chunk_ids": [str(cid) for cid in statement.citation_chunk_ids],
+                        **({"from_index": statement.from_index, "to_index": statement.to_index}
+                           if section_name == "diagram_edges" else {}),
                     })
             if not accepted:
-                raise CandidateRejected("INSUFFICIENT_SOURCE_SUPPORT")
+                raise CandidateRejected("INSUFFICIENT_SOURCE_SUPPORT", diagnostics={
+                    "section": section_name,
+                    "claims": [
+                        {"index": index, "citation_owned": result.tier1_passed, "support": result.tier2_status}
+                        for (section, index), result in zip(claim_owners, validated)
+                        if section == section_name
+                    ],
+                })
             clean_sections[section_name] = accepted
         covered = {
             UUID(concept_id)
-            for statements in clean_sections.values()
+            for section_name, statements in clean_sections.items()
+            if section_name != "objective"
             for statement in statements
             for concept_id in statement["concept_ids"]
         }
@@ -1732,18 +2056,18 @@ class ActivityPreparationService:
                     normalize_question_text(question.prompt)
                     for question in self.db.query(Question).filter(Question.course_version_id == version.id).all()
                 )
-            except EntailmentUnavailable:
+            except EntailmentUnavailable as exc:
                 self.db.rollback()
-                last_category = "VALIDATION_UNAVAILABLE"
+                raise PreparationFailure("VALIDATION_UNAVAILABLE") from exc
             except (ValidationError, ValueError, KeyError, TypeError):
                 self.db.rollback()
                 last_category = "QUESTION_SCHEMA_OR_FRESHNESS_FAILED"
             except IntegrityError:
                 self.db.rollback()
                 last_category = "QUESTION_DUPLICATE"
-            except GenerationError:
+            except GenerationError as exc:
                 self.db.rollback()
-                last_category = "PROVIDER_UNAVAILABLE"
+                raise PreparationFailure("PROVIDER_UNAVAILABLE") from exc
         raise PreparationFailure(last_category)
 
     def _validate_question_set(
@@ -1799,27 +2123,27 @@ class ActivityPreparationService:
                 "The question can be answered from this passage, and its factual premises are supported: "
                 f"{question.prompt}"
             )
-            prompt_supported = checker(stem_claim, cited_text)
+            checks = []
             if activity_purpose in {"PREREQUISITE_REMEDIATION", "TARGETED_PRACTICE", "CHALLENGE"}:
                 concept_name = concepts_by_id[question.concept_id].name
+                concept_definition = concepts_by_id[question.concept_id].definition
                 isolated_claim = (
+                    f"Within the selected concept scope ({concept_name}: {concept_definition}), "
                     f"For this item, a learner can determine the answer by applying {concept_name} alone, "
                     f"without needing another selected concept: {question.prompt}"
                 )
-                if not checker(isolated_claim, cited_text):
-                    raise CandidateRejected("QUESTION_ATTRIBUTION_NOT_ISOLATED")
+                checks.append((isolated_claim, cited_text, True, "QUESTION_ATTRIBUTION_NOT_ISOLATED"))
 
+            provenance = set(allowed_chunks)
             if isinstance(question, ShortAnswerDraft):
-                answerable = checker(
-                    f"The cited course material contains enough information to write a correct short answer to: "
-                    f"{question.prompt}",
-                    cited_text,
-                )
-                expected_supported = checker(question.expected_reasoning, cited_text)
-                if not (prompt_supported and answerable and expected_supported):
-                    raise CandidateRejected("SHORT_ANSWER_SUPPORT_FAILED")
-
-                provenance = set(allowed_chunks)
+                checks.extend([
+                    (stem_claim, cited_text, True, "SHORT_ANSWER_SUPPORT_FAILED"),
+                    (
+                        "The cited course material contains enough information to write a correct short answer to: "
+                        f"{question.prompt}", cited_text, True, "SHORT_ANSWER_SUPPORT_FAILED",
+                    ),
+                    (question.expected_reasoning, cited_text, True, "SHORT_ANSWER_SUPPORT_FAILED"),
+                ])
                 for criterion in question.rubric:
                     criterion_ids = set(criterion.source_chunk_ids)
                     if any(chunk_id not in source_by_id for chunk_id in criterion_ids):
@@ -1840,28 +2164,30 @@ class ActivityPreparationService:
                         f"For the question {question.prompt}, this is supported expected reasoning for the rubric "
                         f"criterion {criterion.text}: {criterion.expected_reasoning}"
                     )
-                    if not checker(criterion_claim, criterion_text):
-                        raise CandidateRejected("RUBRIC_CRITERION_SUPPORT_OR_RELEVANCE_FAILED")
-                    if not checker(reasoning_claim, criterion_text):
-                        raise CandidateRejected("RUBRIC_REASONING_SUPPORT_FAILED")
+                    checks.extend([
+                        (criterion_claim, criterion_text, True, "RUBRIC_CRITERION_SUPPORT_OR_RELEVANCE_FAILED"),
+                        (reasoning_claim, criterion_text, True, "RUBRIC_REASONING_SUPPORT_FAILED"),
+                    ])
                     provenance.update(criterion_ids)
-                accepted.append((question, sorted(provenance, key=str)))
-                continue
-
-            answer_claim = f"For the question {question.prompt}, the supported answer is {question.correct_answer}."
-            answer_supported = checker(answer_claim, cited_text)
-            explanation_supported = checker(question.explanation, cited_text)
-            distractors_clear = all(
-                not checker(
-                    f"For the question {question.prompt}, the option {option} is also a supported correct answer.",
-                    cited_text,
+            else:
+                answer_claim = f"For the question {question.prompt}, the supported answer is {question.correct_answer}."
+                checks.extend([
+                    (stem_claim, cited_text, True, "QUESTION_SUPPORT_FAILED"),
+                    (answer_claim, cited_text, True, "QUESTION_SUPPORT_FAILED"),
+                    (question.explanation, cited_text, True, "QUESTION_SUPPORT_FAILED"),
+                ])
+                checks.extend(
+                    (
+                        f"For the question {question.prompt}, the option {option} is also a supported correct answer.",
+                        cited_text, False, "QUESTION_SUPPORT_FAILED",
+                    )
+                    for option in question.options if option != question.correct_answer
                 )
-                for option in question.options
-                if option != question.correct_answer
-            )
-            if not (prompt_supported and answer_supported and explanation_supported and distractors_clear):
-                raise CandidateRejected("QUESTION_SUPPORT_FAILED")
-            accepted.append((question, sorted(allowed_chunks, key=str)))
+            judgments = check_support(checker, [(claim, source) for claim, source, _, _ in checks])
+            for index, (supported, (_, _, expected, category)) in enumerate(zip(judgments, checks)):
+                if supported != expected:
+                    raise CandidateRejected(category, diagnostics={"check_index": index, "expected_support": expected})
+            accepted.append((question, sorted(provenance, key=str)))
         if any(count == 0 for count in counts.values()):
             raise CandidateRejected("QUESTION_CONCEPT_COVERAGE_FAILED")
         return accepted

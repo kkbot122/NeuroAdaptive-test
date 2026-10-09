@@ -49,11 +49,17 @@ class PreparedStatementOut(BaseModel):
     citation_chunk_ids: list[UUID]
 
 
+class PreparedDiagramEdgeOut(PreparedStatementOut):
+    from_index: int = Field(ge=0, le=11)
+    to_index: int = Field(ge=0, le=11)
+
+
 class PreparedLessonSectionsOut(BaseModel):
     objective: list[PreparedStatementOut]
     explanation: list[PreparedStatementOut]
     example: list[PreparedStatementOut]
     recap: list[PreparedStatementOut]
+    diagram_edges: list[PreparedDiagramEdgeOut] = Field(default_factory=list)
 
 
 class PreparedLessonContentOut(BaseModel):
@@ -106,6 +112,9 @@ class QuestionResultOut(BaseModel):
     automated_grading: bool = False
     grade_corrected: bool = False
     correction_reason: Optional[str] = None
+    original_correctness: Optional[float] = None
+    original_rubric_score: Optional[int] = None
+    original_rubric_feedback: Optional[list[RubricFeedbackOut]] = None
 
 
 class GradingIssueReportOut(BaseModel):
@@ -211,6 +220,8 @@ class AssessmentConceptProgressOut(BaseModel):
 class AssessmentSessionOut(BaseModel):
     id: UUID
     activity_id: UUID
+    decision_id: Optional[UUID] = None
+    lesson_id: Optional[UUID] = None
     assessment_type: str
     submission_state: str
     grading_state: str

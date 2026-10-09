@@ -4,6 +4,14 @@ from app.modules.tutor.parsing import TutorParseError, parse_tutor_response
 
 
 class TestParsing:
+    @pytest.mark.parametrize("text,chunk_id", [(" ", "abc"), ("X.", "\t")])
+    def test_blank_claim_or_citation_is_rejected(self, text, chunk_id):
+        import json
+        raw = json.dumps({"insufficient_evidence": False, "answer_markdown": "X.",
+                          "claims": [{"text": text, "chunk_id": chunk_id}]})
+        with pytest.raises(TutorParseError):
+            parse_tutor_response(raw)
+
     def test_parses_a_well_formed_response(self):
         raw = (
             '{"insufficient_evidence": false, "answer_markdown": "X is Y.", '

@@ -28,6 +28,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Index,
     JSON,
     String,
     Text,
@@ -59,6 +60,8 @@ class Question(Base):
     """
 
     __tablename__ = "questions"
+    # Retain the uniqueness index already created by the P2 migration.
+    __table_args__ = (Index("uq_questions_version_content_hash", "course_version_id", "content_hash", unique=True),)
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     course_id = Column(Uuid, ForeignKey("courses.id"), nullable=False, index=True)

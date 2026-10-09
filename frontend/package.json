@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test __tests__/*.test.mjs",
+    "test": "node --test __tests__/*.test.mjs && node --import tsx --test __tests__/*.test.tsx",
     "typecheck": "tsc --noEmit --incremental false",
     "contracts:generate": "python3 ../backend/scripts/export_openapi.py && openapi-typescript ../backend/openapi.json -o lib/generated/api.ts",
     "contracts:check": "python3 ../backend/scripts/export_openapi.py --check && openapi-typescript ../backend/openapi.json -o lib/generated/api.ts --check"
@@ -27,13 +27,17 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@testing-library/react": "^16.3.2",
+    "@types/jsdom": "^20.0.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "jsdom": "^29.1.1",
     "openapi-typescript": "^7.10.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.12",
     "typescript": "^5"
   }
 }

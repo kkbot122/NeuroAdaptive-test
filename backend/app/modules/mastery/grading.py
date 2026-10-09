@@ -20,6 +20,10 @@ P5_GRADING_POLICY_VERSION = "p5-rubric-binary-evidence-v1"
 class GradingError(Exception):
     """Raised when a SHORT_TEXT rubric grading response cannot be parsed."""
 
+    def __init__(self, message: str, *, diagnostics: dict | None = None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
+
 
 class CriteriaMetDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -84,7 +88,7 @@ def grade_short_text_criteria(
     """Return strict per-criterion judgments; caller maps them to evidence policy."""
     rubric = question.rubric or []
     if not rubric:
-        raise GradingError("Short-text question has no rubric")
+        raise GradingError("Short-text question has no rubric", diagnostics={"reason": "missing_rubric"})
     if given is None or not given.strip():
         return [False] * len(rubric)
 
@@ -105,14 +109,40 @@ def grade_short_text_criteria(
         ),
         temperature=0.0,
         json_mode=True,
+        response_schema={
+            "type": "OBJECT",
+            "properties": {
+                "criteria_met": {
+                    "type": "ARRAY",
+                    "items": {"type": "BOOLEAN"},
+                    "minItems": len(rubric),
+                    "maxItems": len(rubric),
+                },
+            },
+            "required": ["criteria_met"],
+        },
     )
     try:
         parsed = CriteriaMetDraft.model_validate_json(_strip_code_fence(raw))
         met = parsed.criteria_met
-        if len(met) != len(rubric):
-            raise ValueError("criteria_met length must match rubric length")
-    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
-        raise GradingError("Could not parse short-text grading response") from exc
+    except ValidationError as exc:
+        errors = [
+            {
+                "loc": tuple(
+                    part if isinstance(part, int) or part == "criteria_met" else "<unexpected_field>"
+                    for part in error["loc"]
+                ),
+                "type": error["type"],
+            }
+            for error in exc.errors(include_input=False, include_context=False, include_url=False)
+        ]
+        raise GradingError(
+            "Could not parse short-text grading response", diagnostics={"schema_errors": errors}
+        ) from exc
+    if len(met) != len(rubric):
+        raise GradingError("criteria_met length must match rubric length", diagnostics={
+            "expected_criteria": len(rubric), "received_criteria": len(met),
+        })
     return met
 
 

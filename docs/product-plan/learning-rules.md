@@ -161,6 +161,9 @@ limitation. The general exit policy for an assessment that stays unavailable rem
   daily call-count budget. This is request accounting, not token accounting; deployed
   cross-worker capacity and actual provider usage remain to be verified. Outages or
   exhausted allowances preserve saved content/progress; ungraded answers stay pending.
+  A deployment may set `AI_BUDGET_EXEMPT_EMAILS` for explicit developer accounts;
+  the exemption bypasses the app threshold but still counts usage, and does not bypass
+  provider limits or other controls. The setting defaults to empty.
 - Keep required learning evidence/progress/decisions when optional telemetry is disabled.
   Reading time and interaction analytics are optional, not mastery evidence.
 
@@ -170,3 +173,80 @@ Coverage records finished lesson work; understanding records concept evidence. O
 coverage and sufficient-understanding criteria are met, show completion and offer
 optional app-selected practice. Remaining gaps offer targeted work. No schedule,
 reminders, spaced review, programming execution, or OCR is added by this plan.
+
+## Tutor continuity implementation — 2026-10-08
+
+Saved tutor conversation is scoped by owner, course, conversation, lesson, and decision.
+Bounded previous turns help resolve follow-ups and retrieve fresh course passages;
+history is never a factual source or instruction channel. Paginated server history
+restores chat and citations after navigation/reload. Provider or response-validation
+outages are recoverable errors, not claims that the source lacks coverage.
+
+The panel uses the backend's account-wide open-assessment policy, including for results
+clarification when another assessment is still open. The standalone tutor shares the
+same panel. Exact configurable history bounds and live verification are recorded in
+[the workspace diagnosis](learning-workspace-diagnosis.md).
+
+## Tutor grounding implementation — 2026-10-09
+
+New tutor replies check every answer block for citation ownership, retrieved-source
+availability, and semantic support for all factual assertions. Validation batches
+share only identical cited passage text. The displayed and saved answer is assembled
+solely from passed blocks; independent model prose cannot bypass the checks. The
+structured generation contract is recorded as `tutor-prompt-v3`.
+
+After trimming unsupported or unlisted text, an additional strict boolean check
+determines whether the remaining explanation still answers the question. Conversation
+history can resolve a follow-up, but cannot supply missing facts or explanation. An
+inadequate remainder produces the fixed insufficient-evidence response. Unavailable
+or malformed verification returns HTTP 503 without saving a turn. Complete, unchanged
+answers do not need this extra request.
+
+This policy applies to newly generated tutor replies and the legacy lesson-content
+endpoint using the same service. Previously saved turns are not retroactively
+revalidated. Explicit sampling and disabled validation remain evaluation options,
+not flags accepted by the ordinary tutor API.
+
+## Presentation formats implementation — 2026-10-09
+
+Lessons and teaching remediation share the same seven presentation formats. Diagram
+artifacts contain explanation nodes and explicit directed connections. Each connection
+cites passages mapped to both endpoint concepts and is checked with the endpoint text
+and direction. Invalid indexes, duplicate/self connections, unsupported nodes, and
+unsupported relationships reject the diagram candidate. Existing source and concept
+coverage checks remain required. No connection is inferred from layout or shared tags.
+
+Source view loads each distinct cited original passage through the owned-course chunk
+endpoint, including its filename, heading, and page metadata. Plain-text display prevents
+uploaded markup or instructions from executing. Loading failures preserve the saved
+teaching and offer a passage retry; responses from an old course or artifact are ignored.
+
+Quiz-first uses deterministic prompts derived from the typed instructional objectives.
+Learners attempt an ungraded reflection or explicitly choose uncertainty, then compare
+with the matching validated teaching. Each objective must be revealed before this format
+offers the ordinary assessment handoff. These reflections do not create assessment
+attempts, mastery evidence, or grading calls. Responses (up to 2,000 characters each) and
+reveal state are saved on the current browser, scoped to course/activity identity and
+artifact. Cross-device warm-up restoration is not implemented; ordinary reading position
+and selected format continue to use the server's activity progress record.
+
+## AI execution and accounting implementation — 2026-10-09
+
+Modern Gemini calls use an owned operation scope. Every outbound generation attempt,
+including an application retry, atomically reserves the existing UTC generation
+allowance and its preparation/grading counter before dispatch. Embedding attempts are
+itemized separately. Returned tokens are recorded as reported; missing usage remains
+unknown. Request admission and read-only history/source/progress access do not consume
+generation allowance. Developer exemptions keep recording usage.
+
+SDK retries are disabled; the default application retry is one attempt after 2 seconds.
+Provider/verification outages pause preparation and grading early, while candidate-quality
+retry bounds and full source checks remain. At most two source-isolated validation batches
+overlap. New batches stop after an outage; in-flight requests retain their bounded deadline.
+
+Shared Redis limits govern AI burst/request/provider concurrency across processes and
+reserve interactive capacity against worker traffic. PostgreSQL reservation waits and
+interactive operation deadlines are bounded. Known cancelled dispatches refund counters;
+unfinished crash records remain explicit. Operational ledger records survive domain
+rollback, contain no private prompt/content payloads, and are removed on account deletion.
+Authenticated usage reads and tutor operation IDs expose the new accounting for inspection.

@@ -43,9 +43,14 @@ class FakeGenerationGateway(GenerationGateway):
         temperature: float = 0.2,
         max_output_tokens: int = 4096,
         json_mode: bool = False,
+        response_schema: Optional[dict] = None,
     ) -> str:
         self.calls.append(prompt)
         self.system_instructions.append(system_instruction)
+        return self.response_for(prompt)
+
+    def response_for(self, prompt: str) -> str:
+        """Resolve a configured fixture response without recording a provider call."""
         for substring, response in self._responses:
             if substring in prompt:
                 return response

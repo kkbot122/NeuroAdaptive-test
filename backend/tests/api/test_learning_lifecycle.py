@@ -692,8 +692,8 @@ class TestActivityCoverageAndOwnership:
         submitted_answer = client.post(answer_url, json={"given_answer": "A supported response"}, headers=headers)
         assert submitted_answer.status_code == 200
         assert submitted_answer.json()["questions"][0]["answer"]["status"] == "GRADING_FAILED"
-        assert submitted_answer.json()["questions"][0]["answer"]["grading_failure"] == "RETRIES_EXHAUSTED"
-        assert submitted_answer.json()["questions"][0]["answer"]["retry_available"] is False
+        assert submitted_answer.json()["questions"][0]["answer"]["grading_failure"] == "GRADING_UNAVAILABLE"
+        assert submitted_answer.json()["questions"][0]["answer"]["retry_available"] is True
         assert "result" not in submitted_answer.json()["questions"][0]
         assert db_session.query(AnswerSubmission).count() == 1
         assert db_session.query(QuestionAttempt).filter(QuestionAttempt.assessment_question_id.isnot(None)).count() == 0
@@ -705,7 +705,7 @@ class TestActivityCoverageAndOwnership:
         )
         assert completed_set.status_code == 200
         assert "result" not in completed_set.json()["questions"][0]
-        assert completed_set.json()["grading_state"] == "EXHAUSTED"
+        assert completed_set.json()["grading_state"] == "RETRY_REQUIRED"
         assert completed_set.json()["graded_answer_count"] == 0
         assert completed_set.json()["unresolved_answer_count"] == 1
         pending_progress = completed_set.json()["concept_progress"][0]
@@ -724,6 +724,11 @@ class TestActivityCoverageAndOwnership:
             f"/api/v1/courses/{course.id}/assessment-sessions/{session['id']}"
             f"/questions/{question_id}/retry-grading"
         )
+        # An outage stops early rather than spending every remaining attempt.
+        # Explicit retries still respect the saved answer's lifetime call cap.
+        for _ in range(2):
+            retried = client.post(retry_url, headers=headers)
+            assert retried.status_code == 200
         exhausted_retry = client.post(retry_url, headers=headers)
         assert exhausted_retry.status_code == 409
         assert db_session.query(AnswerSubmission).one().given_answer == "A supported response"
@@ -840,6 +845,49 @@ def test_saved_short_answer_recovers_after_worker_interruption_without_duplicate
     assert db_session.query(QuestionAttempt).filter_by(assessment_question_id=item.id).count() == 1
     assert db_session.query(MasteryEvent).filter_by(course_id=course.id).count() == 1
     assert db_session.query(GradingJudgment).count() == 1
+
+
+def test_array_grading_response_preserves_answer_without_evidence_and_logs_safe_reason(
+    db_session, owner, fake_embeddings, published_course_with_lessons, caplog
+):
+    course, version, concept, _, _lesson = published_course_with_lessons
+    activity = LearningActivity(
+        owner_id=owner.id, course_id=course.id, course_version_id=version.id,
+        activity_type="TARGETED_PRACTICE", target_concept_ids=[str(concept.id)],
+        status="READY", presentation_format="concise",
+    )
+    question = Question(
+        course_id=course.id, course_version_id=version.id, owner_id=owner.id,
+        question_type="SHORT_TEXT", prompt="Explain the source-supported concept.",
+        rubric=["Identifies the idea", "Explains its defining feature", "Connects the two"],
+        difficulty=0.5, is_diagnostic=0, version=1, model_id="fixture", prompt_version="p5-test-v1",
+    )
+    db_session.add_all([activity, question])
+    db_session.flush()
+    db_session.add(QuestionConcept(question_id=question.id, concept_id=concept.id, weight=1.0))
+    session = AssessmentSession(activity_id=activity.id, course_version_id=version.id, assessment_type="ACTIVITY", status="OPEN")
+    db_session.add(session)
+    db_session.flush()
+    item = AssessmentQuestion(session_id=session.id, question_id=question.id, question_version=1, position=0)
+    db_session.add(item)
+    db_session.commit()
+    gateway = FakeGenerationGateway().set_default('[true, true, true]')
+    service = LearningService(db_session, gateway, fake_embeddings)
+    service.submit_answer(course.id, session.id, question.id, owner.id, "PRIVATE-ANSWER-SENTINEL")
+    answer = db_session.query(AnswerSubmission).filter_by(assessment_question_id=item.id).one()
+    with caplog.at_level("WARNING", logger="app.modules.learning.service"):
+        service.grade_saved_answer(answer.id, owner.id)
+    db_session.refresh(answer)
+    assert answer.status == "GRADING_FAILED"
+    assert answer.given_answer == "PRIVATE-ANSWER-SENTINEL"
+    assert answer.grading_attempt_count == answer.grading_call_limit
+    assert db_session.query(QuestionAttempt).count() == 0
+    assert db_session.query(MasteryEvent).count() == 0
+    assert db_session.query(GradingJudgment).count() == 0
+    rejected = [record for record in caplog.records if hasattr(record, "grading_details")]
+    assert rejected
+    assert rejected[0].grading_details["schema_errors"][0]["type"] == "model_type"
+    assert "PRIVATE-ANSWER-SENTINEL" not in caplog.text
 
 
 def test_confirmed_answer_queues_and_stays_pending_until_worker_finishes(

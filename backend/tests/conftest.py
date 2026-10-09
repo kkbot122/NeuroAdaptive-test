@@ -13,6 +13,7 @@ TEST_SECRET_KEY = "test-secret-key-" + "y" * 24
 os.environ.setdefault("INTERNAL_API_KEY", TEST_INTERNAL_TOKEN)
 os.environ.setdefault("SECRET_KEY", TEST_SECRET_KEY)
 os.environ.setdefault("DATABASE_URL", "sqlite://")
+os.environ.setdefault("AI_SHARED_LIMITS_ENABLED", "false")
 os.environ.setdefault("GROQ_API_KEY", "test-groq-key")
 
 # Uploaded files must never land in the repo during a test run.
@@ -31,6 +32,17 @@ from app.main import app  # noqa: E402
 from app.modules.auth.models import User  # noqa: E402
 from app.modules.content.models import Article, Paragraph  # noqa: E402
 from app.modules.profiling.models import UserProfile  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def reset_in_memory_limiter_state():
+    """Fresh fixture users reuse IDs; their process-local limits must not cross tests."""
+    from app.core.rate_limit import _active_generations, _request_log
+    _request_log.clear()
+    _active_generations.clear()
+    yield
+    _request_log.clear()
+    _active_generations.clear()
 
 
 @pytest.fixture()

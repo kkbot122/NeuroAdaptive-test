@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.problem_details import ProblemDetailException
 from app.modules.abuse.service import AbuseControlService
+from app.services.ai_usage import ai_usage_scope, provider_attempt
 from app.modules.adaptation.models import AdaptationDecision
 from app.modules.adaptation.service import AdaptationNotFound, AdaptationService
 from app.modules.courses.models import Course, CourseStatus
@@ -52,7 +54,7 @@ from app.modules.preparation.models import (
     QuestionSource,
 )
 from app.services.embedding.gateway import EmbeddingGateway
-from app.services.generation.gateway import GenerationGateway
+from app.services.generation.gateway import GenerationError, GenerationGateway
 
 logger = logging.getLogger(__name__)
 MAX_SESSION_QUESTIONS = 50
@@ -103,7 +105,7 @@ def _lock_current_grading_lease(db: Session, answer_id: UUID, owner_id: int, tok
 
 
 class BudgetedGradingGateway(GenerationGateway):
-    """Reserve one atomic allowance and persist one provider call per generate()."""
+    """Reserve allowance and the fixed answer call cap for each transport attempt."""
 
     def __init__(self, delegate: GenerationGateway, db: Session, answer_id: UUID, owner_id: int, token: UUID):
         self.delegate = delegate
@@ -116,16 +118,24 @@ class BudgetedGradingGateway(GenerationGateway):
     def model_name(self) -> str:
         return self.delegate.model_name
 
-    def generate(self, *args, **kwargs) -> str:
-        row = _lock_current_grading_lease(self.db, self.answer_id, self.owner_id, self.token)
+    def _before_attempt(self, db):
+        row = _lock_current_grading_lease(db, self.answer_id, self.owner_id, self.token)
         if row.grading_attempt_count >= _grading_call_limit(row):
             raise GradingCallsExhausted()
-        AbuseControlService(self.db).enforce_daily_budget(self.owner_id)
-        row = _lock_current_grading_lease(self.db, self.answer_id, self.owner_id, self.token)
         row.grading_attempt_count += 1
         row.grading_lease_expires_at = _now() + timedelta(seconds=settings.JOB_LEASE_SECONDS_V1)
-        self.db.commit()
-        return self.delegate.generate(*args, **kwargs)
+
+    def _cancel_attempt(self, db):
+        db.execute(update(AnswerSubmission).where(AnswerSubmission.id == self.answer_id).values(
+            grading_attempt_count=AnswerSubmission.grading_attempt_count - 1))
+
+    def generate(self, *args, **kwargs) -> str:
+        with ai_usage_scope(self.db, self.owner_id, "grading", self.answer_id,
+                            worker=True, before_attempt=self._before_attempt, cancel_attempt=self._cancel_attempt):
+            if getattr(self.delegate, "reports_provider_attempts", False):
+                return self.delegate.generate(*args, **kwargs)
+            with provider_attempt("generation", self.model_name, provider="injected"):
+                return self.delegate.generate(*args, **kwargs)
 
 
 class LearningNotFound(Exception):
@@ -1391,8 +1401,20 @@ class LearningService:
                 failure_code = "grading_allowance_exhausted"
                 self.db.rollback()
                 break
+            except GenerationError:
+                # The gateway has already used its bounded transport retries.
+                # A fresh rubric candidate cannot repair an unavailable provider.
+                self.db.rollback()
+                break
             except Exception as exc:
-                logger.warning("Assessment grading failed (%s)", type(exc).__name__)
+                if isinstance(exc, GradingError):
+                    logger.warning(
+                        "Assessment grading response rejected; answer=%s question=%s details=%s",
+                        answer_id, question.id, exc.diagnostics,
+                        extra={"answer_id": str(answer_id), "question_id": str(question.id), "grading_details": exc.diagnostics},
+                    )
+                else:
+                    logger.warning("Assessment grading failed (%s)", type(exc).__name__)
                 self.db.rollback()
                 answer = self.db.query(AnswerSubmission).filter_by(id=answer_id).first()
                 if answer is None:
@@ -1647,6 +1669,19 @@ class LearningService:
                     if criteria is not None and rubric_details
                     else None
                 )
+                original_rubric_feedback = None
+                if correction is not None and judgment is not None and rubric_details:
+                    original_rubric_feedback = [
+                        {
+                            "criterion": detail["text"],
+                            "met": bool(judgment.criteria_met[index]),
+                            "expected_reasoning": detail["expected_reasoning"],
+                            "source_chunk_ids": [UUID(item) if isinstance(item, str) else item
+                                                 for item in detail["source_chunk_ids"]],
+                        }
+                        for index, detail in enumerate(rubric_details)
+                        if index < len(judgment.criteria_met)
+                    ]
                 result = {
                     "correctness": correction.effective_correctness if correction is not None else attempt.correctness,
                     "expected_answer": question.correct_answer,
@@ -1667,6 +1702,14 @@ class LearningService:
                     "automated_grading": question.question_type == "SHORT_TEXT",
                     "grade_corrected": correction is not None,
                     "correction_reason": correction.reason if correction is not None else None,
+                    "original_correctness": (
+                        float(judgment.evidence_correctness)
+                        if correction is not None and judgment is not None else None
+                    ),
+                    "original_rubric_score": (
+                        judgment.rubric_score if correction is not None and judgment is not None else None
+                    ),
+                    "original_rubric_feedback": original_rubric_feedback,
                 }
             question_out.append(
                 {
@@ -1728,6 +1771,8 @@ class LearningService:
         return {
             "id": session.id,
             "activity_id": activity.id,
+            "decision_id": activity.decision_id,
+            "lesson_id": activity.lesson_id,
             "assessment_type": session.assessment_type,
             "submission_state": session.status,
             "grading_state": grading_state,

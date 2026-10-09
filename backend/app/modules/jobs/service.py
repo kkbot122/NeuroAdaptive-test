@@ -374,7 +374,9 @@ class JobService:
             return StageStatus.PENDING
 
         try:
-            handler(job)
+            from app.services.ai_usage import ai_phase
+            with ai_phase(stage.name):
+                handler(job)
         except LeaseLost:
             raise
         except NoExtractableText as exc:
@@ -424,6 +426,16 @@ class JobService:
             # Category only — never document text or provider payloads.
             logger.error("Job %s failed at %s: %s", job.id, stage.name, type(exc).__name__)
             return StageStatus.FAILED
+        finally:
+            from app.services.ai_usage import current_usage_scope
+            if current_usage_scope() is not None:
+                from app.modules.abuse.models import AIProviderCall
+                stage.provider_call_count = self.db.query(AIProviderCall).filter(
+                    AIProviderCall.owner_id == job.owner_id, AIProviderCall.resource_id == job.id,
+                    AIProviderCall.feature == "processing", AIProviderCall.phase == stage.name,
+                    AIProviderCall.status != "CANCELLED",
+                ).count()
+                self.db.commit()
 
         stage.status = StageStatus.SUCCEEDED.value
         stage.finished_at = _now()

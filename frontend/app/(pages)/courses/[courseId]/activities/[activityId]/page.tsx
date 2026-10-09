@@ -1,25 +1,48 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Loader2 } from "lucide-react";
 import type { components } from "@/lib/generated/api";
+import { ArrowLeft, ArrowRight, LoaderCircle } from "lucide-react";
+import { LearningSidePanel } from "@/components/LearningSidePanel";
+import { PreparedLessonContent } from "@/components/PreparedLessonContent";
+import { studyWorkspaceIdentity, visibleWorkspaceContent } from "@/lib/study-workspace-state.mjs";
+import { preparationFailureMessage } from "@/lib/learning-route";
 
 type Activity = components["schemas"]["LearningActivityOut"];
 type Preparation = components["schemas"]["PreparationOut"];
 type Content = components["schemas"]["PreparedLessonContentOut"];
+type Format = Content["presentation_format"];
 
+const FORMATS: Format[] = ["concise", "detailed", "worked_example", "analogy", "diagram", "source_view", "quiz_first"];
 const REMEDIATION = "PREREQUISITE_REMEDIATION";
 
 function sourceError(category?: string | null): string {
-  if (category === "INSUFFICIENT_SOURCE_PROVENANCE" || category === "INSUFFICIENT_SOURCE_SUPPORT") {
-    return "This course version has no supporting source material linked to this concept. Your activity is saved, but a grounded explanation and questions cannot be prepared until supporting material is available.";
+  if (category === "DIAGRAM_SOURCE_SUPPORT_FAILED" || category === "INVALID_DIAGRAM_CONNECTION") {
+    return preparationFailureMessage(category);
+  }
+  if (category === "INSUFFICIENT_SOURCE_PROVENANCE") {
+    return "This activity has no valid linked passage in the published course sources. Your activity is saved; return to the course overview for current work.";
+  }
+  if (category === "INSUFFICIENT_SOURCE_SUPPORT" || category === "CONTENT_SCHEMA_OR_GROUNDING_FAILED") {
+    return preparationFailureMessage(category);
   }
   if (category === "STALE_SOURCE_VERSION" || category === "STALE_COURSE_VERSION") {
-    return "The published course version changed while this activity was preparing. Your saved progress is intact; return to Continue studying to load current work.";
+    return "The published course version changed. Your saved progress is intact; return to the course overview to continue with current work.";
   }
   return "Preparation paused. Your activity and saved progress are safe. Retry preparation when you are ready.";
+}
+
+function labelFor(activity: Activity, names: string[]): string {
+  if (activity.activity_type === REMEDIATION) return `Review ${names[0] || "this concept"}`;
+  if (activity.activity_type === "TARGETED_PRACTICE") return `Practice ${names[0] || "this concept"}`;
+  if (names.length > 1) return `Apply ${names.join(" and ")}`;
+  return `Try an application of ${names[0] || "this concept"}`;
+}
+
+function formatLabel(format: Format): string {
+  return format === "worked_example" ? "Worked example" : format.replaceAll("_", " ");
 }
 
 export default function AdaptiveActivityPage() {
@@ -27,223 +50,272 @@ export default function AdaptiveActivityPage() {
   const router = useRouter();
   const courseId = params.courseId as string;
   const activityId = params.activityId as string;
-  const [activity, setActivity] = useState<Activity | null>(null);
+  const identity = studyWorkspaceIdentity(courseId, activityId);
+  const [activityState, setActivity] = useState<{ identity: string; value: Activity } | null>(null);
+  const activity = activityState?.identity === identity ? activityState.value : null;
   const [conceptNames, setConceptNames] = useState<Record<string, string>>({});
   const [preparation, setPreparation] = useState<Preparation | null>(null);
-  const [content, setContent] = useState<Content | null>(null);
+  const [contentState, setContent] = useState<{ identity: string; content: Content } | null>(null);
+  const [quizReady, setQuizReady] = useState<{ identity: string; artifactId: string; ready: boolean } | null>(null);
+  const [format, setFormat] = useState<Format>("detailed");
+  const [isLoading, setIsLoading] = useState(true);
+  const [contentLoading, setContentLoading] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isStarting, setIsStarting] = useState(false);
-  const requestInFlight = useRef(false);
+  const [sourceToOpen, setSourceToOpen] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [saved, setSaved] = useState(true);
+  const [readingPosition, setReadingPosition] = useState(0);
+  const activityRequestRef = useRef<AbortController | null>(null);
+  const contentRequestRef = useRef<AbortController | null>(null);
+  const activityInFlightRef = useRef(false);
+  const formatRef = useRef(format);
+  const saveTimerRef = useRef<number | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const restoredActivityRef = useRef<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (requestInFlight.current) return;
-    requestInFlight.current = true;
+  const isRemediation = activity?.activity_type === REMEDIATION;
+  const isQuestionFirst = activity?.activity_type === "TARGETED_PRACTICE" || activity?.activity_type === "CHALLENGE";
+  const names = useMemo(() => activity?.target_concept_ids.map((id) => conceptNames[id] || "Selected concept") || [], [activity, conceptNames]);
+  const heading = activity ? labelFor(activity, names) : "Learning activity";
+  const displayedContent = isRemediation ? visibleWorkspaceContent(contentState, identity, format) as Content | null : null;
+  const warmupReady = format !== "quiz_first" || (quizReady?.identity === identity
+    && quizReady.artifactId === displayedContent?.artifact_id && quizReady.ready);
+  const updateQuizReady = useCallback((ready: boolean) => {
+    if (displayedContent) setQuizReady({ identity, artifactId: displayedContent.artifact_id, ready });
+  }, [identity, displayedContent]);
+  const isPreparing = preparation ? ["PENDING", "RUNNING"].includes(preparation.status) : false;
+  const hasFailure = preparation?.status === "RECOVERABLE_FAILURE";
+  const questionsReady = Boolean(preparation?.assessment_ready);
+
+  const loadActivity = useCallback(async () => {
+    if (activityInFlightRef.current) return;
+    activityInFlightRef.current = true;
+    activityRequestRef.current?.abort();
+    const controller = new AbortController();
+    activityRequestRef.current = controller;
     try {
-      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}`, { cache: "no-store" });
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}`, { cache: "no-store", signal: controller.signal });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.detail || "This saved activity could not be loaded.");
+      if (controller.signal.aborted) return;
       const savedActivity = payload as Activity;
-      setActivity(savedActivity);
+      setActivity({ identity, value: savedActivity });
       setPreparation(savedActivity.preparation ?? null);
-      if (savedActivity.experience_availability === "UNAVAILABLE") {
-        setPageError(savedActivity.unavailable_reason || "This activity is unavailable from the saved course version.");
-        setContent(null);
+      setReadingPosition(savedActivity.reading_position);
+      setSaved(true);
+      if (savedActivity.assessment_session_id) {
+        router.replace(`/courses/${courseId}/assessment?type=activity&sessionId=${savedActivity.assessment_session_id}`);
         return;
       }
-      setPageError(null);
-      if (savedActivity.activity_type === REMEDIATION) {
-        const contentResponse = await fetch(
-          `/api/v1/courses/${courseId}/activities/${activityId}/content?format=${encodeURIComponent(savedActivity.presentation_format)}`,
-          { cache: "no-store" },
-        );
-        const contentPayload: components["schemas"]["ActivityContentResponseOut"] = await contentResponse.json();
-        setPreparation(contentPayload.preparation ?? savedActivity.preparation ?? null);
-        setContent(contentResponse.ok && contentPayload.status === "READY" ? contentPayload.content ?? null : null);
+      if (savedActivity.experience_availability === "UNAVAILABLE") {
+        setPageError(savedActivity.unavailable_reason || "This saved activity is unavailable in the current course version.");
       } else {
-        setContent(null);
+        setPageError(null);
+        if (FORMATS.includes(savedActivity.presentation_format as Format)) {
+          formatRef.current = savedActivity.presentation_format as Format;
+          setFormat(savedActivity.presentation_format as Format);
+        }
       }
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : "This saved activity could not be loaded.");
+    } catch (cause) {
+      if (!controller.signal.aborted) setPageError(cause instanceof Error ? cause.message : "This saved activity could not be loaded.");
     } finally {
-      setIsLoading(false);
-      requestInFlight.current = false;
+      if (!controller.signal.aborted) {
+        activityInFlightRef.current = false;
+        setIsLoading(false);
+      }
     }
+  }, [activityId, courseId, router, identity]);
+
+  const loadContent = useCallback(async (selectedFormat: Format) => {
+    if (!isRemediation) return;
+    contentRequestRef.current?.abort();
+    const controller = new AbortController();
+    contentRequestRef.current = controller;
+    setContentLoading(true);
+    try {
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/content?format=${encodeURIComponent(selectedFormat)}`, { cache: "no-store", signal: controller.signal });
+      const payload: components["schemas"]["ActivityContentResponseOut"] = await response.json();
+      if (controller.signal.aborted || formatRef.current !== selectedFormat) return;
+      setPreparation(payload.preparation ?? null);
+      if (response.ok && payload.status === "READY" && payload.content) setContent({ identity, content: payload.content });
+    } catch {
+      if (!controller.signal.aborted) setActionError("Saved explanation could not be loaded. Your activity and progress remain available.");
+    } finally {
+      if (!controller.signal.aborted) setContentLoading(false);
+    }
+  }, [activityId, courseId, isRemediation, identity]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadActivity();
+    void fetch(`/api/v1/courses/${courseId}/graph`, { cache: "no-store", signal: controller.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((graph: components["schemas"]["GraphOut"] | null) => {
+        if (graph && !controller.signal.aborted) setConceptNames(Object.fromEntries(graph.concepts.map((concept) => [concept.id, concept.name])));
+      })
+      .catch(() => undefined);
+    return () => {
+      controller.abort();
+      activityRequestRef.current?.abort();
+      contentRequestRef.current?.abort();
+      activityInFlightRef.current = false;
+    };
+  }, [activityId, courseId, loadActivity]);
+
+  useEffect(() => { formatRef.current = format; }, [format]);
+  useEffect(() => { if (activity && isRemediation) void loadContent(format); }, [activity, format, isRemediation, loadContent]);
+  useEffect(() => {
+    if (!isPreparing || pageError) return;
+    const timer = window.setTimeout(() => {
+      void loadActivity();
+      if (isRemediation) void loadContent(formatRef.current);
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [isPreparing, isRemediation, loadActivity, loadContent, pageError, preparation]);
+  useEffect(() => () => { activityRequestRef.current?.abort(); contentRequestRef.current?.abort(); }, []);
+
+  const saveProgress = useCallback((position: number, selectedFormat: Format, keepalive = false) => {
+    const save = saveQueueRef.current.catch(() => undefined).then(async () => {
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reading_position: position, presentation_format: selectedFormat }),
+        keepalive,
+      });
+      if (!response.ok) throw new Error("Could not save activity progress");
+      if (!keepalive) setSaved(true);
+    });
+    saveQueueRef.current = save;
+    return save;
   }, [activityId, courseId]);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 2000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+    if (!isRemediation || !activity) return;
+    if (readingPosition > 0 && displayedContent && !contentLoading && restoredActivityRef.current !== activityId) {
+      window.scrollTo(0, readingPosition);
+      restoredActivityRef.current = activityId;
+    }
+  }, [activity, activityId, contentLoading, displayedContent, isRemediation, readingPosition]);
 
   useEffect(() => {
-    let cancelled = false;
-    void fetch(`/api/v1/courses/${courseId}/graph`, { cache: "no-store" })
-      .then((response) => response.ok ? response.json() : null)
-      .then((graph: components["schemas"]["GraphOut"] | null) => {
-        if (!graph || cancelled) return;
-        setConceptNames(Object.fromEntries((graph.concepts || []).map((concept) => [concept.id, concept.name])));
-      })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [courseId]);
-
-  const targets = activity?.target_concept_ids ?? [];
-  const names = targets.map((id) => conceptNames[id] || id);
-  const isRemediation = activity?.activity_type === REMEDIATION;
-  const isQuestionOnly = activity?.activity_type === "TARGETED_PRACTICE" || activity?.activity_type === "CHALLENGE";
-  const ready = Boolean(preparation?.assessment_ready);
-  const isPreparing = preparation?.status === "PENDING" || preparation?.status === "RUNNING";
-  const hasSourceLimitation = preparation?.error_category === "INSUFFICIENT_SOURCE_PROVENANCE"
-    || preparation?.error_category === "INSUFFICIENT_SOURCE_SUPPORT";
+    if (!isRemediation || !activity) return;
+    const onScroll = () => {
+      setSaved(false);
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(() => {
+        void saveProgress(Math.max(0, Math.round(window.scrollY)), formatRef.current).catch(() => {
+          setActionError("Your latest reading position could not be saved. Retry before leaving.");
+          setSaved(false);
+        });
+      }, 500);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      void saveProgress(Math.max(0, Math.round(window.scrollY)), formatRef.current, true).catch(() => undefined);
+    };
+  }, [activity, isRemediation, saveProgress]);
 
   const retryPreparation = async () => {
     setActionError(null);
     try {
-      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/preparation/retry`, { method: "POST" });
+      const query = isRemediation && !displayedContent && preparation?.stage === "CONTENT"
+        ? `?format=${encodeURIComponent(format)}` : "";
+      const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/preparation/retry${query}`, { method: "POST" });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.detail || "Preparation could not be retried.");
       setPreparation(payload.preparation ?? null);
-      await refresh();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Preparation could not be retried.");
+      await loadActivity();
+      if (isRemediation) await loadContent(format);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Preparation could not be retried.");
+    }
+  };
+
+  const switchFormat = async (nextFormat: Format) => {
+    if (nextFormat === format || !isRemediation) return;
+    setActionError(null);
+    const currentPosition = Math.max(0, Math.round(window.scrollY));
+    try {
+      await saveProgress(currentPosition, nextFormat);
+      formatRef.current = nextFormat;
+      setFormat(nextFormat);
+    } catch {
+      setActionError("The selected presentation format could not be saved. Your current format is unchanged.");
     }
   };
 
   const startQuestions = async () => {
-    if (!activity || !ready || (isRemediation && !content)) return;
-    setIsStarting(true);
+    if (!activity || !questionsReady || (isRemediation && (!displayedContent || !warmupReady)) || starting) return;
+    setStarting(true);
     setActionError(null);
     try {
       if (isRemediation && !activity.reading_completed_at) {
+        await saveProgress(Math.max(0, Math.round(window.scrollY)), format);
         const response = await fetch(`/api/v1/courses/${courseId}/activities/${activityId}/reading-complete`, { method: "POST" });
         const payload = await response.json().catch(() => null);
         if (!response.ok) throw new Error(payload?.detail || "Reading completion could not be saved.");
+        const savedActivity = payload as Activity;
+        if (savedActivity.assessment_session_id) {
+          router.push(`/courses/${courseId}/assessment?type=activity&sessionId=${savedActivity.assessment_session_id}`);
+          return;
+        }
       }
       router.push(`/courses/${courseId}/assessment?type=activity&activityId=${activityId}`);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Questions could not be opened.");
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Questions could not be opened.");
     } finally {
-      setIsStarting(false);
+      setStarting(false);
     }
   };
 
-  if (isLoading && !activity) {
-    return <main className="flex min-h-screen items-center justify-center bg-[#F4F1EA] font-[family-name:var(--font-kodchasan)]"><Loader2 className="mr-3 animate-spin" />Loading your saved activity…</main>;
-  }
+  if (isLoading && !activity) return <main className="nl-screen grid place-items-center p-6"><p className="flex items-center gap-3" role="status"><LoaderCircle className="size-5 animate-spin" />Loading your saved activity…</p></main>;
+  if (!activity || pageError || activity.experience_availability === "UNAVAILABLE") return <main className="nl-screen grid place-items-center px-5 py-14 text-center"><section className="nl-card nl-card-raised w-full max-w-2xl"><p className="nl-kicker">Saved learning activity</p><h1 className="text-2xl font-bold">This activity is unavailable right now</h1><p className="mt-3 text-zinc-700">{pageError || activity?.unavailable_reason || "Your saved activity could not be loaded."}</p><div className="nl-row mt-6 justify-center"><Link href={`/courses/${courseId}/learn`} className="nl-button nl-button-primary">Course overview</Link><Link href="/dashboard" className="nl-button">Dashboard</Link></div></section></main>;
 
-  if (!activity || pageError) {
-    return (
-      <main className="min-h-screen bg-[#F4F1EA] px-6 py-16 text-center font-[family-name:var(--font-kodchasan)] text-black">
-        <h1 className="text-2xl font-black">This activity is unavailable right now</h1>
-        <p className="mx-auto mt-3 max-w-2xl">{pageError || "The saved activity could not be loaded."}</p>
-        <div className="mt-6 flex justify-center gap-4">
-          <Link href={`/courses/${courseId}/learn`} className="border-2 border-black bg-[#FF9F1C] px-5 py-3 font-bold">Continue studying</Link>
-          <Link href="/dashboard" className="border-2 border-black bg-white px-5 py-3 font-bold">Dashboard</Link>
-        </div>
-      </main>
-    );
-  }
+  const sourceIds = displayedContent?.source_chunk_ids || [];
 
-  const heading = isRemediation
-    ? `Review ${names[0] || "this concept"}`
-    : activity.activity_type === "TARGETED_PRACTICE"
-      ? `Practice ${names[0] || "this concept"}`
-      : names.length > 1
-        ? `Apply ${names.join(" and ")}`
-        : `Try a new application of ${names[0] || "this concept"}`;
-
-  return (
-    <main className="min-h-screen bg-[#F4F1EA] pb-24 font-[family-name:var(--font-kodchasan)] text-black">
-      <nav className="sticky top-0 z-10 flex items-center gap-4 border-b-2 border-black bg-white px-6 py-4">
-        <Link href="/dashboard" aria-label="Return to dashboard" className="rounded-full border-2 border-transparent p-2 hover:border-black"><ArrowLeft className="h-5 w-5" /></Link>
-        <strong className="truncate text-lg">Continue studying</strong>
-      </nav>
-      <div className="mx-auto max-w-4xl space-y-6 px-6 py-10">
-        <header className="border-4 border-black bg-white p-7 shadow-[7px_7px_0px_0px_rgba(0,0,0,1)]">
-          <p className="text-sm font-black uppercase tracking-widest text-purple-700">
-            {isRemediation ? "Concept review" : activity.activity_type === "TARGETED_PRACTICE" ? "Targeted practice" : "Challenge"}
-          </p>
-          <h1 className="mt-2 text-3xl font-black">{heading}</h1>
-          {activity.activity_type === "CHALLENGE" && names.length === 1 && <p className="mt-2 font-semibold">Single-concept application</p>}
-          <ul className="mt-4 flex flex-wrap gap-2" aria-label="Selected concepts">
-            {names.map((name) => <li key={name} className="border-2 border-black bg-blue-100 px-3 py-1 font-bold">{name}</li>)}
-          </ul>
+  return <div className="nl-screen">
+    <nav className="nl-topbar" aria-label="Activity navigation"><Link href={`/courses/${courseId}/learn`} className="nl-button"><ArrowLeft className="size-4" /><span className="hidden sm:inline">Back to course</span></Link><div className="nl-crumb"><small>{isRemediation ? "Concept review" : activity.activity_type === "TARGETED_PRACTICE" ? "Targeted practice" : "Challenge"}</small><strong>{heading}</strong></div><span className="nl-spacer" /><span className={`nl-chip ${saved ? "nl-chip-mint" : "nl-chip-yellow"}`}>{saved ? "Progress saved" : "Saving progress…"}</span></nav>
+    <main className="nl-shell nl-grid">
+      <article className="nl-stack min-w-0">
+        <header className="nl-card nl-card-accent">
+          <p className="nl-kicker">{isRemediation ? "Focused teaching" : isQuestionFirst ? "Questions first" : "Selected activity"}</p>
+          <h1 className="text-3xl font-bold">{heading}</h1>
+          {activity.activity_type === "CHALLENGE" && names.length === 1 && <p className="mt-3"><span className="nl-chip nl-chip-yellow">Single-concept application</span></p>}
+          {names.length > 0 && <ul className="mt-4 flex flex-wrap gap-2" aria-label="Selected concepts">{names.map((name, index) => <li key={`${name}-${index}`} className="nl-chip nl-chip-violet">{name}</li>)}</ul>}
         </header>
 
-        <section className="border-2 border-black bg-white p-6">
-          <h2 className="text-xl font-black">Why this was selected</h2>
-          <p className="mt-2 leading-relaxed">{activity.reason}</p>
-          <p className="mt-3 font-bold">{activity.question_count} fresh assessment questions</p>
-          {isQuestionOnly && <p className="mt-2 text-gray-700">Questions are ready without a lesson or reading step.</p>}
+        <section className="nl-card">
+          <h2 className="text-xl font-bold">Why this was selected</h2>
+          <p className="mt-2 leading-relaxed">{activity.reason || "This activity was selected from your saved course evidence."}</p>
+          <p className="mt-3 font-bold">{activity.question_count} fixed questions · question types are shown in the saved assessment</p>
+          {isQuestionFirst && <p className="mt-2 text-sm text-zinc-700">You can start questions directly. No lesson or reading completion is required.</p>}
         </section>
 
-        {isRemediation && (
-          <section className="border-2 border-black bg-white p-6">
-            <h2 className="text-xl font-black">A focused explanation</h2>
-            {content ? (
-              <div className="mt-5 space-y-7">
-                {(["objective", "explanation", "example", "recap"] as const).map((section) => (
-                  <section key={section}>
-                    <h3 className="text-lg font-black capitalize">{section === "example" ? "Worked example" : section}</h3>
-                    <div className="mt-2 space-y-4 leading-relaxed">
-                      {content.sections[section].map((statement, index) => (
-                        <div key={`${section}-${index}`}>
-                          <p>{statement.text}</p>
-                          <p className="mt-1 flex flex-wrap gap-x-3 text-sm font-bold text-blue-700">
-                            {statement.citation_chunk_ids.map((chunkId, citationIndex) => (
-                              <Link key={chunkId} href={`/courses/${courseId}/sources/${chunkId}`} className="hover:underline">Source {citationIndex + 1}</Link>
-                            ))}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            ) : isPreparing ? (
-              <p className="mt-4 flex items-center gap-2 text-gray-700"><Loader2 className="h-5 w-5 animate-spin" />Preparing a source-grounded explanation and questions… {preparation?.progress ?? 0}%</p>
-            ) : preparation?.status === "RECOVERABLE_FAILURE" ? (
-              <div className="mt-4 rounded border-2 border-orange-400 bg-orange-50 p-4 text-orange-950">
-                <p>{sourceError(preparation.error_category)}</p>
-                <button onClick={() => void retryPreparation()} className="mt-3 border-2 border-black bg-white px-4 py-2 font-bold">Retry preparation</button>
-              </div>
-            ) : <p className="mt-4 text-gray-700">Preparing your focused explanation…</p>}
-          </section>
-        )}
+        {isRemediation && <section className="nl-card" aria-label="Saved focused explanation" aria-live="polite">
+          <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold">A focused explanation</h2><span className="text-sm text-zinc-700">Your reading place is saved.</span></div>
+          <div className="mt-3 flex flex-wrap border-2 border-black" role="group" aria-label="Presentation format">{FORMATS.map((item) => <button key={item} type="button" aria-pressed={format === item} onClick={() => void switchFormat(item)} className={`border-r-2 border-black px-3 py-2 capitalize last:border-r-0 ${format === item ? "bg-[#FFD23F] text-black" : "bg-white hover:bg-zinc-100"}`}>{formatLabel(item)}</button>)}</div>
+          {displayedContent ? <PreparedLessonContent state={contentState} identity={identity} courseId={courseId} format={format}
+            activeSourceChunkId={sourceToOpen} onOpenSource={setSourceToOpen} onQuizReadyChange={updateQuizReady} /> : contentLoading || isPreparing ? <p className="mt-4 flex items-center gap-3 border-2 border-dashed border-zinc-500 p-4 text-zinc-700" role="status"><LoaderCircle className="size-5 animate-spin" />{contentLoading ? `Loading saved ${formatLabel(format)} content…` : `Preparing saved explanation and questions… ${preparation?.progress ?? 0}%`}</p> : !hasFailure && <p className="mt-4 text-zinc-700">Saved teaching content is not available yet.</p>}
+        </section>}
 
-        {isRemediation && content && preparation?.status === "RECOVERABLE_FAILURE" && (
-          <section role="alert" className="border-2 border-orange-400 bg-orange-50 p-5 text-orange-950">
-            <p>{sourceError(preparation.error_category)}</p>
-            <button onClick={() => void retryPreparation()} className="mt-3 border-2 border-black bg-white px-4 py-2 font-bold">Retry preparation</button>
-          </section>
-        )}
+        {isPreparing && isQuestionFirst && <section className="nl-card" role="status"><h2 className="flex items-center gap-2 text-lg font-bold"><LoaderCircle className="size-5 animate-spin" />Preparing fresh questions</h2><p className="mt-2 text-zinc-700">The selected activity is saved while questions are prepared. You can return to the course overview.</p><div className="nl-progress mt-4"><span style={{ width: `${preparation?.progress ?? 0}%` }} /></div></section>}
+        {hasFailure && <section className="border-2 border-amber-800 bg-amber-50 p-5 text-amber-950" role="alert"><h2 className="text-lg font-bold">{isRemediation && !displayedContent && preparation?.stage === "CONTENT" ? "This format could not be prepared" : "Valid questions are not ready"}</h2><p className="mt-2">{sourceError(preparation?.error_category)}</p><button type="button" onClick={() => void retryPreparation()} className="nl-button mt-4" disabled={starting}>Retry preparation</button></section>}
+        {isRemediation && displayedContent && hasFailure && <p className="border-2 border-amber-800 bg-amber-50 p-4 text-sm text-amber-950" role="status">The saved explanation is still available. The failed questions stage can be retried above.</p>}
+        {actionError && <p role="alert" className="border-2 border-red-800 bg-red-50 p-3 text-red-900">{actionError}</p>}
 
-        {isQuestionOnly && isPreparing && (
-          <section className="flex items-center gap-3 border-2 border-black bg-white p-6 text-gray-700"><Loader2 className="h-5 w-5 animate-spin" />Preparing fresh questions… {preparation?.progress ?? 0}%</section>
-        )}
-        {isQuestionOnly && preparation?.status === "RECOVERABLE_FAILURE" && (
-          <section className="border-2 border-orange-400 bg-orange-50 p-5 text-orange-950">
-            <p>{sourceError(preparation.error_category)}</p>
-            <button onClick={() => void retryPreparation()} className="mt-3 border-2 border-black bg-white px-4 py-2 font-bold">Retry preparation</button>
-          </section>
-        )}
-
-        {actionError && <p role="alert" className="font-bold text-red-700">{actionError}</p>}
-        {hasSourceLimitation && !isRemediation && <p className="text-orange-900">{sourceError(preparation?.error_category)}</p>}
-        <div className="flex flex-col items-end gap-3">
-          <button
-            onClick={() => void startQuestions()}
-            disabled={!ready || isStarting || (Boolean(isRemediation) && !content)}
-            className="border-2 border-black bg-[#FF9F1C] px-7 py-3 font-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isStarting ? "Opening questions…" : isRemediation ? activity.reading_completed_at ? "Continue to questions" : "Ready for questions" : "Start questions"}
+        <footer className="nl-card flex flex-wrap items-center justify-between gap-4">
+          <p className="max-w-xl text-sm text-zinc-700">{isRemediation ? "Reading completion records coverage only. It does not count as understanding." : "Question-first activities do not require a reading step."}</p>
+          <button type="button" onClick={() => void startQuestions()} disabled={!questionsReady || starting || (Boolean(isRemediation) && (!displayedContent || !warmupReady))} className="nl-button nl-button-primary nl-button-large">
+            {starting || (isPreparing && questionsReady) ? <LoaderCircle className="size-5 animate-spin" /> : null}
+            {isRemediation ? "Ready for questions" : activity.activity_type === "TARGETED_PRACTICE" ? "Start questions" : "Start challenge"} · {activity.question_count}<ArrowRight className="size-5" />
           </button>
-          {!ready && <p className="text-sm text-gray-700">Questions will open when the saved set is ready.</p>}
-        </div>
-      </div>
+        </footer>
+      </article>
+
+      <LearningSidePanel courseId={courseId} contextLessonId={activity.lesson_id} decisionId={activity.decision_id} sourceIds={sourceIds} initialSourceChunkId={sourceToOpen} conversationStorageKey={`activity:${activity.id}`} />
     </main>
-  );
+  </div>;
 }

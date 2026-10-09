@@ -8,11 +8,9 @@ exactly like a wholly invented chunk_id. This is the same "ownership filter
 lives inside the query" property the retrieval module already enforces
 (retrieval/service.py), reapplied here for citation checking.
 
-Tier 2 (semantic) is sampled, not exhaustive -- full entailment checking on
-every claim would blow the tutor's latency budget (mandate step 6). Sampling
-is deterministic (every Nth claim by position, always including the first),
-not random, matching this codebase's general preference for determinism
-where either would do.
+Tier 2 (semantic) checks every claim by default. Production callers can batch
+checks against identical source text without sampling. Explicit sampling is
+retained for evaluation callers, never the ordinary tutor path.
 """
 from dataclasses import dataclass
 from typing import Callable, List, Optional
@@ -21,8 +19,9 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.modules.documents.chunk_models import Chunk
+from app.modules.tutor.entailment import check_support
 
-TIER2_SAMPLE_EVERY = 2  # named, unvalidated default: validate every 2nd claim, always including the first
+TIER2_SAMPLE_EVERY = 1
 
 
 class ValidationStatus:
@@ -40,6 +39,12 @@ class ValidationStatus:
 class Claim:
     text: str
     chunk_id: str
+    source_chunk_ids: tuple[str, ...] = ()
+
+
+def _source_ids(claim: Claim) -> tuple[str, ...]:
+    """Return every cited chunk while preserving compatibility with one-source claims."""
+    return tuple(dict.fromkeys((claim.chunk_id, *claim.source_chunk_ids)))
 
 
 @dataclass
@@ -50,29 +55,38 @@ class ValidatedClaim:
 
 
 def tier1_validate(db: Session, claim: Claim, course_id: UUID, owner_id: int) -> bool:
-    """The cited chunk_id must resolve to a real chunk belonging to a
-    document in THIS course, owned by THIS user. Fabricated or
-    wrong-document chunk_ids fail identically."""
-    try:
-        chunk_uuid = UUID(claim.chunk_id)
-    except (ValueError, TypeError, AttributeError):
+    """Every cited chunk must resolve to a real chunk in THIS owned course.
+
+    Fabricated or wrong-course citations fail identically, including when a
+    claim uses several passages as combined evidence.
+    """
+    source_ids = _source_ids(claim)
+    if not source_ids:
         return False
-    exists = (
-        db.query(Chunk)
-        .filter(Chunk.id == chunk_uuid, Chunk.course_id == course_id, Chunk.owner_id == owner_id)
-        .first()
-        is not None
-    )
-    return exists
+    for source_id in source_ids:
+        try:
+            chunk_uuid = UUID(source_id)
+        except (ValueError, TypeError, AttributeError):
+            return False
+        exists = (
+            db.query(Chunk)
+            .filter(Chunk.id == chunk_uuid, Chunk.course_id == course_id, Chunk.owner_id == owner_id)
+            .first()
+            is not None
+        )
+        if not exists:
+            return False
+    return True
 
 
 EntailmentChecker = Callable[[str, str], bool]  # (claim_text, chunk_text) -> is_supported
 
 
 def tier2_validate(claim: Claim, chunk_text: str, checker: EntailmentChecker) -> bool:
-    """Does the cited chunk's content actually support the claim? Uses
+    """Do the cited passages together support the claim? Uses
     whatever (cheaper) checker the caller supplies -- see service.py for the
-    production wiring."""
+    production wiring. Multiple cited passages are checked together because
+    their combined evidence may support one complete statement."""
     return checker(claim.text, chunk_text)
 
 
@@ -84,8 +98,10 @@ def validate_claims(
     chunk_text_by_id: dict,
     entailment_checker: EntailmentChecker,
     sample_every: int = TIER2_SAMPLE_EVERY,
+    batch_checks: bool = False,
 ) -> List[ValidatedClaim]:
     results = []
+    pending = []
     for index, claim in enumerate(claims):
         tier1_ok = tier1_validate(db, claim, course_id, owner_id)
         if not tier1_ok:
@@ -93,10 +109,24 @@ def validate_claims(
             continue
 
         if index % sample_every == 0:
-            chunk_text = chunk_text_by_id.get(claim.chunk_id, "")
+            source_texts = [chunk_text_by_id.get(source_id) for source_id in _source_ids(claim)]
+            if any(source_text is None for source_text in source_texts):
+                results.append(
+                    ValidatedClaim(claim=claim, tier1_passed=True, tier2_status=ValidationStatus.FAILED)
+                )
+                continue
+            chunk_text = "\n\n".join(source_text for source_text in source_texts if source_text is not None)
+            if batch_checks:
+                pending.append((len(results), claim.text, chunk_text))
+                results.append(ValidatedClaim(claim=claim, tier1_passed=True, tier2_status=ValidationStatus.UNSAMPLED))
+                continue
             tier2_ok = tier2_validate(claim, chunk_text, entailment_checker)
             status = ValidationStatus.PASSED if tier2_ok else ValidationStatus.FAILED
         else:
             status = ValidationStatus.UNSAMPLED
         results.append(ValidatedClaim(claim=claim, tier1_passed=True, tier2_status=status))
+    if pending:
+        supported = check_support(entailment_checker, [(claim, source) for _, claim, source in pending])
+        for (index, _, _), is_supported in zip(pending, supported):
+            results[index].tier2_status = ValidationStatus.PASSED if is_supported else ValidationStatus.FAILED
     return results

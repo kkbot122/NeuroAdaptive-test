@@ -62,7 +62,7 @@ def test_migrated_schema_and_expression_index_match(pg_engine):
     tables = set(inspect(pg_engine).get_table_names())
     assert set(Base.metadata.tables).issubset(tables)
     with pg_engine.connect() as db:
-        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "83c6e2f41b85"
+        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "9fd2c74a6e11"
         definition = db.execute(text("SELECT indexdef FROM pg_indexes WHERE indexname='ix_chunks_embedding_hnsw' AND schemaname='public'")).scalar_one()
         assert "USING hnsw" in definition and "halfvec(3072)" in definition and "halfvec_cosine_ops" in definition
     env = dict(os.environ, DATABASE_URL=str(pg_engine.url.render_as_string(hide_password=False)))
@@ -87,7 +87,7 @@ def test_incremental_upgrade_preserves_existing_rows(pg_engine):
         new = create_engine(target)
         with new.connect() as db:
             assert db.execute(text("SELECT email FROM users WHERE id=:id"), {"id": user_id}).scalar_one() == "synthetic-existing@example.com"
-            assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "83c6e2f41b85"
+        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "9fd2c74a6e11"
         new.dispose()
     finally:
         with admin.connect() as db:
@@ -256,7 +256,7 @@ def test_existing_course_flow_through_http_and_real_postgres(pg_engine):
                 "claims":[{"text":"An algorithm is a sequence of steps.","chunk_id":str(chunk.id)}]})
             tutor_generation = FakeGenerationGateway().set_default(answer)
             return TutorService(db, tutor_generation, FakeEmbeddingGateway(3072), PgVectorStore(db),
-                cheap_generation=FakeGenerationGateway().set_default('{"supported": true}'))
+                cheap_generation=FakeGenerationGateway().set_default('{"results": [{"id": 0, "supported": true}]}'))
         app.dependency_overrides.update({get_db: database, job_dependency: job_service, _dispatcher: Inline, tutor_dependency: tutor_service, preparation_dependency: lambda: None})
         try:
             with TestClient(app) as client:

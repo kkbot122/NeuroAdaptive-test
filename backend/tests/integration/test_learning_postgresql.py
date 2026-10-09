@@ -57,6 +57,7 @@ from app.modules.preparation.models import (
 from app.modules.preparation.service import ActivityPreparationService
 from app.services.embedding.fake import FakeEmbeddingGateway
 from app.services.generation.fake import FakeGenerationGateway
+from tests.preparation_generation import PreparationGenerationGateway
 
 
 @pytest.fixture()
@@ -712,7 +713,7 @@ def test_postgresql_concurrent_preparation_requests_and_workers_deduplicate_arti
 
     lesson_output = {
         "insufficient_evidence": False,
-        "objective": [{"text": "This objective states the source supported idea.", "concept_ids": [str(concept_id)], "citation_chunk_ids": [str(chunk_id)]}],
+        "objective": [{"action": "explain", "concept_id": str(concept_id), "citation_chunk_ids": [str(chunk_id)]}],
         "explanation": [{"text": "The source explains the first concept in simple terms.", "concept_ids": [str(concept_id)], "citation_chunk_ids": [str(chunk_id)]}],
         "example": [{"text": "This example follows the supplied source passage.", "concept_ids": [str(concept_id)], "citation_chunk_ids": [str(chunk_id)]}],
         "recap": [{"text": "The recap repeats the source supported idea.", "concept_ids": [str(concept_id)], "citation_chunk_ids": [str(chunk_id)]}],
@@ -755,7 +756,7 @@ def test_postgresql_concurrent_preparation_requests_and_workers_deduplicate_arti
             "explanation": "The passage directly supports this answer.",
             "source_chunk_ids": [str(chunk_id)],
         })
-    generation = FakeGenerationGateway().when_prompt_contains(
+    generation = PreparationGenerationGateway().when_prompt_contains(
         "Prepare the first lesson", json.dumps(lesson_output)
     ).when_prompt_contains(
         "Write exactly 5 single-answer", json.dumps({"insufficient_evidence": False, "questions": questions})

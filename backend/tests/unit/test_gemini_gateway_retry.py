@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.embedding.gateway import EmbeddingError
+from app.core.config import settings
 from app.services.embedding.gemini import (
     _MAX_BATCH_SIZE,
-    _MAX_RETRIES,
     GeminiEmbeddingGateway,
 )
 
@@ -54,7 +54,6 @@ class TestRateLimitRetry:
         gateway, client = _gateway_with_mock_client()
         client.embed_content.side_effect = [
             ResourceExhausted("quota"),
-            ResourceExhausted("quota"),
             {"embedding": [[0.1, 0.2]]},
         ]
 
@@ -62,8 +61,8 @@ class TestRateLimitRetry:
             result = gateway.embed_texts(["one text"])
 
         assert result == [[0.1, 0.2]]
-        assert client.embed_content.call_count == 3
-        assert sleep.call_count == 2  # one sleep per retry, not per attempt
+        assert client.embed_content.call_count == 2
+        assert sleep.call_count == 1
 
     def test_gives_up_after_the_retry_budget_is_exhausted(self):
         gateway, client = _gateway_with_mock_client()
@@ -73,7 +72,7 @@ class TestRateLimitRetry:
             with pytest.raises(EmbeddingError, match="after"):
                 gateway.embed_texts(["one text"])
 
-        assert client.embed_content.call_count == _MAX_RETRIES + 1
+        assert client.embed_content.call_count == settings.GEMINI_MAX_RETRIES_V1 + 1
 
     def test_non_rate_limit_errors_are_not_retried(self):
         """A genuinely broken request should fail fast, not spend the full
@@ -88,7 +87,8 @@ class TestRateLimitRetry:
         assert client.embed_content.call_count == 1
         sleep.assert_not_called()
 
-    def test_backoff_delays_increase(self):
+    def test_backoff_delays_increase(self, monkeypatch):
+        monkeypatch.setattr(settings, "GEMINI_MAX_RETRIES_V1", 3)
         gateway, client = _gateway_with_mock_client()
         client.embed_content.side_effect = ResourceExhausted("quota")
 

@@ -9,23 +9,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.core.rate_limit import _active_generations, _request_log
 from app.modules.abuse.models import AIUsageDaily
 from app.modules.courses.models import Course
 from app.modules.curriculum.models import CourseVersion, CourseVersionStatus
 from tests.conftest import auth_headers
-
-
-@pytest.fixture(autouse=True)
-def reset_in_memory_limiter_state():
-    """The rate/concurrency limiters are process-global module state
-    (core/rate_limit.py's own documented limitation) -- reset between tests
-    so one test's burst doesn't bleed into the next."""
-    _request_log.clear()
-    _active_generations.clear()
-    yield
-    _request_log.clear()
-    _active_generations.clear()
 
 
 @pytest.fixture()
@@ -52,11 +39,38 @@ def course_with_chunk(db_session, owner):
 
 
 class TestDailyBudget:
-    def test_exceeding_the_daily_budget_returns_429_problem_details_with_reset_time(
-        self, client, owner, db_session, course_with_chunk
+    def test_explicit_developer_allowlist_bypasses_limit_but_still_records_usage(
+        self, owner, db_session, monkeypatch
     ):
+        from app.core.config import settings
+        from app.modules.abuse.service import AbuseControlService, DAILY_AI_CALL_BUDGET
+
+        monkeypatch.setattr(
+            settings,
+            "AI_BUDGET_EXEMPT_EMAILS",
+            f"other@example.com, {owner.email.upper()} ",
+            raising=False,
+        )
+        usage = AIUsageDaily(
+            owner_id=owner.id,
+            usage_date=datetime.now(timezone.utc).date(),
+            call_count=DAILY_AI_CALL_BUDGET,
+        )
+        db_session.add(usage)
+        db_session.commit()
+
+        AbuseControlService(db_session).enforce_daily_budget(owner.id)
+
+        db_session.refresh(usage)
+        assert usage.call_count == DAILY_AI_CALL_BUDGET + 1
+
+    def test_exceeding_the_daily_budget_returns_429_problem_details_with_reset_time(
+        self, client, owner, db_session, course_with_chunk, monkeypatch
+    ):
+        from app.core.config import settings
         from app.modules.abuse.service import DAILY_AI_CALL_BUDGET
 
+        monkeypatch.setattr(settings, "AI_BUDGET_EXEMPT_EMAILS", "developer@example.com")
         course, _ = course_with_chunk
         # Pre-exhaust today's budget directly rather than firing 200 real requests.
         db_session.add(AIUsageDaily(owner_id=owner.id, usage_date=datetime.now(timezone.utc).date(), call_count=DAILY_AI_CALL_BUDGET))

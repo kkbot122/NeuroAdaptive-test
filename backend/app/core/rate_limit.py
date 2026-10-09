@@ -1,14 +1,7 @@
-"""
-In-memory per-user rate limiting and generation-concurrency limiting (T5).
+"""Request limits. AI generation slots use shared Redis coordination in production.
 
-RESIDUAL RISK, STATED PLAINLY: this is process-local state -- a
-sliding-window dict, not Redis. It is correct for exactly one backend
-process (this sprint's deployment: a single FastAPI process, no worker
-pool). Running multiple backend replicas would let each replica enforce its
-own independent limit, so the effective limit becomes
-(configured limit) x (replica count). Documented here and in
-docs/SECURITY.md rather than silently assumed away; a production multi-
-replica deployment needs a shared store (Redis) for this to hold.
+Other legacy/IP limiters remain process-local. Offline tests explicitly disable
+shared AI limits; production defaults to fail-closed Redis admission.
 """
 import threading
 import time
@@ -63,6 +56,16 @@ class generation_slot:
         self.max_concurrent = max_concurrent
 
     def __enter__(self):
+        from app.core.config import settings
+        if settings.AI_SHARED_LIMITS_ENABLED:
+            from app.core.ai_limits import AICapacityUnavailable, shared_slot
+            self._shared = shared_slot({f"ai:requests:{self.key}": self.max_concurrent},
+                                       ttl_seconds=settings.AI_INTERACTIVE_DEADLINE_SECONDS_V1 + 15)
+            try:
+                self._shared.__enter__()
+            except AICapacityUnavailable as exc:
+                raise ConcurrencyLimitExceeded(self.max_concurrent) from exc
+            return self
         with _lock:
             if _active_generations[self.key] >= self.max_concurrent:
                 raise ConcurrencyLimitExceeded(self.max_concurrent)
@@ -70,6 +73,8 @@ class generation_slot:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if hasattr(self, "_shared"):
+            return self._shared.__exit__(exc_type, exc_val, exc_tb)
         with _lock:
             _active_generations[self.key] = max(0, _active_generations[self.key] - 1)
         return False
