@@ -462,10 +462,10 @@ export default function WorkspacePage() {
   const renderSourceControls = () => documents.length > 0 && <section className="nl-processing-source-controls" aria-label="Course source files">
     <h3>Course source files</h3>
     <ul>{documents.map((doc) => <li key={doc.id}>
-      <span><File aria-hidden="true" />{doc.filename}</span>
+      <span className="nl-processing-source-file"><File aria-hidden="true" /><span className="nl-processing-source-name">{doc.filename}</span></span>
       <span className="nl-processing-source-actions">
-        <button type="button" onClick={() => { replacementDocumentIdRef.current = doc.id; fileInputRef.current?.click(); }} disabled={uploading || removingDocumentId !== null} aria-label={`Replace ${doc.filename}`}>Replace</button>
-        <button type="button" onClick={() => void handleRemoveSource(doc.id, doc.filename)} disabled={uploading || removingDocumentId !== null} aria-label={`Remove ${doc.filename}`}>
+        <button type="button" className="nl-processing-source-action nl-processing-source-replace" onClick={() => { replacementDocumentIdRef.current = doc.id; fileInputRef.current?.click(); }} disabled={uploading || removingDocumentId !== null} aria-label={`Replace ${doc.filename}`}>Replace</button>
+        <button type="button" className="nl-processing-source-action nl-processing-source-remove" onClick={() => void handleRemoveSource(doc.id, doc.filename)} disabled={uploading || removingDocumentId !== null} aria-label={`Remove ${doc.filename}`}>
           {removingDocumentId === doc.id ? "Removing…" : "Remove"}
         </button>
       </span>
@@ -566,7 +566,6 @@ export default function WorkspacePage() {
 
       <aside className="nl-processing-ready">
         <h2>Ready to publish?</h2>
-        {renderSourceControls()}
         <div className="nl-processing-stats" aria-label="Outline counts">
           <div><b>{structure?.modules.length || 0}</b><span>modules</span></div>
           <div><b>{structure?.modules.reduce((total, module) => total + module.lessons.length, 0) || 0}</b><span>lessons</span></div>

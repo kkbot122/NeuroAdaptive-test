@@ -517,6 +517,21 @@ a { color: inherit; }
 .nl-processing-upload > svg { width: 44px; height: 44px; color: var(--nl-violet); }
 .nl-processing-upload h2 { margin: 0; font-size: 1.5rem; }
 .nl-processing-upload > p { margin: 0 0 8px; color: var(--nl-muted); }
+.nl-processing-source-controls { width: 100%; margin: 10px 0 4px; border: var(--nl-border); background: white; text-align: left; }
+.nl-processing-source-controls h3 { margin: 0; border-bottom: var(--nl-border); background: var(--nl-yellow); padding: 10px 14px; font-family: var(--nl-display); font-size: 1rem; }
+.nl-processing-source-controls ul { margin: 0; padding: 0; list-style: none; }
+.nl-processing-source-controls li { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; border-bottom: var(--nl-border); background: #fafafa; padding: 12px 14px; }
+.nl-processing-source-controls li:last-child { border-bottom: 0; }
+.nl-processing-source-file { display: flex; min-width: 0; align-items: center; gap: 9px; font-weight: 600; }
+.nl-processing-source-file svg { width: 18px; height: 18px; flex: none; color: var(--nl-violet); }
+.nl-processing-source-name { min-width: 0; overflow-wrap: anywhere; }
+.nl-processing-source-actions { display: flex; flex: none; flex-wrap: wrap; gap: 8px; }
+.nl-processing-source-action { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; border: var(--nl-border); background: white; padding: 5px 10px; box-shadow: 2px 2px 0 var(--nl-ink); cursor: pointer; font: inherit; font-size: .86rem; font-weight: 700; line-height: 1.2; transition: transform .08s, box-shadow .08s; }
+.nl-processing-source-action:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--nl-ink); }
+.nl-processing-source-action:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: none; }
+.nl-processing-source-action:disabled { cursor: not-allowed; opacity: .52; box-shadow: none; }
+.nl-processing-source-replace { background: var(--nl-yellow); }
+.nl-processing-source-remove { background: var(--nl-coral); }
 .nl-processing-documents { width: 100%; display: grid; gap: 8px; margin: 14px 0; padding: 0; list-style: none; text-align: left; }
 .nl-processing-documents li { display: flex; min-width: 0; align-items: center; gap: 12px; border: var(--nl-border); background: #fafafa; padding: 10px 12px; }
 .nl-processing-documents svg { width: 20px; height: 20px; flex: none; color: var(--nl-violet); }
@@ -568,6 +583,9 @@ a { color: inherit; }
   .nl-processing-main { padding: 22px 16px 72px; }
   .nl-processing-stage { gap: 10px; padding: 14px 12px; }
   .nl-processing-stage > .nl-processing-chip { display: none; }
+  .nl-processing-source-controls li { align-items: stretch; flex-direction: column; gap: 10px; }
+  .nl-processing-source-actions { width: 100%; }
+  .nl-processing-source-action { flex: 1; }
   .nl-processing-lesson { padding-left: 20px; }
   .nl-processing-module > summary { gap: 10px; padding-inline: 14px; font-size: 1rem; }
   .nl-processing-ready { padding: 20px; }
