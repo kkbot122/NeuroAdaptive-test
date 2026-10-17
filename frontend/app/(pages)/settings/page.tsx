@@ -158,7 +158,7 @@ export default function SettingsPage() {
   if (!session) return <main className="nl-screen grid place-items-center p-6"><p role="status">Returning to sign in…</p></main>;
 
   return <div className="nl-dashboard-shell">
-    <CourseSidebar name={userName} />
+    <CourseSidebar name={userName} image={session?.user?.image} />
     <main className="nl-settings-main">
       <h1>Settings</h1>
       <p className="nl-settings-lead">Control what is tracked and how lessons look. Your courses are not affected by changes here.</p>

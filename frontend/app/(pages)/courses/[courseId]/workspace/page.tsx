@@ -625,7 +625,7 @@ export default function WorkspacePage() {
                 : "The source set is saved. Prepare the course to build its outline.";
 
   return <div className="nl-processing-shell">
-    <CourseSidebar name={learnerName} />
+    <CourseSidebar name={learnerName} image={session?.user?.image} />
     <main className="nl-processing-main">
       <Link href="/dashboard" className="nl-processing-back"><ArrowLeft aria-hidden="true" />Back to dashboard</Link>
       {!isLoading && <header className="nl-processing-heading">

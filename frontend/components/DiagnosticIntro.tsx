@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import LogoMark from "@/components/LogoMark";
 import type { components } from "@/lib/generated/api";
 import { ArrowLeft, ArrowRight, LoaderCircle } from "lucide-react";
 
@@ -42,7 +43,7 @@ export function DiagnosticIntro({ course, learningState }: { course: Course; lea
       <Link href={`/courses/${course.id}/learn`} className="nl-button"><ArrowLeft aria-hidden="true" />Back to course</Link>
       <div className="nl-crumb"><small>{course.title}</small><strong>Starting point</strong></div>
       <span className="nl-spacer" />
-      <Link href="/dashboard" className="nl-brand nl-diagnostic-brand"><span className="nl-brand-mark" aria-hidden="true" /><span className="nl-brand-label">NeuroLearn</span></Link>
+      <Link href="/dashboard" className="nl-brand nl-diagnostic-brand"><LogoMark className="nl-brand-mark" /><span className="nl-brand-label">NeuroLearn</span></Link>
     </nav>
     <main className="nl-diagnostic-main">
       <article className="nl-diagnostic-card">

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import LogoMark from "@/components/LogoMark";
 import { useRouter } from "next/navigation";
 import type { components } from "@/lib/generated/api";
 import { ArrowLeft, ArrowRight, LoaderCircle } from "lucide-react";
@@ -140,7 +141,7 @@ export function CourseOverview({ course, structure, learningState, graph }: {
       <nav className="nl-topbar nl-course-overview-topbar" aria-label="Course navigation">
         <Link href="/dashboard" className="nl-button"><ArrowLeft className="size-4" />Back to dashboard</Link>
         <span className="nl-spacer" />
-        <Link href="/dashboard" className="nl-brand"><span className="nl-brand-mark" aria-hidden="true" /><span className="nl-brand-label">NeuroLearn</span></Link>
+        <Link href="/dashboard" className="nl-brand"><LogoMark className="nl-brand-mark" /><span className="nl-brand-label">NeuroLearn</span></Link>
       </nav>
 
       <main className="nl-course-overview-main">

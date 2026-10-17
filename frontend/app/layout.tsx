@@ -5,6 +5,7 @@ import "./globals.css"
 export const metadata: Metadata = {
   title: "NeuroLearn · Grounded adaptive learning",
   description: "Study with validated course content, fixed assessments, and source grounded tutoring.",
+  icons: { icon: "/favicon.svg", apple: "/neurolearn-logo.png" },
 };
 
 export default function RootLayout({

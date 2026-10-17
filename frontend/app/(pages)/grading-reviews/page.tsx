@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { components } from "@/lib/generated/api";
 import Link from "next/link";
+import LogoMark from "@/components/LogoMark";
 
 type ReviewItem = components["schemas"]["GradingReviewItemOut"];
 type ReviewPage = components["schemas"]["GradingReviewPageOut"];
@@ -447,7 +448,7 @@ export default function GradingReviewsPage() {
     <main className="nl-reviewer-screen">
       <header className="nl-reviewer-bar">
         <Link href="/dashboard" className="nl-reviewer-logo" aria-label="NeuroLearn dashboard">
-          <i aria-hidden="true" />NeuroLearn
+          <LogoMark className="nl-reviewer-logo-mark" />NeuroLearn
         </Link>
         <span className="nl-reviewer-chip is-restricted">Reviewer access</span>
         <span className="nl-reviewer-spacer" />

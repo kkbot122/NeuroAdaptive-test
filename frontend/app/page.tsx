@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import Tinkerer from "@/components/illustrations/Tinker";
+import LogoMark from "@/components/LogoMark";
 
 const progressLabels = [
   ["Not assessed", "No graded evidence is available yet."],
@@ -65,7 +66,7 @@ export default async function Home() {
 
   return <main className="nl-screen nl-landing">
     <nav className="nl-landing-nav" aria-label="Main">
-      <Link href="/" className="nl-landing-logo"><i aria-hidden="true" />NeuroLearn</Link>
+      <Link href="/" className="nl-landing-logo"><LogoMark className="nl-landing-logo-mark" />NeuroLearn</Link>
       <div className="nl-landing-links">
         <a href="#how">How it works</a>
         <a href="#different">Why it is different</a>

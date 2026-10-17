@@ -173,7 +173,7 @@ export default function NewCoursePage() {
   ] as const;
 
   return <div className="nl-course-setup-shell">
-    <CourseSidebar name={name} />
+    <CourseSidebar name={name} image={session?.user?.image} />
     <main className="nl-course-setup-main">
       <Link href="/dashboard" className="nl-course-setup-back"><ArrowLeft aria-hidden="true" />Back to dashboard</Link>
       <h1 className="nl-course-setup-title">Create course</h1>

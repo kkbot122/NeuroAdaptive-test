@@ -156,7 +156,7 @@ export default function DashboardPage() {
   if (status === "loading" || !session) return <main className="nl-screen grid place-items-center p-6"><p role="status">Loading your account…</p></main>;
 
   return <div className="nl-dashboard-shell">
-    <CourseSidebar name={userName} />
+    <CourseSidebar name={userName} image={session.user?.image} />
     <main className="nl-dashboard-main">
       <header className="nl-dashboard-head"><h1>Your courses</h1><Link href="/courses/new" className="nl-dashboard-button nl-dashboard-button-sm"><Plus aria-hidden="true" />Create course</Link></header>
 

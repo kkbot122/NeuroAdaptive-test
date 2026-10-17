@@ -4,7 +4,8 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
-import { ArrowRight, BookOpen } from "lucide-react";
+import { ArrowRight } from "lucide-react";
+import LogoMark from "@/components/LogoMark";
 
 function SignInError() {
   const params = useSearchParams();
@@ -27,7 +28,7 @@ function GoogleMark() {
 export default function SignInPage() {
   return <main className="nl-screen grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
     <section className="flex flex-col justify-between gap-12 border-b-2 border-black bg-white p-7 md:p-12 lg:border-b-0 lg:border-r-2" aria-label="About NeuroLearn">
-      <Link href="/" className="nl-brand"><span className="nl-brand-mark"><BookOpen className="size-5" /></span>NeuroLearn</Link>
+      <Link href="/" className="nl-brand"><LogoMark className="nl-brand-mark" />NeuroLearn</Link>
       <div><p className="nl-kicker">Your sources. Your course.</p><h1 className="max-w-2xl text-4xl font-bold md:text-5xl">Turn your study material into a course that responds to your answers.</h1><p className="mt-5 max-w-xl text-lg text-zinc-700">Upload your notes, review the outline, and work through saved lessons and assessments from your own material.</p></div>
       <div className="grid gap-3 sm:grid-cols-3" aria-label="How NeuroLearn works"><div className="border-2 border-black bg-zinc-100 p-4"><strong className="block">Your files</strong><span className="text-sm">Notes and documents</span></div><div className="border-2 border-black bg-white p-4"><strong className="block">A course</strong><span className="text-sm">Reviewed outline</span></div><div className="border-2 border-black bg-[#FFD23F] p-4 shadow-[4px_4px_0_#111]"><strong className="block">Practice</strong><span className="text-sm">Based on saved answers</span></div></div>
     </section>
