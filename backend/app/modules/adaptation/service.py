@@ -72,6 +72,13 @@ class Recommendation:
     alternatives: List[dict]
 
 
+@dataclass(frozen=True)
+class PrerequisiteStates:
+    hard: Dict[UUID, List[UUID]]
+    soft: Dict[UUID, List[UUID]]
+    mastery: Dict[UUID, engine.MasteryState]
+
+
 class AdaptationService:
     def __init__(self, db: Session, generation: GenerationGateway, embeddings: Optional[EmbeddingGateway] = None):
         self.db = db
@@ -88,7 +95,9 @@ class AdaptationService:
 
     # -- candidate generation (impure: reads already-fetched domain state) ----
 
-    def _build_concept_states(self, concepts, edges, owner_id: int) -> Dict[UUID, ConceptState]:
+    def _build_concept_states(
+        self, concepts, edges, owner_id: int
+    ) -> Tuple[Dict[UUID, ConceptState], PrerequisiteStates]:
         hard_prereqs: Dict[UUID, List[UUID]] = {}
         soft_prereqs: Dict[UUID, List[UUID]] = {}
         for edge in edges:
@@ -176,13 +185,17 @@ class AdaptationService:
                         linked_readiness_states[concept_id] = engine.compute_mastery(evidence, reference_at)
                         linked_source_by_concept[concept_id] = linked_course.title
 
+        prerequisite_mastery_states = {
+            concept_id: linked_readiness_states.get(concept_id, state)
+            for concept_id, state in raw_states.items()
+        }
         concept_states: Dict[UUID, ConceptState] = {}
         for concept in concepts:
             prerequisites = [*hard_prereqs.get(concept.id, []), *soft_prereqs.get(concept.id, [])]
             readiness_states = {
-                prereq: linked_readiness_states.get(prereq, raw_states.get(prereq))
+                prereq: prerequisite_mastery_states.get(prereq)
                 for prereq in prerequisites
-                if prereq in raw_states
+                if prereq in prerequisite_mastery_states
             }
             hard_masteries = [readiness_states[p].mastery for p in hard_prereqs.get(concept.id, []) if p in readiness_states]
             soft_masteries = [readiness_states[p].mastery for p in soft_prereqs.get(concept.id, []) if p in readiness_states]
@@ -196,7 +209,11 @@ class AdaptationService:
                 importance=concept.importance, readiness=readiness,
                 evidence_weight_total=state.evidence_weight_total,
             )
-        return concept_states, hard_prereqs
+        return concept_states, PrerequisiteStates(
+            hard=hard_prereqs,
+            soft=soft_prereqs,
+            mastery=prerequisite_mastery_states,
+        )
 
     @staticmethod
     def _mastery_state(state: ConceptState) -> engine.MasteryState:
@@ -334,7 +351,7 @@ class AdaptationService:
 
     def _generate_candidates(
         self, version: CourseVersion, concept_states: Dict[UUID, ConceptState],
-        hard_prereqs: Dict[UUID, List[UUID]], last_decision: Optional[AdaptationDecision],
+        prerequisites: PrerequisiteStates, last_decision: Optional[AdaptationDecision],
         course_id: UUID, owner_id: int, concepts,
     ) -> List[Candidate]:
         candidates: List[Candidate] = []
@@ -365,9 +382,11 @@ class AdaptationService:
                      difficulty=1.0 - concept_states[target_id].mastery)
             )
 
-        # -- NEW_LESSON: each uncovered lesson whose concepts are all ready
-        # and not already fully mastered. Covered lessons are reinforcement,
-        # handled by practice, remediation, or challenge candidates.
+        # -- NEW_LESSON: each uncovered lesson whose concepts are ready to be
+        # taught and not already fully mastered. Prerequisites taught in the
+        # same lesson do not gate that lesson; prerequisites outside it still
+        # do. Covered lessons are reinforcement, handled by practice,
+        # remediation, or challenge candidates.
         covered_lesson_ids = self._covered_lessons(course_id, version.id, owner_id)
         for module in version.modules:
             for lesson in module.lessons:
@@ -379,7 +398,28 @@ class AdaptationService:
                 states = [concept_states[cid] for cid in lesson_concept_ids if cid in concept_states]
                 if not states:
                     continue
-                if all(is_ready(s.readiness) for s in states) and any(s.mastery < 0.85 for s in states):
+                lesson_concept_set = set(lesson_concept_ids)
+                lesson_ready = all(
+                    is_ready(
+                        compute_readiness(
+                            [
+                                prerequisites.mastery[parent_id].mastery
+                                for parent_id in prerequisites.hard.get(concept_id, [])
+                                if parent_id not in lesson_concept_set
+                                and parent_id in prerequisites.mastery
+                            ],
+                            [
+                                prerequisites.mastery[parent_id].mastery
+                                for parent_id in prerequisites.soft.get(concept_id, [])
+                                if parent_id not in lesson_concept_set
+                                and parent_id in prerequisites.mastery
+                            ],
+                        )
+                    )
+                    for concept_id in lesson_concept_ids
+                    if concept_id in concept_states
+                )
+                if lesson_ready and any(s.mastery < 0.85 for s in states):
                     candidates.append(make("NEW_LESSON", lesson_concept_ids, lesson_id=lesson.id))
 
         # -- RESUME_INTERRUPTED: last call recommended a NEW_LESSON and no
@@ -463,12 +503,12 @@ class AdaptationService:
             raise AdaptationNotFound(f"No course structure generated for {course_id}")
 
         version = self.db.query(CourseVersion).filter(CourseVersion.id == graph.concepts[0].course_version_id).first()
-        concept_states, hard_prereqs = self._build_concept_states(graph.concepts, graph.edges, owner_id)
+        concept_states, prerequisites = self._build_concept_states(graph.concepts, graph.edges, owner_id)
         last_decision = self._last_decision(course_id, owner_id)
         rejected_keys = self._rejected_candidate_keys(last_decision)
 
         candidates = self._generate_candidates(
-            version, concept_states, hard_prereqs, last_decision, course_id, owner_id, graph.concepts
+            version, concept_states, prerequisites, last_decision, course_id, owner_id, graph.concepts
         )
         if not candidates:
             raise AdaptationNotFound(f"No eligible activity for course {course_id}")
